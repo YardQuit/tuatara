@@ -5,7 +5,7 @@
   (:use #:cl)
   (:documentation "A frontend that takes its events from a queue and paints into a vector of strings.")
   (:export #:fake-frontend #:make-fake-frontend #:fake-queue-keys #:fake-queue-event #:fake-screen #:fake-screen-line
-           #:fake-cursor #:fake-cursor-shape #:fake-cursor-colour #:fake-frames #:fake-history #:fake-frame-showing #:fake-spans
+           #:fake-cursor #:fake-cursor-shape #:fake-cursor-colour #:fake-frames #:fake-history #:fake-frame-showing #:fake-frame-showing-across-rows #:fake-spans
            #:fake-row-faces #:fake-row-scales #:fake-face-history #:fake-frame-with #:fake-pending #:fake-clipboard #:fake-primary #:fake-titles
            #:fake-font-steps #:fake-fonts #:fake-font #:fake-toggles #:fake-font-faces #:fake-desktop-style
            #:fake-queue-action #:fake-images #:fake-image-history))
@@ -263,4 +263,12 @@ as the desktop's style."
   "True when some frame painted so far had a row containing every string in TEXTS."
   (some (lambda (screen)
           (some (lambda (row) (every (lambda (text) (search text row)) texts)) screen))
+        (fake-history frontend)))
+
+(defun fake-frame-showing-across-rows (frontend text)
+  "True when some frame painted so far showed TEXT, its rows read as one line
+with a space where each row ends: for text that may be wrapped onto the next
+row, as a long question in the echo area is."
+  (some (lambda (screen)
+          (search text (format nil "~{~a~^ ~}" (map 'list (lambda (row) (string-right-trim " " row)) screen))))
         (fake-history frontend)))

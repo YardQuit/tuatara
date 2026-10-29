@@ -88,7 +88,7 @@
       (let ((f (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring (merge-pathnames "a.txt" dir))))
                                         "C-x g" (list :wait 0.1) "n o RET" (list :wait 0.1))
                                   :width 160)))
-        (true (tuatara.frontend.fake:fake-frame-showing f "git runs the programs it names"))
+        (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "git runs the programs it names"))
         (false (tuatara.defaults::git-buffer-of (tuatara.defaults::repository-top (namestring dir)) 'tuatara.defaults::git-status-mode))))))
 
 (define-test (git status-read)
