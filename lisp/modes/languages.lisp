@@ -620,11 +620,9 @@ buffer; the style each starts in is set in the init file with set-colouring."
   "Have a parse that finishes in the background wake EDITOR, to show its
 colours, and a grammar that fails, or a parse given up as too slow, say so; and
 a text left alone be parsed afresh (SYNTAX-REFRESH-TICK)."
-  (let ((frontend (editor-frontend editor)))
-    (setf tuatara.syntax:*syntax-wake-function*
-          (lambda () (tuatara.frontend:frontend-wake frontend))
-          tuatara.syntax:*syntax-fault-function* 'report-grammar-fault
-          tuatara.syntax:*syntax-slow-function* 'report-slow-parse))
+  (setf tuatara.syntax:*syntax-wake-function* (lambda () (wake-editor editor))
+        tuatara.syntax:*syntax-fault-function* 'report-grammar-fault
+        tuatara.syntax:*syntax-slow-function* 'report-slow-parse)
   (pushnew 'syntax-refresh-tick *tick-functions*))
 
 (defun syntax-refresh-tick (editor)

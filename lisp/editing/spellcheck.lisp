@@ -525,6 +525,5 @@ when one of them takes it. Empty: as *SPELLCHECK-LANGUAGES* says."
 (defun install-spellcheck (editor)
   "Mark the words spelt wrong in the windows whose buffers want it, redrawn
 as the speller answers, and say what cannot be checked."
-  (let ((frontend (editor-frontend editor)))
-    (setf *spelling-wake-function* (lambda () (tuatara.frontend:frontend-wake frontend))))
+  (setf *spelling-wake-function* (lambda () (wake-editor editor)))
   (pushnew 'spellcheck-highlights tuatara.command:*text-highlight-functions*))

@@ -442,10 +442,10 @@ which TAKE-GATHERED takes what was found, on the editor's thread; the editor
 is woken as things are found, every twentieth of a second at most, and when
 the work ends."
   (let ((gathering (make-gathering))
-        (frontend (and *editor* (editor-frontend *editor*))))
+        (editor *editor*))
     (flet ((wake ()
              (setf (gathering-woken gathering) (get-internal-real-time))
-             (when frontend (ignore-errors (tuatara.frontend:frontend-wake frontend)))))
+             (when editor (wake-editor editor))))
       (tuatara.runtime:make-guarded-thread
        (lambda ()
          (unwind-protect

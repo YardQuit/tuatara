@@ -150,15 +150,14 @@ the list then loses (RECENT-FILES-TICK), so that a drive not answering cannot
 hold the editor up. How many went is said, and kept in *Messages*."
   (when (and *remember-recent-files* *recent-files-auto-cleanup* (not *recent-files-cleaned*))
     (setf *recent-files-cleaned* t)
-    (let ((entries (ignore-errors (read-recent-files)))
-          (frontend (editor-frontend editor)))
+    (let ((entries (ignore-errors (read-recent-files))))
       (if (null entries)
           (say-recent-files-cleaned 0)
           (setf *recent-files-cleaner*
                 (tuatara.runtime:make-guarded-thread
                  (lambda ()
                    (setf *recent-files-gone* (handler-case (gone-recent-files entries) (error () :failed)))
-                   (ignore-errors (tuatara.frontend:frontend-wake frontend)))
+                   (wake-editor editor))
                  :name "tuatara recent files"))))))
 
 (defun recent-files-tick (editor)

@@ -515,15 +515,15 @@ ends, so that work done in a moment is seen too.")
 lit last are to be drawn faint (NOTE-SIGN-WORK): one at most, however many
 signs are lit meanwhile.")
 
-(defun note-sign-work (sign &optional frontend)
+(defun note-sign-work (sign &optional editor)
   "Note that the work SIGN (a keyword: :indexing, :searching) shows began or
 ended now, from any thread, so that its sign is lit for *SIGN-LIT-SECONDS*
-however quick the work; wake FRONTEND, when given, to show it lit now and
+however quick the work; wake EDITOR, when given, to show it lit now and
 again once the moment is over, to show it faint, a question in the minibuffer
 open or not. One thread at most waits for that moment, for every sign lit."
   (setf (gethash sign *signs-lit-until*) (tuatara.runtime:deadline-in *sign-lit-seconds*))
-  (when frontend
-    (ignore-errors (tuatara.frontend:frontend-wake frontend))
+  (when editor
+    (wake-editor editor)
     (when (null (sb-ext:compare-and-swap (car **sign-fader**) nil t))
       (tuatara.runtime:make-guarded-thread
        (lambda ()
@@ -536,7 +536,7 @@ open or not. One thread at most waits for that moment, for every sign lit."
            (loop
              (let ((left (left)))
                (when (plusp left) (sleep left)))
-             (ignore-errors (tuatara.frontend:frontend-wake frontend))
+             (wake-editor editor)
              (setf (car **sign-fader**) nil)
              ;; one lit as this one let go waits on here, unless another thread took it
              (unless (and (plusp (left)) (null (sb-ext:compare-and-swap (car **sign-fader**) nil t)))
@@ -575,7 +575,7 @@ opened safely (CALL-WITH-WINDOW-PREVIEW)."
            (large (if index (directory-index-large index) '()))
            (root-name (if index (directory-index-root index) (directory-name root)))
            (read-all (null reading))
-           (frontend (and *editor* (editor-frontend *editor*)))
+           (editor *editor*)
            (left-out nil)
            ;; the search of the input typed last, and the lines it found
            (searching nil) (searched-input nil) (found '())
@@ -609,7 +609,7 @@ opened safely (CALL-WITH-WINDOW-PREVIEW)."
                         (lambda (give cancel)
                           (when index
                             (sb-ext:atomic-incf (car *index-searches*))
-                            (note-sign-work :searching frontend))
+                            (note-sign-work :searching editor))
                           (unwind-protect
                               (let ((count 0))
                                 (loop for i from 0
@@ -635,7 +635,7 @@ opened safely (CALL-WITH-WINDOW-PREVIEW)."
                                     (funcall give candidate))))
                             (when index
                               (sb-ext:atomic-decf (car *index-searches*))
-                              (note-sign-work :searching frontend)))))))
+                              (note-sign-work :searching editor)))))))
                (take ()
                  (let ((changed (shiftf toggled nil)) (working nil))
                    (when reading

@@ -47,8 +47,8 @@ was given (QUEUED-JOB-PLACE), else NIL.")
 (defun editor-job-waker ()
   "A function waking the editor, for the thread of a job made now to call when
 it has something new to show; NIL without an editor (TUATARA.RUNTIME:*JOB-WAKER*)."
-  (let ((frontend (and *editor* (editor-frontend *editor*))))
-    (and frontend (lambda () (ignore-errors (tuatara.frontend:frontend-wake frontend))))))
+  (let ((editor *editor*))
+    (and editor (lambda () (wake-editor editor)))))
 
 (defun running-jobs ()
   "The jobs running in the background, of every buffer, the oldest first."

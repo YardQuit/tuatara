@@ -96,9 +96,8 @@ which may choose that folder (*cache-directory*)."
   (pushnew 'show-debug-reports *tick-functions*)
   (pushnew 'debug-mode-line *mode-line-functions*)
   (setf tuatara.runtime:*debug-start* (get-internal-real-time))
-  (let ((frontend (editor-frontend editor))
-        (thread sb-thread:*current-thread*))
+  (let ((thread sb-thread:*current-thread*))
     (setf tuatara.runtime:*debug-wake-function*
           (lambda ()
             (unless (eq sb-thread:*current-thread* thread)
-              (tuatara.frontend:frontend-wake frontend))))))
+              (wake-editor editor))))))

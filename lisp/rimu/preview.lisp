@@ -355,7 +355,7 @@ of its own, or shown in the buffer visiting it already; the rest at once."
                                       (serious-condition (e) (setf (rimu-preview-job-reason job) (princ-to-string e))))
                                  ;; however it ends, the preview is over and shown
                                  (setf (rimu-preview-job-done job) t)
-                                 (ignore-errors (tuatara.frontend:frontend-wake frontend)))))
+                                 (wake-editor editor))))
                             :name "tuatara rimu preview")
                            (rimu-preview-job state) job)))))
             (t (rimu-preview-show state (side-preview-note (tuatara.io:listed-name entry) (rimu-preview-words entry)) t entry))))))

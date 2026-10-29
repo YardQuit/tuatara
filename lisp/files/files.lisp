@@ -570,8 +570,8 @@ them, a buffer's private folder be deleted when it is killed
         tuatara.buffer:*counted-line-function* 'tuatara.io:counted-line-number
         tuatara.io:*visit-safely-function* 'visit-safely-reason)
   (when *editor*
-    (setf tuatara.io:*on-file-news* (let ((frontend (editor-frontend *editor*)))
-                                      (lambda () (tuatara.frontend:frontend-wake frontend)))))
+    (setf tuatara.io:*on-file-news* (let ((editor *editor*))
+                                      (lambda () (wake-editor editor)))))
   (pushnew 'files-tick *tick-functions*)
   (pushnew 'follow-directories *tick-functions*)
   (pushnew 'keep-private-folders-fresh *tick-functions*)

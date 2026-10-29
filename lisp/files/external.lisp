@@ -330,7 +330,7 @@ was looked at is not opened. True when the opening was started."
                      (message "Not opened")
                      nil)
                     (t
-                     (let ((frontend (editor-frontend *editor*))
+                     (let ((editor *editor*)
                            (opening (cons nil nil)))
                        (setf (car opening)
                              (tuatara.runtime:make-guarded-thread
@@ -342,7 +342,7 @@ was looked at is not opened. True when the opening was started."
                                              (serious-condition (e) (format nil "~a not opened: ~a" name e))))
                                   ;; however it ends, the opening is over and said
                                   (unless (cdr opening) (setf (cdr opening) (format nil "~a not opened" name)))
-                                  (ignore-errors (tuatara.frontend:frontend-wake frontend))))
+                                  (wake-editor editor)))
                               :name "tuatara open outside"))
                        (push opening *openings*)
                        (message "Opening ~a in ~a..." name label)

@@ -268,10 +268,10 @@ newline."
   (or (tuatara.buffer:buffer-local buffer 'org-state)
       (setf (tuatara.buffer:buffer-local buffer 'org-state) (make-org-state))))
 
-(defun org-parse-worker (state frontend)
+(defun org-parse-worker (state editor)
   "Parse in the background what STATE wants, the latest asked for, again as
 long as something newer is asked for meanwhile; each parse put in STATE's
-RESULT in one step, the editor woken through FRONTEND."
+RESULT in one step, EDITOR, when given, woken for it."
   (unwind-protect
        (loop
          (let* ((job (sb-thread:with-mutex ((org-state-lock state)) (org-state-wanted state)))
@@ -284,7 +284,7 @@ RESULT in one step, the editor woken through FRONTEND."
            (setf (org-state-parse-seconds state) (tuatara.runtime:seconds-since start))
            ;; the result put in whatever came of it: a text the parser cannot read is not asked for again and again
            (setf (org-state-result state) (list tree text (car job) returns (and tree (org-src-language-names tree))))
-           (when (and tree frontend) (ignore-errors (tuatara.frontend:frontend-wake frontend)))
+           (when (and tree editor) (wake-editor editor))
            (sb-thread:with-mutex ((org-state-lock state))
              (sb-thread:condition-broadcast (org-state-done state))
              (when (eq job (org-state-wanted state))
@@ -312,8 +312,8 @@ may go with the buffer; another gives its text as it is, which never changes."
                      (list* version (if mapped (tuatara.buffer:buffer-string buffer) (tuatara.buffer:buffer-text buffer))
                             (buffer-crlf-p buffer))
                      (org-state-worker state)
-                     (let ((frontend (and *editor* (editor-frontend *editor*))))
-                       (tuatara.runtime:make-guarded-thread (lambda () (org-parse-worker state frontend)) :name "tuatara org parse")))))))))
+                     (let ((editor *editor*))
+                       (tuatara.runtime:make-guarded-thread (lambda () (org-parse-worker state editor)) :name "tuatara org parse")))))))))
 
 (defun org-src-language-names (tree)
   "The languages the source blocks of TREE name, each once, as written."

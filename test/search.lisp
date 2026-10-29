@@ -410,9 +410,9 @@ newlines and some multibyte characters."
 (define-test (search sign-fades-on-one-thread)
   ;; a sign lit again and again, as each key of a search lights it, is faded by one thread
   (flet ((faders () (count "tuatara sign fading" (sb-thread:list-all-threads) :key #'sb-thread:thread-name :test #'equal)))
-    (let ((f (tuatara.frontend.fake:make-fake-frontend))
+    (let ((editor (tuatara.command:make-editor (tuatara.frontend.fake:make-fake-frontend)))
           (tuatara.defaults::*sign-lit-seconds* 0.3))
-      (dotimes (i 20) (tuatara.defaults::note-sign-work :searching f))
+      (dotimes (i 20) (tuatara.defaults::note-sign-work :searching editor))
       (true (<= (faders) 1) "~d threads" (faders))
       (loop repeat 200 while (plusp (faders)) do (sleep 0.01))
       (is = 0 (faders))

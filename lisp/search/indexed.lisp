@@ -500,7 +500,7 @@ noted, and read once it is over."
       (let ((limit *search-files-limit*)
             (piece *search-files-piece*)
             (kept-on-disk *indexes-kept-on-disk*)
-            (frontend (and *editor* (editor-frontend *editor*))))
+            (editor *editor*))
         (setf (directory-index-reading index) t
               (directory-index-again index) nil
               (directory-index-pending index) '())
@@ -514,7 +514,7 @@ noted, and read once it is over."
                           :failed))
              ;; however it ends (a lack of memory too), the reading is over, never shown as going on
              (unless (directory-index-result index) (setf (directory-index-result index) :failed))
-             (note-sign-work :indexing frontend)))
+             (note-sign-work :indexing editor)))
          :name "tuatara reading an indexed directory"))))
 
 (defun indexes-tick (editor)

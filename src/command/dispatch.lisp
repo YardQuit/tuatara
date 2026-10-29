@@ -94,12 +94,13 @@ question as \\`C-g' does, and are handled once the command is done
 \(EDITOR-DEFERRED). With PASTES (the minibuffer), text pasted comes back too.
 While it waits the editor counts as idle (TUATARA.RUNTIME:NOTE-EDITOR-BUSY)."
   (loop
-    (let ((event (cond ((editor-unread editor) (pop (editor-unread editor)))
-                       (t (tuatara.runtime:note-editor-busy nil)
-                          (prog1 (if timeout
-                                     (tuatara.frontend:frontend-read-event-timeout (editor-frontend editor) timeout)
-                                     (tuatara.frontend:frontend-read-event (editor-frontend editor)))
-                            (tuatara.runtime:note-editor-busy t))))))
+    (let* ((frame (editor-frame editor))
+           (event (cond ((frame-unread frame) (pop (frame-unread frame)))
+                        (t (tuatara.runtime:note-editor-busy nil)
+                           (prog1 (if timeout
+                                      (tuatara.frontend:frontend-read-event-timeout (frame-frontend frame) timeout)
+                                      (tuatara.frontend:frontend-read-event (frame-frontend frame)))
+                             (tuatara.runtime:note-editor-busy t))))))
       (case (tuatara.frontend:event-kind event)
         (:resize (resize editor (tuatara.frontend:event-width event) (tuatara.frontend:event-height event))
                  (if ticks

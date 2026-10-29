@@ -13,25 +13,17 @@
   (:documentation "Signalled by keyboard-quit (\\`C-g') to abandon the current command or minibuffer.")
   (:report (lambda (c s) (declare (ignore c)) (format s "Quit"))))
 
-(defstruct (editor (:constructor %make-editor (frontend)) (:copier nil))
-  "The editor state. FRONTEND paints and reads events; WINDOW is the selected
-window, the one commands act on, in a layout of one or more (EDITOR-WINDOWS);
-SELECTIONS counts the times a window was selected; MINIBUFFER-PROMPT,
-MINIBUFFER-TEXT and MINIBUFFER-ACTIVE describe the
-echo area; MESSAGE is transient text shown there; KILL-RING holds killed text,
-newest first; PENDING are the key specs of an unfinished key sequence;
-STATE-KEYMAP is the modal state's map consulted before the others (the modal layer's);
-RUNNING is false once the editor should exit; UNREAD holds events read while
-the editor waited on work of its own, to be handled next, in order; DEFERRED
+(defstruct (frame (:constructor make-frame (frontend)) (:copier nil))
+  "One screen of the editor. FRONTEND paints it and reads its events; WINDOW
+is its selected window, the one commands act on, in a layout of one or more;
+MINIBUFFER-PROMPT, MINIBUFFER-TEXT and MINIBUFFER-ACTIVE describe its echo
+area; MESSAGE is transient text shown there; PENDING are the key specs of an
+unfinished key sequence typed in it; UNREAD holds events read while the
+editor waited on work of its own, to be handled next, in order; DEFERRED
 holds the window closed or files dropped while a command was asking for
 something, to be handled once it is done."
   (frontend nil :read-only t)
   (window nil)
-  (selections 0 :type fixnum)
-  (global-keymap (make-keymap :name "global"))
-  (state-keymap nil :type (or null keymap))
-  (fallback-keymap nil :type (or null keymap))
-  (minibuffer-keymap (make-keymap :name "minibuffer"))
   (minibuffer-prompt nil)
   (minibuffer-text nil)
   (minibuffer-point 0 :type fixnum)
@@ -43,77 +35,157 @@ something, to be handled once it is done."
   (minibuffer-completer nil)
   (height 24 :type fixnum)
   (width 80 :type fixnum)
-  (key-hints t)
   (message nil)
-  (kill-ring '())
   (pending '())
-  (last-command nil)
-  (this-command nil)
   (prefix-argument nil)
-  (running t)
   (unread '())
   (collecting-prefix nil)
   (this-key nil)
+  (transient-map nil)
+  (transient-keep nil)
+  (transient-exit nil)
+  (transient-fresh nil)
+  (menu nil)
+  (title-shown nil)
+  (deferred '()))
+
+(setf (documentation 'make-frame 'function) "A FRAME painted through FRONTEND, with no window yet."
+      (documentation 'frame-p 'function) "True when OBJECT is a FRAME.")
+
+(defstruct (editor (:constructor %make-editor (frontend &aux (frame (make-frame frontend)) (frames (list frame))))
+                   (:copier nil))
+  "The editor state. FRAMES are its screens, and FRAME the one being worked in:
+EDITOR-WINDOW, EDITOR-MESSAGE, EDITOR-MINIBUFFER-TEXT and the other names of a
+screen's state read and set that frame's; SELECTIONS counts the
+times a window was selected; KILL-RING holds killed text, newest first;
+STATE-KEYMAP is the modal state's map consulted before the others (the modal
+layer's); RUNNING is false once the editor should exit."
+  (frames '() :type list)
+  (frame nil :type frame)
+  (selections 0 :type fixnum)
+  (global-keymap (make-keymap :name "global"))
+  (state-keymap nil :type (or null keymap))
+  (fallback-keymap nil :type (or null keymap))
+  (minibuffer-keymap (make-keymap :name "minibuffer"))
+  (key-hints t)
+  (kill-ring '())
+  (last-command nil)
+  (this-command nil)
+  (running t)
   (self-insert-command nil)
   (mode-line-function nil)
   (cursor-shape-function nil)
   (post-command-functions '())
   (repeatable nil)
   (repeat-map nil)
-  (transient-map nil)
-  (transient-keep nil)
-  (transient-exit nil)
-  (transient-fresh nil)
-  (menu nil)
-  (pre-command-functions '())
-  (title-shown nil)
-  (deferred '()))
+  (pre-command-functions '()))
+
+(defmacro define-frame-accessor (name slot documentation &key read-only)
+  "Define NAME, a function of an editor, as SLOT of the editor's current frame,
+documented by DOCUMENTATION; SETF, INCF and PUSH on it change that frame's,
+unless READ-ONLY. The frame's own reader of SLOT is documented as NAME's."
+  (let ((reader (symbolicate 'frame- slot)))
+    `(progn
+       (setf (documentation ',reader 'function)
+             ,(format nil "The ~(~a~) of FRAME, which `~(~a~)' gives of an editor's current frame." slot name))
+       (declaim (inline ,name ,@(unless read-only `((setf ,name)))))
+       (defun ,name (editor)
+         ,documentation
+         (,reader (editor-frame editor)))
+       ,@(unless read-only
+           `((defun (setf ,name) (value editor)
+               ,documentation
+               (setf (,reader (editor-frame editor)) value)))))))
+
+(define-frame-accessor editor-frontend frontend
+  "The frontend of EDITOR's current frame." :read-only t)
+(define-frame-accessor editor-window window
+  "The selected window of EDITOR's current frame, the one commands act on.")
+(define-frame-accessor editor-minibuffer-prompt minibuffer-prompt
+  "The prompt shown while the minibuffer of EDITOR's current frame is active.")
+(define-frame-accessor editor-minibuffer-text minibuffer-text
+  "The text typed so far in the minibuffer of EDITOR's current frame.")
+(define-frame-accessor editor-minibuffer-point minibuffer-point
+  "The cursor position within the minibuffer text of EDITOR's current frame.")
+(define-frame-accessor editor-minibuffer-count minibuffer-count
+  "While a question that is no completing read counts something, what it shows
+before its prompt in EDITOR's current frame (3/12, or \"\" for its place kept
+empty); else NIL.")
+(define-frame-accessor editor-minibuffer-active minibuffer-active
+  "True while the minibuffer of EDITOR's current frame reads input.")
+(define-frame-accessor editor-completion completion
+  "The COMPLETION state while a completing read is active in EDITOR's current frame, or NIL.")
+(define-frame-accessor editor-popup popup
+  "The list of completions shown beside the cursor in EDITOR's current frame (COMPLETE-IN-TEXT), or NIL.")
+(define-frame-accessor editor-note note
+  "The box of words shown under the cursor in EDITOR's current frame (SHOW-NOTE),
+as (BUFFER POSITION PARAGRAPHS), or NIL.")
+(define-frame-accessor editor-minibuffer-completer minibuffer-completer
+  "While the minibuffer of EDITOR's current frame reads, the function
+\\<minibuffer>\\[minibuffer-complete] calls to complete the word at its cursor, or NIL.")
+(define-frame-accessor editor-height height
+  "Rows of the whole display of EDITOR's current frame.")
+(define-frame-accessor editor-width width
+  "Columns of the whole display of EDITOR's current frame.")
+(define-frame-accessor editor-message message
+  "Transient text shown in the echo area of EDITOR's current frame, or NIL.")
+(define-frame-accessor editor-pending pending
+  "Key specs of an unfinished key sequence typed in EDITOR's current frame.")
+(define-frame-accessor editor-prefix-argument prefix-argument
+  "The numeric prefix argument for the current command, given in EDITOR's current frame, or NIL.")
+(define-frame-accessor editor-unread unread
+  "Events of EDITOR's current frame read while the editor waited on work of its
+own, to be handled next, in order.")
+(define-frame-accessor editor-collecting-prefix collecting-prefix
+  "True while \\[universal-argument] collects digits for the prefix argument in EDITOR's current frame:
+:DIGITS once a digit has come since the last \\[universal-argument].")
+(define-frame-accessor editor-this-key this-key
+  "The key that completed the current command's key sequence in EDITOR's current frame.")
+(define-frame-accessor editor-transient-map transient-map
+  "A keymap consulted before all others in EDITOR's current frame while its
+commands keep it (SET-TRANSIENT-MAP), or NIL.")
+(define-frame-accessor editor-transient-keep transient-keep
+  "The function of a command that says whether the transient map of EDITOR's current frame stays after it.")
+(define-frame-accessor editor-transient-exit transient-exit
+  "The function called when the transient map of EDITOR's current frame goes, or NIL.")
+(define-frame-accessor editor-transient-fresh transient-fresh
+  "True while the command that set the transient map of EDITOR's current frame
+runs: that one is not asked whether it keeps it.")
+(define-frame-accessor editor-menu menu
+  "The menu open now in EDITOR's current frame, the arguments it has on and
+those it was opened with, as (MENU ARGUMENTS OPENED), or NIL (OPEN-MENU).")
+(define-frame-accessor editor-title-shown title-shown
+  "The buffer name and *GUI-TITLE* the title of EDITOR's current frame was last made from, as a list.")
+(define-frame-accessor editor-deferred deferred
+  "Events that ended a command's question in EDITOR's current frame, the window
+closed or files dropped, to be handled once it is done, oldest first.")
 
 (setf (documentation 'editor-p 'function) "True when OBJECT is an EDITOR."
-      (documentation 'editor-frontend 'function) "The frontend of EDITOR."
-      (documentation 'editor-window 'function) "The selected window of EDITOR, the one commands act on."
+      (documentation 'editor-frames 'function) "The frames of EDITOR, its screens."
+      (documentation 'editor-frame 'function) "The current frame of EDITOR, the screen being worked in."
       (documentation 'editor-selections 'function) "How many times a window of EDITOR has been selected: the clock of WINDOW-USE-TIME."
       (documentation 'editor-global-keymap 'function) "EDITOR's global keymap, the last one consulted."
       (documentation 'editor-state-keymap 'function) "The modal state keymap consulted first, or NIL."
       (documentation 'editor-fallback-keymap 'function) "A keymap consulted after the buffer's own and before the global one (the modal support keys), or NIL."
       (documentation 'editor-minibuffer-keymap 'function) "The keymap active while the minibuffer reads input."
-      (documentation 'editor-minibuffer-prompt 'function) "The prompt shown while the minibuffer is active."
-      (documentation 'editor-minibuffer-text 'function) "The text typed so far in the minibuffer."
-      (documentation 'editor-minibuffer-point 'function) "The cursor position within the minibuffer text."
-      (documentation 'editor-minibuffer-count 'function) "While a question that is no completing read counts something, what it shows before its prompt (3/12, or \"\" for its place kept empty); else NIL."
-      (documentation 'editor-minibuffer-active 'function) "True while the minibuffer reads input."
-      (documentation 'editor-completion 'function) "The COMPLETION state while a completing read is active, or NIL."
-      (documentation 'editor-popup 'function) "The list of completions shown beside the cursor (COMPLETE-IN-TEXT), or NIL."
-      (documentation 'editor-note 'function) "The box of words shown under the cursor (SHOW-NOTE), as (BUFFER POSITION PARAGRAPHS), or NIL."
-      (documentation 'editor-minibuffer-completer 'function) "While the minibuffer reads, the function \\<minibuffer>\\[minibuffer-complete] calls to complete the word at its cursor, or NIL."
-      (documentation 'editor-height 'function) "Rows of the whole display."
-      (documentation 'editor-width 'function) "Columns of the whole display."
       (documentation 'editor-key-hints 'function) "True to show the bindings under a pending prefix key in the panel."
-      (documentation 'editor-message 'function) "Transient text shown in the echo area, or NIL."
       (documentation 'editor-kill-ring 'function) "Kills, newest first: strings, or ropes for kills too large for the system clipboard."
-      (documentation 'editor-unread 'function) "Events read while the editor waited on work of its own, to be handled next, in order."
-      (documentation 'editor-pending 'function) "Key specs of an unfinished key sequence."
       (documentation 'editor-last-command 'function) "The command run before the current one."
       (documentation 'editor-this-command 'function) "The command being run."
-      (documentation 'editor-prefix-argument 'function) "The numeric prefix argument for the current command, or NIL."
       (documentation 'editor-running 'function) "False once the editor should exit."
-      (documentation 'editor-this-key 'function) "The key that completed the current command's key sequence."
-      (documentation 'editor-collecting-prefix 'function) "True while \\[universal-argument] collects digits for the prefix argument:
-:DIGITS once a digit has come since the last \\[universal-argument]."
       (documentation 'editor-self-insert-command 'function) "Command run for an unbound plain character, or NIL to treat it as undefined."
       (documentation 'editor-mode-line-function 'function) "Function of (EDITOR WINDOW) returning the text of WINDOW's mode line and the spans of it in faces of their own, or NIL for the default."
       (documentation 'editor-cursor-shape-function 'function) "Function of (EDITOR) returning the cursor's shape and colour, as *CURSOR-SHAPE* and *CURSOR-COLOUR* take them, NIL for those; and as a third value, true while text is typed. NIL for *CURSOR-SHAPE* and *CURSOR-COLOUR* always."
       (documentation 'editor-post-command-functions 'function) "Functions called with (EDITOR) after every command."
       (documentation 'editor-repeatable 'function) "The last command run other than repeat, the prefix argument it had and the key that ran it, as (COMMAND ARGUMENT . KEY)."
       (documentation 'editor-repeat-map 'function) "The keymap of keys that repeat the command just run by themselves (DEFINE-REPEAT-KEYS), while it is in force, or NIL."
-      (documentation 'editor-transient-map 'function) "A keymap consulted before all others while its commands keep it (SET-TRANSIENT-MAP), or NIL."
-      (documentation 'editor-transient-keep 'function) "The function of a command that says whether the transient map stays after it."
-      (documentation 'editor-transient-exit 'function) "The function called when the transient map goes, or NIL."
-      (documentation 'editor-transient-fresh 'function) "True while the command that set the transient map runs: that one is not asked whether it keeps it."
-      (documentation 'editor-menu 'function) "The menu open now, the arguments it has on and those it was opened with, as (MENU ARGUMENTS OPENED), or NIL (OPEN-MENU)."
-      (documentation 'editor-pre-command-functions 'function) "Functions called with (EDITOR COMMAND) before every command runs."
-      (documentation 'editor-title-shown 'function) "The buffer name and *GUI-TITLE* the window's title was last made from, as a list."
-      (documentation 'editor-deferred 'function) "Events that ended a command's question, the window closed or files dropped, to be handled once it is done, oldest first.")
+      (documentation 'editor-pre-command-functions 'function) "Functions called with (EDITOR COMMAND) before every command runs.")
+
+(defun wake-editor (editor)
+  "Wake EDITOR's frames, from any thread, to show what work in the background
+has for them; an error waking one is ignored."
+  (dolist (frame (editor-frames editor))
+    (ignore-errors (tuatara.frontend:frontend-wake (frame-frontend frame)))))
 
 (defvar *editor* nil
   "The editor whose command is running.")
@@ -388,7 +460,7 @@ under *MESSAGES-FROM-THREADS-LOCK*, and wake the running editor to take it in."
             (push ,item ,place))
           (let ((running *running-editor*))
             (when running
-              (ignore-errors (tuatara.frontend:frontend-wake (editor-frontend (car running))))))))
+              (wake-editor (car running))))))
 
 (defun take-in-thread-messages (editor)
   "Show and keep in *Messages*, on EDITOR's thread, the messages said on other

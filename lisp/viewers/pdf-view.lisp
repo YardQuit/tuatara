@@ -183,7 +183,7 @@ JOB's RESULT, and JOB is DONE after; the editor is woken then. Returns JOB.
 The pages and the text are not jobs of the job runner: many pages are drawn
 and given up as you turn them, the view's tick taking in each, and the mode
 line says the page, P left unlit."
-  (let ((frontend (and *editor* (editor-frontend *editor*))))
+  (let ((editor *editor*))
     (setf (pdf-view-job-thread job)
           (tuatara.runtime:make-guarded-thread
            (tuatara.runtime:carry-settings
@@ -195,7 +195,7 @@ line says the page, P left unlit."
                            (call-with-pdf-copy view work)))
                 ;; however it ends, the job is over, the editor told
                 (setf (pdf-view-job-done job) t)
-                (when frontend (ignore-errors (tuatara.frontend:frontend-wake frontend))))))
+                (when editor (wake-editor editor)))))
            :name "tuatara pdf view"))
     job))
 

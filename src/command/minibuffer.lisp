@@ -304,7 +304,7 @@ value, :RUNNING when it had not. Work told to stop that does not end in the
 two seconds is left to end on its own, the echo area saying so, and THREAD,
 when given, the debug log. With no editor showing, it simply waits."
   (let* ((editor *editor*)
-         (frontend (and editor (editor-frontend editor)))
+         (frontend (and editor (frame-frontend (editor-frame editor))))
          (shown nil)
          (next 0))
     (unless frontend

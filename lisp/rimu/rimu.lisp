@@ -219,8 +219,8 @@ each (NAME ENTRIES CELLS), for RIMU-TICK to show.")
 (defvar *rimu-ready-lock* (sb-thread:make-mutex :name "rimu ready")
   "Held while *RIMU-READY* changes, which threads other than the editor's do.")
 
-(defvar *rimu-frontend* nil
-  "The frontend of the editor rimu last ran in, which RIMU-COLUMN-READY wakes.")
+(defvar *rimu-editor* nil
+  "The editor rimu last ran in, which RIMU-COLUMN-READY wakes.")
 
 (defun set-rimu-column (name cells &key (place :before) (align :left) (shown 'rimu-details-p) documentation)
   "Make NAME, a keyword, a column rimu shows beside the names of entries, in
@@ -244,8 +244,8 @@ vector its function was given when it returned :PENDING; the lists showing
 those entries show them. Any thread may call it."
   (sb-thread:with-mutex (*rimu-ready-lock*)
     (push (list name entries cells) *rimu-ready*))
-  (let ((frontend *rimu-frontend*))
-    (when frontend (ignore-errors (tuatara.frontend:frontend-wake frontend))))
+  (let ((editor *rimu-editor*))
+    (when editor (wake-editor editor)))
   name)
 
 (defun rimu-column-in-background (column entries thread-name cells)
@@ -872,10 +872,10 @@ In a list of files found, reading again looks at those files again
          (job (make-rimu-job (setf (tuatara.buffer:buffer-local buffer 'rimu-generation)
                                    (1+ (tuatara.buffer:buffer-local buffer 'rimu-generation 0)))
                              point-on fresh))
-         (frontend (and *editor* (editor-frontend *editor*))))
+         (editor *editor*))
     (when (and found (null old))
       (return-from rimu-update buffer))
-    (setf *rimu-frontend* frontend
+    (setf *rimu-editor* editor
           (rimu-job-thread job)
           (tuatara.runtime:make-guarded-thread
            (tuatara.runtime:carry-settings
@@ -890,7 +890,7 @@ In a list of files found, reading again looks at those files again
                               (rimu-job-listing job) listing))
                     (serious-condition (e) (setf (rimu-job-reason job) (princ-to-string e))))
                (setf (rimu-job-done job) t)
-               (when frontend (ignore-errors (tuatara.frontend:frontend-wake frontend))))))
+               (when editor (wake-editor editor)))))
            :name "tuatara rimu"))
     (setf (tuatara.buffer:buffer-local buffer 'rimu-job) job)
     (when (and wait (plusp *rimu-read-wait*))
@@ -1025,7 +1025,7 @@ then, once that is over."
   "Tick function: show the lists whose directories were read in the
 background, the texts of columns found there, and the preview; T while
 something is read, the seconds until the preview is due, or NIL."
-  (setf *rimu-frontend* (editor-frontend editor))
+  (setf *rimu-editor* editor)
   (let ((working nil))
     (when *rimu-ready* (rimu-show-ready))
     (dolist (buffer (copy-list *rimu-waiting*))

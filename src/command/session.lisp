@@ -169,7 +169,7 @@ background, is stopped and says so."
           do (take-in-thread-messages editor)
              (let ((wait (run-tick-functions editor))
                    (began (get-internal-real-time)))
-               (unless (and (tuatara.frontend:frontend-input-pending-p (editor-frontend editor))
+               (unless (and (tuatara.frontend:frontend-input-pending-p (frame-frontend (editor-frame editor)))
                             (< (tuatara.runtime:milliseconds-since drawn) *frame-at-least-every*))
                  (redisplay-or-say editor)
                  (setf drawn (get-internal-real-time))
@@ -217,9 +217,11 @@ like."
   (car *running-editor*))
 
 (defun key-waiting-p ()
-  "True when a key has been pressed that the editor has not read yet."
+  "True when a key has been pressed, in any of the editor's frames, that the
+editor has not read yet."
   (let ((editor (or *editor* (running-editor))))
-    (and editor (tuatara.frontend:frontend-input-pending-p (editor-frontend editor)))))
+    (and editor (some (lambda (frame) (tuatara.frontend:frontend-input-pending-p (frame-frontend frame)))
+                      (editor-frames editor)))))
 
 (defun defer-action (function)
   "Have FUNCTION run as the editor's next command, before the next key: work
@@ -231,7 +233,7 @@ editor's thread, which is woken for it (TAKE-IN-THREAD-MESSAGES)."
       (let ((editor (or *editor* (car *running-editor*))))
         (when editor
           (setf (editor-deferred editor) (append (editor-deferred editor) (list function)))
-          (ignore-errors (tuatara.frontend:frontend-wake (editor-frontend editor)))))))
+          (wake-editor editor)))))
 
 (defvar *exit-functions* '()
   "Functions called with the editor once its command loop has stopped, however
