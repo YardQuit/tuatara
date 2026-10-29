@@ -134,6 +134,49 @@ removed and added."
           append (loop for i from (1- old-start) repeat old-count collect (list :removed (svref old i)))
           append (loop for i from (1- new-start) repeat new-count collect (list :added (svref new i))))))
 
+(defun unified-diff (old new &key (old-name "old") (new-name "new") (context 3) (limit 2000))
+  "The differences between OLD and NEW, lists of lines (strings without their
+newlines), written as diff --unified and git write them: a --- line naming
+OLD-NAME and a +++ line naming NEW-NAME, then each hunk, its @@ line, the
+lines only OLD has after -, those only NEW has after +, and CONTEXT lines
+both have around them after a space, hunks whose context would meet made
+one. Empty when they are the same. LIMIT is as for DIFF-HUNKS."
+  (let* ((old (coerce old 'simple-vector)) (new (coerce new 'simple-vector))
+         (n (length old))
+         ;; each hunk as 0-based (OLD-FROM OLD-TO NEW-FROM NEW-TO)
+         (hunks (loop for (os oc ns nc) in (diff-hunks (map '(simple-array fixnum (*)) #'tuatara.text:string-hash old)
+                                                         (map '(simple-array fixnum (*)) #'tuatara.text:string-hash new)
+                                                         :limit limit)
+                      for o = (if (zerop oc) os (1- os))
+                      for s = (if (zerop nc) ns (1- ns))
+                      collect (list o (+ o oc) s (+ s nc))))
+         (groups '()))
+    ;; hunks whose context meets, together
+    (dolist (hunk hunks)
+      (if (and groups (<= (- (first hunk) (second (first (first groups)))) (* 2 context)))
+          (push hunk (first groups))
+          (push (list hunk) groups)))
+    (if (null hunks)
+        ""
+        (with-output-to-string (out)
+          (format out "--- ~a~%+++ ~a~%" old-name new-name)
+          (dolist (group (nreverse (mapcar #'reverse groups)))
+            (let* ((first (first group)) (last (car (last group)))
+                   (old-from (max 0 (- (first first) context)))
+                   (old-to (min n (+ (second last) context)))
+                   (new-from (- (third first) (- (first first) old-from)))
+                   (new-to (+ (fourth last) (- old-to (second last)))))
+              (flet ((range (from to) (format nil "~d,~d" (if (= from to) from (1+ from)) (- to from))))
+                (format out "@@ -~a +~a @@~%" (range old-from old-to) (range new-from new-to)))
+              (let ((at old-from))
+                (dolist (hunk group)
+                  (destructuring-bind (o0 o1 n0 n1) hunk
+                    (loop for i from at below o0 do (format out " ~a~%" (svref old i)))
+                    (loop for i from o0 below o1 do (format out "-~a~%" (svref old i)))
+                    (loop for i from n0 below n1 do (format out "+~a~%" (svref new i)))
+                    (setf at o1)))
+                (loop for i from at below old-to do (format out " ~a~%" (svref old i))))))))))
+
 (defun map-line (hunks line)
   "The line of the new text that 0-based LINE of the old one becomes through
 HUNKS (DIFF-HUNKS): moved by the lines added and removed before it; a line

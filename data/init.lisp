@@ -988,10 +988,15 @@
   ;; line after them 3000 more. Not set: 1000.
   ;; (setf *git-diff-lines* 3000)
 
-  ;; Each section of the status (files not tracked, changed, staged, ignored)
-  ;; lists its first 3000 files, and TAB on the line after them 3000 more.
-  ;; Not set: 1000.
+  ;; Each section of the status (files in conflict, not tracked, changed,
+  ;; staged, ignored) lists its first 3000 files, and TAB on the line after
+  ;; them 3000 more. Not set: 1000.
   ;; (setf *git-section-lines* 3000)
+
+  ;; A file up to 64 MB is looked through for the conflicts a merge left in
+  ;; it when it is shown; a larger one only with M-x conflict-markers-mode.
+  ;; Not set: 256 MB.
+  ;; (setf *conflict-markers-max-bytes* (* 64 1024 1024))
 
   ;; A status on the screen is read again at most every 5 seconds when git
   ;; changes the repository (from a terminal too), nil never: r reads it

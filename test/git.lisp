@@ -104,6 +104,14 @@
     (is equal '(("new.txt" "new file") ("to.txt" "renamed" "from.txt")) (tuatara.defaults::git-state-staged state))
     (is equal '(("loose.txt" "untracked")) (tuatara.defaults::git-state-untracked state))))
 
+(define-test (git unmerged-files-read)
+  ;; git status's u lines are files in conflict, a section of their own
+  (let ((state (tuatara.defaults::parse-git-status
+                (format nil "u UU N... 100644 100644 100644 100644 a1 b2 c3 both.txt~au UD N... 100644 100644 0 100644 a1 b2 c3 gone.txt~a1 .M N... 100644 100644 100644 1 2 plain.txt~a"
+                        #\Nul #\Nul #\Nul))))
+    (is equal '(("both.txt" "both changed") ("gone.txt" "deleted by them")) (tuatara.defaults::git-state-unmerged state))
+    (is equal '(("plain.txt" "modified")) (tuatara.defaults::git-state-unstaged state))))
+
 (define-test (git trusted-where-it-really-is)
   ;; a project is trusted by where it really is: a link from a trusted folder lends none,
   ;; nor does .. out of one; one trusted when asked is kept by its real place
@@ -1371,7 +1379,7 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
     (git-commit-file dir "a.txt" (format nil "mainline~%") "Main")
     (git-output dir "merge" "-q" "side")
     (let ((f (git-session dir "a.txt"
-                          (list "M-< C-s u n m e r g e d RET TAB"
+                          (list "M-< C-s b o t h SPC c h RET TAB"
                                 (list :until (lambda () (search "@@@" (tuatara.buffer:buffer-string (git-status-here)))))
                                 "C-s @ @ @ RET s" (list :wait 0.3))
                           :width 140)))

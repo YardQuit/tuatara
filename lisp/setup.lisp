@@ -213,6 +213,7 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-git-rewind)
     (install-git-repository)
     (install-git-patches)
+    (install-conflicts editor)
     (install-gpg-commands)
     (install-places)
     (install-bookmarks)

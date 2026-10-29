@@ -37,7 +37,7 @@ available unqualified, and the public API of TUATARA is used.")
            #:*auto-save* #:*auto-save-directory* #:*auto-save-idle* #:*auto-save-interval* #:*auto-save-largest* #:*keep-session*
            #:*keep-session-interval*
            ;; encryption, and wiping files
-           #:*gpg-program* #:*gpg-passphrase-from* #:*metadata-look-up-key-owners* #:*wipe-passes* #:*cache-directory* #:*state-directory* #:*packages-directory* #:*package-most-octets* #:*vc-gutter-max-bytes* #:*archive-seconds* #:*archive-free-reserve* #:*archive-listing-limit* #:*differences-limit* #:*gpg-loopback-warning*
+           #:*gpg-program* #:*gpg-passphrase-from* #:*metadata-look-up-key-owners* #:*wipe-passes* #:*cache-directory* #:*state-directory* #:*packages-directory* #:*package-most-octets* #:*vc-gutter-max-bytes* #:*conflict-markers-max-bytes* #:*archive-seconds* #:*archive-free-reserve* #:*archive-listing-limit* #:*differences-limit* #:*gpg-loopback-warning*
            ;; language servers and formatters
            #:*language-servers* #:*language-formatters* #:*lsp-trusted-projects* #:*lsp-languages* #:*lsp-signature-help* #:*lsp-inlay-hints*
            #:*lsp-wait* #:*lsp-events-kept* #:*lsp-watch-files* #:*lsp-watch-skipped* #:*lsp-watched-most* #:*lsp-most-changes* #:*lsp-event-length*
