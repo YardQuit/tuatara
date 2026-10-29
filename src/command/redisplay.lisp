@@ -626,6 +626,27 @@ picture is shown or on its way: its text is not there to put a cursor in."
            (not (tuatara.buffer:buffer-local buffer :image-hidden))
            (tuatara.buffer:buffer-local buffer :picture-view))))
 
+(defun lay-out-window (editor window)
+  "Lay WINDOW out with its point visible, its gutter's width worked out
+again: the rows it shows. Point is kept visible in the rows the window has
+under a panel of one row, so that a taller panel, while it lasts, only
+hides rows."
+  (setf (tuatara.display:window-margin window) (window-margin-for editor window))
+  (let ((shown (tuatara.display:window-height window)))
+    (setf (tuatara.display:window-height window)
+          (or (tuatara.display:window-full-height window) shown))
+    (unwind-protect (tuatara.display:window-ensure-point-visible window)
+      (setf (tuatara.display:window-height window) shown))))
+
+(defun lay-out-windows (editor)
+  "Lay out every window of EDITOR's frame as a frame drawn now would, its
+point visible, painting nothing: for commands that work from what a window
+shows (scrolling, moving to a row of it) while nothing is drawn."
+  (fit-windows editor (length (panel-rows editor)))
+  (dolist (window (editor-windows editor))
+    (when (plusp (tuatara.display:area-height window))
+      (lay-out-window editor window))))
+
 (defun window-pieces (editor window selected screen)
   "Lay WINDOW out with its point visible and add what it shows to SCREEN, a
 vector of the pieces of each screen row (PUT-SCREEN-ROW): its buffer's header
@@ -646,12 +667,7 @@ cells, a terminal's) are noted too, its text shown as it is."
         (width (tuatara.display:window-width window))
         (height (tuatara.display:window-height window)))
     (when (plusp (tuatara.display:area-height window))
-      (setf (tuatara.display:window-margin window) (window-margin-for editor window))
-      (let* ((rows (let ((shown (tuatara.display:window-height window)))
-                     (setf (tuatara.display:window-height window)
-                           (or (tuatara.display:window-full-height window) shown))
-                     (unwind-protect (tuatara.display:window-ensure-point-visible window)
-                       (setf (tuatara.display:window-height window) shown))))
+      (let* ((rows (lay-out-window editor window))
              (cursor-ends (multiple-value-bind (ranges ends) (other-cursors-in editor window rows)
                             ;; other cursors last, over everything else
                             (tuatara.display:apply-highlights rows (append (window-highlights-for editor window rows) ranges))
@@ -836,8 +852,11 @@ window's text rows and its mode line, the selected window's in :mode-line and
 the others' in :mode-line-inactive, a divider between windows side by side,
 the bottom panel (echo area, or the minibuffer with its candidates, or the key
 hints), and the cursor. Nothing here waits for a large file's lines to be
-counted: what needs them shows without them meanwhile."
+counted: what needs them shows without them meanwhile. While recorded keys
+play, only the candidates of a question are brought up to date: nothing is
+drawn."
   (update-candidates editor)
+  (when *keys-playing* (return-from redisplay nil))
   (preview-selection editor)
   (popup-follow editor)
   (multiple-value-bind (panel minibuffer-row) (panel-rows editor)

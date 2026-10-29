@@ -8,7 +8,7 @@
    #:xml-name #:xml-attribute #:xml-children #:xml-child #:xml-root #:xml-local-name #:xml-unprefixed #:xml-local-children #:xml-find-all #:xml-all-text
    #:xml-first-text #:xml-parse #:*xml-deepest* #:*xml-most-elements* #:xml-escape
    #:xml-elements #:xml-element #:xml-top-elements #:xml-element-inner #:xml-element-inside #:xml-replace-elements #:xml-value
-   #:utf-16-text #:parse-decimal #:split-words #:merge-ranges #:+fnv-offset+ #:+fnv-prime+ #:octets-hash #:string-hash
+   #:utf-16-text #:parse-decimal #:split-words #:number-formatter #:merge-ranges #:+fnv-offset+ #:+fnv-prime+ #:octets-hash #:string-hash
    ;; JSON
    #:json-read #:json-path-bounds #:json-write #:json-object #:json-get #:json-integer #:json-text #:json-items #:json-true-p #:json-error #:json-error-position #:json-error-text #:*json-deepest*
    ;; types and tunables

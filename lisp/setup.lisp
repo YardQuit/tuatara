@@ -22,6 +22,8 @@
     ("C-x T o" centred-text-mode) ("C-x T i" invisible-characters-mode) ("C-x T s" toggle-search-highlight) ("C-x T t" toggle-mode-line-tuatara)
     ;; characters and input methods
     ("C-x 8 &" insert-digraph) ("C-x 8 ." digraph-input-mode) ("C-x 8 -" input-method-off) ("C-\\" toggle-input-method)
+    ;; keys recorded and played back
+    ("C-x (" start-recording-keys) ("C-x )" stop-recording-keys) ("C-x e" play-recorded-keys)
     ("C-x b" switch-to-buffer) ("C-x k" kill-buffer) ("C-x u" undo) ("M-(" insert-pair) ("C-x C-;" comment-line) ("M-;" comment-dwim)
     ("M-x" execute-extended-command) ("M-:" eval-expression) ("M-g g" goto-line) ("M-g M-g" goto-line)
     ("C-f" forward-char) ("C-b" backward-char) ("C-n" next-line) ("C-p" previous-line)
@@ -187,6 +189,7 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-input-methods editor)
     (install-characters editor)
     (install-search-keys)
+    (install-recorded-keys)
     (install-search-filters)
     (install-rewrites)
     (install-jobs)

@@ -590,44 +590,6 @@ block's left column on its line. A rectangle over more text than
            (progn (rows-change-now b :clear)
                   (goto (tuatara.display:buffer-move-to-screen-column b (tuatara.buffer:buffer-goto-line b line) left))))))))
 
-(defun number-formatter (control)
-  "A function of a number giving the text CONTROL makes of it: CONTROL's
-characters as they are, %d (or %s) standing for the number, with - before
-the width to put it on the left, 0 to pad with zeros and a width (%3d, %-3d,
-%03d), and %% for a percent sign. An error for any other %."
-  (let ((parts '()) (i 0) (n (length control)))
-    (loop while (< i n)
-          do (let ((c (char control i)))
-               (if (char/= c #\%)
-                   (progn (push (string c) parts) (incf i))
-                   (let ((j (1+ i)) (left nil) (zeros nil))
-                     (loop while (and (< j n) (find (char control j) "-0"))
-                           do (if (char= (char control j) #\-) (setf left t) (setf zeros t))
-                              (incf j))
-                     (let ((width-end (or (position-if-not #'digit-char-p control :start j) n)))
-                       (cond ((and (= j (1+ i)) (< j n) (char= (char control j) #\%))
-                              (push "%" parts) (setf i (1+ j)))
-                             ((and (< width-end n) (find (char control width-end) "ds"))
-                              (push (list (if (> width-end j) (parse-integer control :start j :end width-end) 0) left zeros)
-                                    parts)
-                              (setf i (1+ width-end)))
-                             (t (error "Format string: ~a is not understood; %d stands for the number"
-                                       (subseq control i (min n (1+ width-end)))))))))))
-    (setf parts (nreverse parts))
-    (lambda (number)
-      (with-output-to-string (out)
-        (dolist (part parts)
-          (if (stringp part)
-              (write-string part out)
-              (destructuring-bind (width left zeros) part
-                (let* ((digits (princ-to-string number))
-                       (pad (max 0 (- width (length digits)))))
-                  (cond (left (write-string digits out) (write-string (spaces pad) out))
-                        (zeros (when (minusp number) (write-char #\- out) (setf digits (subseq digits 1)))
-                               (write-string (make-string pad :initial-element #\0) out)
-                               (write-string digits out))
-                        (t (write-string (spaces pad) out) (write-string digits out)))))))))))
-
 (defun number-rectangle (replace)
   "Number the lines of the rectangle between the mark and point, as
 \\[number-rectangle-lines] (REPLACE false) or \\[number-rectangle-lines-replace]

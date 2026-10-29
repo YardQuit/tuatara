@@ -225,6 +225,7 @@ text added, on a ground of its own."
 (define-face :warning "Warnings marked in text, such as the warning lines of a log." :fg :yellow :bold t)
 (define-face :mode-line-rewind "Rewind and the commit shown, in the mode line of a file or folder shown as a commit left it (\\[git-rewind]): lit up in the theme's warning colour, so that it is seen at once that this is not the file as it is now." :inherit :warning :reverse t)
 (define-face :mode-line-sign "The mode line's signs before [-] while their work goes on: P while a job of the buffer runs or waits its turn (*processing-indicator*), U while a directory of *indexed-directories* is being read (*indexing-indicator*), S while one is searched (*searching-indicator*); in the theme's warning colour, to stand out." :inherit :warning)
+(define-face :mode-line-recording "Rec in the mode line while keys are recorded (\\[start-recording-keys]), and how many plays are done while recorded keys play over and over (\\[play-recorded-keys]); as the signs of work, in the theme's warning colour." :inherit :mode-line-sign)
 (define-face :terminal-bold "Text a program in a terminal set in bold." :bold t)
 (define-face :terminal-italic "Text a program in a terminal set in italics." :italic t)
 (define-face :terminal-underline "Text a program in a terminal underlined." :underline t)

@@ -42,6 +42,9 @@
            #:*window-divider*
            ;; repeating
            #:define-repeat-keys #:*repeat-maps* #:*not-repeatable* #:editor-repeatable #:editor-repeat-map
+           ;; recorded keys
+           #:start-keys-recording #:stop-keys-recording #:drop-command-keys #:keys-recording-p #:keys-playing-p #:quit-while-playing-p
+           #:play-keys #:note-command-failed #:*keys-play-progress*
            #:*show-completion-count* #:*prompt-above-candidates* #:completion-count-prefix #:*panel-max-rows*
            #:define-menu #:open-menu #:menu-named #:menu-entry-argument #:menu-entry-command #:menu-groups #:menu-entries #:menu-arguments #:menu-open-p #:*menu-help-function* #:editor-menu
            #:set-transient-map #:clear-transient-map #:editor-transient-map #:editor-transient-keep

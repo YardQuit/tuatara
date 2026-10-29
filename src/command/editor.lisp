@@ -190,6 +190,11 @@ has for them; an error waking one is ignored."
 (defvar *editor* nil
   "The editor whose command is running.")
 
+(defvar *background-work* nil
+  "True when a tick function said at the last tick that work of its own runs
+in the background. A frontend for tests ends its session only once nothing
+runs.")
+
 (defun prefix-argument ()
   "The prefix argument given the command running now, a number: 4 for
 \\[universal-argument] alone, 16 for it twice, the digits typed after it, -1 for a
@@ -503,7 +508,9 @@ in *Messages*: the keys of a sequence being typed, prompts."
         (unmark-keys (apply #'format nil (substitute-command-keys control :marks t :for-format t) arguments))))
 
 (defun keyboard-quit-signal ()
-  "Signal QUIT: abandon the current command or minibuffer read."
+  "Signal QUIT: abandon the current command or minibuffer read. Keys being
+recorded are given up (GIVE-UP-KEY-RECORDING)."
+  (give-up-keys-recording)
   (error 'quit))
 
 (defvar *key-question* nil

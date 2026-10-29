@@ -41,6 +41,11 @@ the order :ctrl :meta :shift followed by the base."
           (and (key-shift key) '(:shift))
           (list (key-base key))))
 
+(defun spec-key (spec)
+  "The KEY that SPEC, a key spec as KEY-SPEC gives one, stands for."
+  (make-key (car (last spec)) :ctrl (and (member :ctrl spec) t) :meta (and (member :meta spec) t)
+                              :shift (and (member :shift spec) t)))
+
 (defparameter *key-names*
   '(("RET" . :enter) ("SPC" . #\Space) ("TAB" . :tab) ("DEL" . :backspace) ("ESC" . :escape)
     ("<up>" . :up) ("<down>" . :down) ("<left>" . :left) ("<right>" . :right)

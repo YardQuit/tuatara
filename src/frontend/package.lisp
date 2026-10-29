@@ -5,7 +5,7 @@
   (:use #:cl #:alexandria)
   (:documentation "The narrow interface every painter implements: frames and windows, input, glyph-row output, cursor shape, clipboard, pictures, keys and their descriptions.")
   (:export #:key #:key-p #:make-key #:key-base #:key-ctrl #:key-meta #:key-shift #:key-column #:key-row #:key-spec #:key-sequence-description
-           #:parse-key #:parse-key-sequence #:key-description
+           #:parse-key #:parse-key-sequence #:key-description #:spec-key
            #:event #:event-p #:make-event #:event-kind #:event-key #:event-width #:event-height
            #:event-files #:event-column #:event-row #:event-text
            #:frontend-start #:frontend-stop #:frontend-size #:frontend-read-event #:frontend-read-event-timeout

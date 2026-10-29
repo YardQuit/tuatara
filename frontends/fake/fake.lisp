@@ -182,12 +182,7 @@ width and height in pixels, makes it show pictures."
 (defun fake-queue-keys (frontend keys)
   "Queue key events for KEYS, a key sequence as a string (\"C-x C-f a b\")."
   (dolist (spec (tuatara.frontend:parse-key-sequence keys))
-    (fake-queue-event frontend
-                      (tuatara.frontend:make-event
-                       :key :key (tuatara.frontend:make-key (car (last spec))
-                                                            :ctrl (and (member :ctrl spec) t)
-                                                            :meta (and (member :meta spec) t)
-                                                            :shift (and (member :shift spec) t))))))
+    (fake-queue-event frontend (tuatara.frontend:make-event :key :key (tuatara.frontend:spec-key spec)))))
 
 (defun fake-screen-line (frontend row)
   "Row ROW of the last frame, right-trimmed."

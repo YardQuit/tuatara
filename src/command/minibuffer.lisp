@@ -3,11 +3,6 @@
 
 (in-package #:tuatara.command)
 
-(defvar *background-work* nil
-  "True when a tick function said at the last tick that work of its own runs
-in the background. A frontend for tests ends its session only once nothing
-runs.")
-
 (defun read-password (prompt &key confirm)
   "Read a secret, a passphrase, with PROMPT in the minibuffer, what is typed
 shown as stars and kept nowhere else (no history, no debug log); with CONFIRM
@@ -155,10 +150,10 @@ HISTORY, a list of earlier answers, newest first, is gone back through with
                                ;; what came in the background; a choice held back is made once all has come
                                (take-in-source editor)
                                (when (and (completion-done-pending completion) (not (completion-working completion)))
-                                 (setf (completion-done-pending completion) nil
-                                       ;; the keys typed while it waited: handled after it, as typed
-                                       (editor-unread editor) (append held (editor-unread editor))
-                                       held '())
+                                 (setf (completion-done-pending completion) nil)
+                                 ;; the keys typed while it waited: handled after it, as typed
+                                 (put-back-events editor held)
+                                 (setf held '())
                                  (choose))))
                         ;; what was asked for while the candidates were worked out may have started
                         ;; work: whether more is coming, asked again before waiting; all come, shown so first
@@ -324,21 +319,14 @@ when given, the debug log. With no editor showing, it simply waits."
         (loop
           (unless (running-p 1/20) (return))
           (when (and (functionp message) (>= (get-internal-real-time) next)) (show))
-          (when (tuatara.frontend:frontend-input-pending-p frontend)
-            (let ((event (tuatara.frontend:frontend-read-event-timeout frontend 1/100)))
-              (case (tuatara.frontend:event-kind event)
-                (:key (if (quit-key-p (tuatara.frontend:event-key event))
-                          (cond ((null stop) (return-from wait-while-interruptibly (values nil :running)))
-                                ((progn (funcall stop) (running-p 2))
-                                 (when thread (tuatara.runtime:left-running thread "Work stopped with C-g"))
-                                 (message "Stopped; what was under way did not end at once and ends on its own")
-                                 (return-from wait-while-interruptibly (values nil :running)))
-                                (t (return-from wait-while-interruptibly nil)))
-                          (setf (editor-unread editor) (append (editor-unread editor) (list event)))))
-                (:resize (resize editor (tuatara.frontend:event-width event) (tuatara.frontend:event-height event))
-                         (ignore-errors (redisplay editor)))
-                ((:close :drop :paste) (setf (editor-deferred editor) (append (editor-deferred editor) (list event))))
-                (t nil)))))))
+          (when (and (tuatara.frontend:frontend-input-pending-p frontend)
+                     (keep-or-quit-event editor (tuatara.frontend:frontend-read-event-timeout frontend 1/100)))
+            (cond ((null stop) (return-from wait-while-interruptibly (values nil :running)))
+                  ((progn (funcall stop) (running-p 2))
+                   (when thread (tuatara.runtime:left-running thread "Work stopped with C-g"))
+                   (message "Stopped; what was under way did not end at once and ends on its own")
+                   (return-from wait-while-interruptibly (values nil :running)))
+                  (t (return-from wait-while-interruptibly nil)))))))
     t))
 
 (defvar *read-key-replay* nil

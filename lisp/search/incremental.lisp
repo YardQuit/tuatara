@@ -97,7 +97,9 @@ its compiled pattern."
 (defvar *search* nil "The active incremental search, or NIL.")
 (defvar *search-foreground-seconds* 1/100
   "Seconds a search runs on the editor's thread before it goes on in the
-background, the editor answering keys and drawing meanwhile.")
+background, the editor answering keys and drawing meanwhile. While recorded
+keys are played a search runs on the editor's thread until it ends or
+\\`C-g' is typed.")
 
 (defvar *typing-pause* 1/2
   "Seconds without a key typed before work over a text larger than
@@ -415,7 +417,9 @@ question while that is open, else in the echo area with its string."
   "A function for the search engine's STOP argument: once the work has run
 *SEARCH-NOTICE-DELAY* seconds it shows that it is DOING it, when DOING is
 given; each call answers
-whether a key is waiting, or with BUDGET, seconds, whether they have passed."
+whether a key is waiting, or with BUDGET, seconds, whether they have passed.
+While recorded keys play only \\`C-g' stops it, which stops the play too,
+other keys waiting till the play is over (QUIT-WHILE-PLAYING-P)."
   (let ((editor *editor*) (shown nil)
         (show-at (tuatara.runtime:deadline-in *search-notice-delay*))
         (until (and budget (tuatara.runtime:deadline-in budget))))
@@ -424,8 +428,10 @@ whether a key is waiting, or with BUDGET, seconds, whether they have passed."
         (setf shown t)
         (show-search-prompt state doing)
         (redisplay-or-say editor))
-      (or (key-waiting-p)
-          (and until (tuatara.runtime:deadline-passed-p until))))))
+      (if (keys-playing-p)
+          (quit-while-playing-p)
+          (or (key-waiting-p)
+              (and until (tuatara.runtime:deadline-passed-p until)))))))
 
 (defun cancel-background-search (state)
   "Stop STATE's search in the background, when one goes on; what it finds is
@@ -647,7 +653,8 @@ move point to the match. A search that gave way to a waiting key changes
 nothing but STOPPED. A pattern that does not compile keeps the last match. A
 search longer than a moment, or held up by one line longer than
 TUATARA.RUNTIME:*SLOW-CALL-SECONDS* (a slow pattern, SLOW then), goes on in
-the background while the question is open."
+the background while the question is open; while recorded keys play it runs
+here to its end, \\`C-g' stopping it and the play."
   (let* ((b (current-buffer)) (rope (tuatara.buffer:buffer-text b)) (line (search-line-of state)))
     (setf (search-state-stopped state) nil)
     (cancel-background-search state)
@@ -661,13 +668,14 @@ the background while the question is open."
                (let ((from (max low (min from high)))
                      (forward (search-state-direction state)))
                  (multiple-value-bind (start end)
-                     (tuatara.runtime:stoppable-work ((list nil) :slow tuatara.runtime:*slow-call-seconds*)
+                     (tuatara.runtime:stoppable-work ((list nil) :slow (and (not (keys-playing-p)) tuatara.runtime:*slow-call-seconds*))
                        (pieces-search state b rope matcher from (if forward high low) forward high
                                       (search-stopper state (and (not (search-count-shown-p state)) "searching")
-                                                      (and *search-in-loop* *search-foreground-seconds*))))
+                                                      (and *search-in-loop* (not (keys-playing-p))
+                                                           *search-foreground-seconds*))))
                    (setf (search-state-slow state) (eq end :slow))
                    (cond ((and (member end '(:stopped :slow)) *search-in-loop*
-                               (not (key-waiting-p)))
+                               (not (key-waiting-p)) (not (keys-playing-p)))
                           ;; longer than a moment, no key waiting: on in the background
                           (search-in-background state rope matcher from (if forward high low) forward high))
                          ((and (eq end :slow) (not *search-in-loop*))
@@ -1070,7 +1078,8 @@ opened, or says it found nothing."
                      (t (message (if (search-state-direction state)
                                      "No match for ~a after point: \\<search>\\[search-repeat-forward] in the search goes on from the start"
                                      "No match for ~a before point: \\<search>\\[search-repeat-backward] in the search goes on from the end")
-                                 (search-state-string state)))))
+                                 (search-state-string state))))
+               (when (search-state-failing state) (note-command-failed)))
              ;; its matches stay lit till C-g; C-s and C-r right after go on through them (SEARCH-NEXT-MATCH)
              (when (and (search-state-match state) (not (search-state-failing state)))
                (setf *search-lit* (cons state (current-buffer)) *search-lit-shown* t))
@@ -1274,7 +1283,8 @@ hiding it is opened."
             ;; no more that way: from the other end
             (search-repeat state forward)
             (if (search-state-failing state)
-                (message "No match for ~a" (search-state-string state))
+                (progn (message "No match for ~a" (search-state-string state))
+                       (note-command-failed))
                 (message "Wrapped to the ~:[end~;start~]" forward)))
           (unless (search-state-failing state) (search-show-match state))))))
 

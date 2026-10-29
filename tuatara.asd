@@ -27,7 +27,7 @@
                (:module "syntax"   :serial t :components ((:file "package") (:file "named-patterns") (:file "search") (:file "tree-sitter") (:file "parsing") (:file "highlight") (:file "navigation")))
                (:module "frontend" :serial t :components ((:file "package") (:file "interface")))
                (:module "display"  :serial t :components ((:file "package") (:file "faces") (:file "width") (:file "layout") (:file "folds") (:file "hex") (:file "window") (:file "splits")))
-               (:module "command"  :serial t :components ((:file "package") (:file "keymap") (:file "command") (:file "completion") (:file "editor") (:file "panel") (:file "dispatch") (:file "menu") (:file "redisplay") (:file "minibuffer") (:file "session") (:file "keys") (:file "popup") (:file "windows")))
+               (:module "command"  :serial t :components ((:file "package") (:file "keymap") (:file "command") (:file "completion") (:file "editor") (:file "panel") (:file "dispatch") (:file "menu") (:file "redisplay") (:file "minibuffer") (:file "session") (:file "recorded-keys") (:file "keys") (:file "popup") (:file "windows")))
                (:module "modes"    :serial t :components ((:file "package") (:file "modes")))))
 
 (defsystem "tuatara/frontend-fake"
@@ -47,7 +47,7 @@
                (:file "theme")
                (:file "garbage")
                (:module "modes"   :serial t :components ((:file "base") (:file "special") (:file "list-preview") (:file "csv") (:file "languages") (:file "more-languages-data") (:file "more-languages-markup") (:file "more-languages-programming") (:file "more-languages-build") (:file "json-lines") (:file "git-commit")))
-               (:module "editing" :serial t :components ((:file "state") (:file "your-name") (:file "diff") (:file "tabs") (:file "choosing") (:file "commands") (:file "extended-command") (:file "sentences") (:file "simple") (:file "pairs") (:file "comments") (:file "paren") (:file "case") (:file "mouse") (:file "font") (:file "font-list") (:file "selection") (:file "lists") (:file "sort") (:file "records") (:file "enchant") (:file "toggles") (:file "spellcheck") (:file "windows") (:file "own-files") (:file "snippets") (:file "fill") (:file "hl-line") (:file "cursor-column") (:file "soft-wrap") (:file "centred-text") (:file "visual-line") (:file "user-lisp")))
+               (:module "editing" :serial t :components ((:file "state") (:file "your-name") (:file "diff") (:file "tabs") (:file "choosing") (:file "commands") (:file "extended-command") (:file "sentences") (:file "simple") (:file "pairs") (:file "comments") (:file "paren") (:file "case") (:file "mouse") (:file "font") (:file "font-list") (:file "selection") (:file "lists") (:file "sort") (:file "records") (:file "enchant") (:file "toggles") (:file "spellcheck") (:file "windows") (:file "own-files") (:file "snippets") (:file "fill") (:file "hl-line") (:file "cursor-column") (:file "soft-wrap") (:file "centred-text") (:file "visual-line") (:file "user-lisp") (:file "recorded-keys")))
                (:module "files"   :serial t :components ((:file "visiting") (:file "files") (:file "trust") (:file "hash") (:file "external") (:file "own-programs") (:file "walk") (:file "formatted") (:file "paths-in-text") (:file "rename-formatted") (:file "recent") (:file "auto-save") (:file "session") (:file "wipe") (:file "archives") (:file "differences") (:file "places") (:file "bookmarks") (:file "file-local")))
                (:module "viewers" :serial t :components ((:file "hex") (:file "decode") (:file "pdf-view") (:file "image-view") (:file "office-view") (:file "pdf-reader") (:file "metadata")))
                (:module "calendar" :serial t :components ((:file "calendar")))
@@ -225,6 +225,7 @@
                (:file "picking")
                (:file "carried-settings")
                (:file "waits")
+               (:file "recorded-keys")
                (:file "spellcheck")
                (:file "prose")
                (:file "bench-rope"))

@@ -16,7 +16,7 @@ Lisp package uses this one; TUATARA-USER, which init files are read in, does too
   (:shadow #:buffer-name #:buffer-string #:buffer-size)
   (:documentation "The package user configuration files are read in: BIND-KEY and UNBIND-KEY are
 available unqualified, and the public API of TUATARA is used.")
-  (:export #:bind-key #:unbind-key #:set-face #:load-theme #:load-package #:define-theme #:define-named-pattern
+  (:export #:bind-key #:unbind-key #:define-recorded-keys #:set-face #:load-theme #:load-package #:define-theme #:define-named-pattern
            #:package-source #:load-package-file #:package-file #:*package-ask-before-loading* #:*package-sources* #:*light-theme* #:*dark-theme* #:*startup-buffer* #:*auto-scratch-buffers*
            #:set-colouring #:set-indentation
            ;; for Lisp typed at M-:, in *lisp-scratch* and in the init file, the basics of
