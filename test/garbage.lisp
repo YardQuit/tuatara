@@ -16,6 +16,7 @@
     ;; little made since the last collection: nothing to do, not called again before a key
     (false (tuatara.defaults::idle-garbage-tick nil))
     (setf garbage (loop repeat 4096 collect (make-array 1024 :element-type '(unsigned-byte 8))))
+    (is = 4096 (length garbage))
     (setf garbage nil)
     (true (>= (tuatara.defaults::consed-since-gc) (* 2 1024 1024)))
     ;; a key just typed: not now, looked at again when the quiet time is up
@@ -34,6 +35,7 @@
     ;; off: never
     (let ((tuatara-user:*idle-collection-seconds* nil))
       (setf garbage (loop repeat 4096 collect (make-array 1024 :element-type '(unsigned-byte 8))))
+      (is = 4096 (length garbage))
       (setf garbage nil)
       (false (tuatara.defaults::idle-garbage-tick nil)))))
 
