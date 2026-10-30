@@ -185,8 +185,7 @@ is filled again only when the jobs have changed.")
           (run-keys (list "r r % a / b RET r r % b / c RET M-x l i s t - j o b s RET"
                           (lambda () (setf seen (search "Replacing" (session-text tuatara.command:*editor*))))
                           (lambda () (loop repeat 400
-                                           while (or tuatara.defaults::*job-queue*
-                                                     (find-if #'tuatara.runtime:job-running-p tuatara.runtime:*jobs*))
+                                           until (search "No jobs in the background" (session-text tuatara.command:*editor*))
                                            do (tuatara.command::run-tick-functions tuatara.command:*editor*)
                                               (sleep 0.05)))
                           :tick "j")
@@ -194,6 +193,26 @@ is filled again only when the jobs have changed.")
         (declare (ignore f))
         (true seen)
         (true (search "No jobs in the background" (session-text editor)))))))
+
+(define-test (list-buffers job-ending-while-listed)
+  ;; a job that ends just as *Jobs* is filled does not stay listed: the list is made again
+  (let* ((job (tuatara.defaults::%make-hash-job :what "a sum"))
+         (tuatara.runtime:*jobs* (list job))
+         (ended nil))
+    (sb-int:encapsulate 'tuatara.defaults::jobs-entries 'ends-the-job
+                        (lambda (function)
+                          (prog1 (funcall function)
+                            (unless ended
+                              (setf ended t
+                                    (tuatara.runtime:job-status job) :done)))))
+    (unwind-protect
+         (multiple-value-bind (f editor)
+             (run-keys (list "M-x l i s t - j o b s RET" :tick :tick) :text "x" :width 100 :height 12)
+           (declare (ignore f))
+           (is string= "*Jobs*" (current-name editor))
+           (true (search "No jobs in the background" (session-text editor))))
+      (sb-int:unencapsulate 'tuatara.defaults::jobs-entries 'ends-the-job)
+      (tuatara.runtime:forget-job job))))
 
 (defvar *list-test-value* 1
   "A value the help shown in a test describes, changed while it is shown.")

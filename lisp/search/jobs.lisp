@@ -517,8 +517,9 @@ the buffer, the state, shaded as the job's text is, and what the job does.")
   "Fill LIST, a *Jobs* buffer, with a line for each job (JOBS-ENTRIES), marks
 kept on the jobs still there, point on the same job or line, at its start, or
 with POINT :keep at its column."
-  (let ((entries (jobs-entries))
-        (place (make-hash-table :test 'eq)))
+  (let* ((key (jobs-key list))
+         (entries (jobs-entries))
+         (place (make-hash-table :test 'eq)))
     (render-table-list
      list *jobs-columns* entries
      (lambda (entry mark section)
@@ -539,7 +540,7 @@ with POINT :keep at its column."
                                                    (list "  " who (cons (if percent (format nil "~d%" percent) "working") :job-queued)
                                                          words)))
                     (and (null entries) (null (outside-work)) (list (format nil "~%   No jobs in the background~%"))))
-     :point point :first-line *jobs-title-lines*
+     :point point :first-line *jobs-title-lines* :key key
      :refill (lambda (list) (jobs-render list :keep)))))
 
 (defun jobs-key (list)
