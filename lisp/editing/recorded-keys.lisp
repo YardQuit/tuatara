@@ -172,9 +172,10 @@ writes Item 7.)."
 BIND-KEY takes one (\"C-a M-f C-k\", \"C-s date RET\"), as
 \\[play-recorded-keys] plays the keys recorded last: M-x NAME, or a key bound
 to it, plays them, a prefix argument as with that command. DOCUMENTATION,
-when given, is what help says of it. A name that is a command or function
-already is refused, but one given to recorded keys before, which then plays
-these. \\[insert-recorded-keys-definition] writes this for an init file:
+when given, is what help says of it, and help names the file that defined it,
+the init file. A name that is a command or function already is refused, but
+one given to recorded keys before, which then plays these.
+\\[insert-recorded-keys-definition] writes this for an init file:
 \(define-recorded-keys 'kill-after-date \"C-s date RET C-k\")."
   (let* ((events (if (stringp keys)
                      (map 'simple-vector (lambda (spec) (tuatara.frontend:make-event :key :key (tuatara.frontend:spec-key spec)))

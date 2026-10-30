@@ -247,7 +247,9 @@ from 1. NIL when the whole of TEXT was read; else where reading stopped, as
   "Read and evaluate the forms of the init file FILE one by one, in the package
 it is read in (MAP-TEXT-FORMS): one that fails is said, with its line and why,
 the first such kept in *INIT-FILE-OUTCOME*, and the forms after it are read
-all the same; text that cannot be read at all ends the reading, said so."
+all the same; text that cannot be read at all ends the reading, said so.
+The functions, commands and recorded keys its forms define are noted as
+defined in FILE (NOTE-INIT-FILE-DEFINITION), where help shows them."
   (let ((text (tuatara.io:file-text file))
         (*load-truename* (truename file))
         (*load-pathname* (pathname file)))
@@ -255,7 +257,8 @@ all the same; text that cannot be read at all ends the reading, said so."
              (when (eq *init-file-outcome* :read)
                (setf *init-file-outcome* (cons :error (princ-to-string e))))
              (message "Error in ~a, line ~d: ~a" (namestring file) line e)))
-      (let ((stopped (map-text-forms text (lambda (form line)
-                                            (handler-case (eval form)
-                                              (error (e) (fail line e)))))))
+      (let* ((path (namestring (truename file)))
+             (stopped (map-text-forms text (lambda (form line)
+                                             (handler-case (progn (eval form) (note-init-file-definition form path line))
+                                               (error (e) (fail line e)))))))
         (when stopped (fail (car stopped) (cdr stopped)))))))

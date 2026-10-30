@@ -260,13 +260,34 @@ typed at \\[eval-expression].")
 
 (defun definition-form-name (form)
   "The name FORM defines when it is a definition, (def... name ...) or
-(define-... name ...): the symbol, (setf name)'s too; else NIL."
+(define-... name ...): the symbol, (setf name)'s too, or a quoted one
+\(define-recorded-keys 'name ...); else NIL."
   (when (and (consp form) (symbolp (first form)) (consp (rest form)))
     (let ((head (symbol-name (first form)))
           (name (second form)))
       (when (definition-head-p head)
         (cond ((and name (symbolp name) (not (keywordp name))) name)
-              ((and (consp name) (eq (first name) 'setf) (symbolp (second name))) (second name)))))))
+              ((and (consp name) (member (first name) '(setf quote)) (symbolp (second name))) (second name)))))))
+
+(defvar *init-file-definitions* (make-hash-table :test 'eq :synchronized t)
+  "For each name a function, command or recorded keys were defined for in the
+init file, (FILE LINE HEAD FUNCTION): where, the name of the defining form
+\(define-command), and the function it was given then.")
+
+(defun note-init-file-definition (form file line)
+  "Remember that FORM, read from the init file FILE at LINE, defined the
+function its name now has, when it is a definition of one."
+  (let ((name (and (not (and (consp (second form)) (eq (first (second form)) 'setf)))
+                   (definition-form-name form))))
+    (when (and name (fboundp name))
+      (setf (gethash name *init-file-definitions*) (list file line (first form) (fdefinition name))))))
+
+(defun init-file-definition (symbol)
+  "Where the init file defined SYMBOL's function, as (FILE LINE HEAD), HEAD
+the defining form's name, while it is still the one the init file gave it; NIL
+otherwise."
+  (destructuring-bind (&optional file line head function) (gethash symbol *init-file-definitions*)
+    (and file (fboundp symbol) (eq function (fdefinition symbol)) (list file line head))))
 
 (defun note-evaluated-definition (form)
   "Remember that FORM, when it is a definition, was evaluated from *EVALUATING-BUFFER*."

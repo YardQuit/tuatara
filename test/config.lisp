@@ -375,3 +375,69 @@ commented inside another one commented (;;   ;; (setf ...) in a load-package's
   ;; how far macro calls may grow a note for an export is set in the init file
   (is eq :external (nth-value 1 (find-symbol "*ORG-MACRO-LIMIT*" :tuatara-user)))
   (true (search ";; (setf *org-macro-limit* " tuatara.defaults::*starter-config*)))
+
+(define-test (config definitions-named-in-the-init-file)
+  ;; help names the init file as where its commands and recorded keys are defined, and its
+  ;; link goes to the line there
+  (let* ((file (merge-pathnames (format nil "init-~36r.lisp" (random (expt 36 8))) (tuatara.io:cache-directory)))
+         (names '(tuatara-user::test-init-command tuatara-user::test-init-keys)))
+    (unwind-protect
+         (progn
+           (with-open-file (out (ensure-directories-exist file) :direction :output :if-exists :supersede)
+             (write-string "(define-command test-init-command () \"Say hello.\" (message \"hello\"))
+(define-recorded-keys 'test-init-keys \"C-e\")
+" out))
+           (let ((tuatara.defaults:*config-file* file))
+             (multiple-value-bind (f editor) (run-keys "C-h f t e s t - i n i t - k e y s RET" :text "abc" :width 100)
+               (declare (ignore editor))
+               (true (tuatara.frontend.fake:fake-frame-showing f (format nil "Defined in ~a" (file-namestring file))))
+               (false (tuatara.frontend.fake:fake-frame-showing f "recorded-keys.lisp"))))
+           (dolist (name names)
+             (let ((words (tuatara.defaults::pieces-text (tuatara.defaults::source-location-pieces name :function))))
+               (true (search (format nil "Defined in ~a" (file-namestring file)) words) "~(~a~): ~a" name words)))
+           (let ((definitions (tuatara.defaults::lisp-definitions 'tuatara-user::test-init-keys)))
+             (is = 1 (length definitions))
+             (multiple-value-bind (buffer at) (funcall (tuatara.defaults::definition-locate (first definitions)))
+               (unwind-protect
+                    (let ((line "(define-recorded-keys 'test-init-keys"))
+                      (is string= line (subseq (tuatara.buffer:buffer-string buffer) at (+ at (length line)))))
+                 (when buffer (tuatara.buffer:kill-buffer buffer))))))
+      (dolist (name names)
+        (tuatara.command:forget-command name)
+        (remhash name tuatara.defaults::*init-file-definitions*)
+        (fmakunbound name))
+      (ignore-errors (delete-file file)))))
+
+(define-test (config files-the-init-file-loads-keep-their-own-source)
+  ;; a file compiled and loaded, or loaded as it is, while the init file is read is where its
+  ;; own definitions are, for help and its link, never the init file
+  (let* ((dir (ensure-directories-exist
+               (merge-pathnames (format nil "init-~36r/" (random (expt 36 8))) (tuatara.io:cache-directory))))
+         (init (merge-pathnames "init.lisp" dir))
+         (compiled (merge-pathnames "compiled-helper.lisp" dir))
+         (plain (merge-pathnames "plain-helper.lisp" dir))
+         (names '(tuatara-user::test-compiled-helper tuatara-user::test-plain-helper)))
+    (unwind-protect
+         (progn
+           (with-open-file (out compiled :direction :output :if-exists :supersede)
+             (write-string "(in-package :tuatara-user)
+(defun test-compiled-helper () \"One.\" 1)
+" out))
+           (with-open-file (out plain :direction :output :if-exists :supersede)
+             (write-string "(in-package :tuatara-user)
+(defun test-plain-helper () \"Two.\" 2)
+" out))
+           (with-open-file (out init :direction :output :if-exists :supersede)
+             (format out "(cl:load (cl:compile-file ~s :output-file ~s))~%(cl:load ~s)~%"
+                     (namestring compiled) (namestring (merge-pathnames "compiled-helper.fasl" dir)) (namestring plain)))
+           (let ((tuatara.defaults:*config-file* init))
+             (run-keys "" :text "abc"))
+           (loop for name in names
+                 for file in (list compiled plain)
+                 do (let ((words (tuatara.defaults::pieces-text (tuatara.defaults::source-location-pieces name :function))))
+                      (true (search (format nil "Defined in ~a" (file-namestring file)) words) "~(~a~): ~a" name words))
+                    (is equal (list (file-namestring file))
+                        (mapcar (lambda (d) (file-namestring (tuatara.defaults::definition-group d)))
+                                (tuatara.defaults::lisp-definitions name)))))
+      (dolist (name names) (fmakunbound name))
+      (uiop:delete-directory-tree dir :validate (lambda (p) (search "/init-" (namestring p)))))))

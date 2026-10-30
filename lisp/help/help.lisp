@@ -114,12 +114,16 @@ place, list them in *xref*."
           (t (go-to-definition (first definitions) :other t)))))
 
 (defun source-location-pieces (symbol kind)
-  "Where SYMBOL's definition of KIND (:function, :variable) is, from SBCL's
-source records, as help pieces: Defined in, then its file within the source
-tree (SOURCE-FILE-WORDS) as a link that shows it there (VISIT-SOURCE); NIL
-when it is not known."
-  (let* ((sources (ignore-errors (sb-introspect:find-definition-sources-by-name symbol kind)))
-         (file (and sources (sb-introspect:definition-source-pathname (first sources)))))
+  "Where SYMBOL's definition of KIND (:function, :variable) is, as help
+pieces: Defined in, then its file within the source tree (SOURCE-FILE-WORDS)
+as a link that shows it there (VISIT-SOURCE); NIL when it is not known. A
+function the init file defined is in the init file (INIT-FILE-DEFINITION);
+others are where SBCL's source records say."
+  (let* ((init (and (eq kind :function) (init-file-definition symbol)))
+         (sources (and (not init) (ignore-errors (sb-introspect:find-definition-sources-by-name symbol kind))))
+         (file (if init
+                   (first init)
+                   (and sources (sb-introspect:definition-source-pathname (first sources))))))
     (when file
       (list (format nil "~%Defined in ")
             (list (source-file-words file) :button (lambda () (visit-source symbol)))))))
