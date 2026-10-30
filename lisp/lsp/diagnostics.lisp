@@ -334,6 +334,10 @@ nothing else is said there. True when something was said."
   "The buffer whose diagnostics PLACES goes through."
   (diagnostic-places-buffer places))
 
+(defmethod places-name ((places diagnostic-places))
+  "What the language servers found wrong in its buffer: the diagnostics of notes.rs."
+  (format nil "the diagnostics of ~a" (tuatara.buffer:buffer-name (diagnostic-places-buffer places))))
+
 (defmethod step-place ((places diagnostic-places) direction)
   "Go to the next place after point the servers found something wrong in the
 buffer (DIRECTION 1), or before it (-1), that buffer shown here, and say what."
@@ -356,7 +360,7 @@ then (USE-PLACES)."
                 (find-if (lambda (d) (> (diagnostic-start d) here)) all)
                 (find-if (lambda (d) (< (diagnostic-start d) here)) all :from-end t))))
     (cond ((null all) (message "Nothing found wrong here~@[ (no language server)~]" (null (buffer-servers (current-buffer)))))
-          ((null d) (message "Nothing more ~:[before~;after~] this" forward))
+          ((null d) (say-places-end *places-in-force* (if forward 1 -1)))
           (t (goto-shown (current-buffer) (diagnostic-start d))
              (unless (diagnostic-say *editor*)
                (message "~a" (diagnostic-words d)))))))

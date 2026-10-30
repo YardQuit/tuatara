@@ -543,16 +543,23 @@ open or not. One thread at most waits for that moment, for every sign lit."
                (return)))))
        :name "tuatara sign fading"))))
 
-(defstruct (found-lines (:constructor make-found-lines (lines index)) (:copier nil))
+(defstruct (found-lines (:constructor make-found-lines (lines index words)) (:copier nil))
   "The lines a search of files found, as a list of places (STEP-PLACE): LINES,
-a vector of (PATH LINE OFFSET), in the order listed, and INDEX, the one gone
-to last."
+a vector of (PATH LINE OFFSET), in the order listed, INDEX, the one gone to
+last, and WORDS, what was searched for."
   (lines #() :type simple-vector :read-only t)
-  (index 0 :type fixnum))
+  (index 0 :type fixnum)
+  (words "" :type string :read-only t))
 
 (setf (documentation 'found-lines-p 'function) "True when OBJECT is a FOUND-LINES."
       (documentation 'found-lines-lines 'function) "The lines a search of files found, each (PATH LINE OFFSET)."
-      (documentation 'found-lines-index 'function) "The line of a FOUND-LINES gone to last.")
+      (documentation 'found-lines-index 'function) "The line of a FOUND-LINES gone to last."
+      (documentation 'found-lines-words 'function) "What the search of files that found a FOUND-LINES' lines searched for.")
+
+(defmethod places-name ((places found-lines))
+  "The search for what was searched for, shortened to a few words: the search for kiwi."
+  (format nil "the search for ~a"
+          (tuatara.display:shorten-string (escape-controls (found-lines-words places)) 40 :one-line t)))
 
 (defmethod step-place ((places found-lines) direction)
   "Visit the file of the line found after the one gone to last (DIRECTION 1),
@@ -564,7 +571,7 @@ or before it (-1), at that line, as choosing it in the search does."
           (setf (found-lines-index places) next)
           (show-file-line path line :offset offset)
           (message "Line ~:d of ~:d found" (1+ next) (length lines)))
-        (message "No line found ~:[before~;after~] this one" (plusp direction)))))
+        (say-places-end places direction))))
 
 (defun search-files-as-read (root prompt &key (left-out-words "Searching the first ~:d files only") preview)
   "Ask with PROMPT for words to find in the files under ROOT, read in the
@@ -714,7 +721,7 @@ opened safely (CALL-WITH-WINDOW-PREVIEW)."
                (when (consp chosen)
                  ;; the lines found, for M-g n and M-g p to go on from the one chosen
                  (let ((lines (map 'vector #'candidate-value found)))
-                   (use-places (make-found-lines lines (or (position chosen lines :test #'eq) 0))))
+                   (use-places (make-found-lines lines (or (position chosen lines :test #'eq) 0) (or (first searched-input) ""))))
                  (destructuring-bind (path line offset) chosen
                    (show-file-line path line :offset offset))))
           (when reading (stop-gathering reading))

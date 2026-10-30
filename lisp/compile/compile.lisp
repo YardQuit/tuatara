@@ -326,10 +326,13 @@ output is in the selected one, else in the selected one."
                                 when (code-place-p (aref codes i)) return i)))))
           (cond (found (goto-compile-place places found
                                            :other (eq buffer (tuatara.display:window-buffer (current-window)))))
-                ((minusp direction) (message "No place before this one in ~a" (tuatara.buffer:buffer-name buffer)))
-                ((compile-under-way buffer)
+                ((and (plusp direction) (compile-under-way buffer))
                  (message "No more places yet: the compile goes on"))
-                (t (message "No more places in ~a" (tuatara.buffer:buffer-name buffer))))))))
+                (t (say-places-end places direction)))))))
+
+(defmethod places-name ((places compile-run))
+  "The name of the buffer of the compile's output."
+  (tuatara.buffer:buffer-name (compile-run-buffer places)))
 
 ;;; Reading the output
 

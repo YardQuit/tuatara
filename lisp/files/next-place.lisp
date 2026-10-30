@@ -21,6 +21,17 @@ NIL before any has been used.")
 to last (DIRECTION 1) or before it (-1), and say what is there; say so when
 there is none that way."))
 
+(defgeneric places-name (places)
+  (:documentation "What PLACES, a list of places, is called where its ends are said: its
+buffer's name (*compile*), or what it is (the search for kiwi)."))
+
+(defun say-places-end (places direction)
+  "Say that PLACES, a list of places, has no place after the one gone to last
+\(DIRECTION 1) or before it (-1), naming it (PLACES-NAME): No more places in
+*compile*, No place before this one in *compile*."
+  (message (if (plusp direction) "No more places in ~a" "No place before this one in ~a")
+           (places-name places)))
+
 (defgeneric places-buffer (places)
   (:documentation "The buffer PLACES, a list of places, lives in, whose killing ends
 it as the list in force (a compile's output); NIL for one of no buffer.")

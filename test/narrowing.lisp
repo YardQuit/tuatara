@@ -356,7 +356,7 @@ or :HUNG, so that each of several sessions in a test says how it ended."
       (multiple-value-bind (f editor)
           (narrowing-keys (list *narrow-to-two-and-three*
                                 (lambda () (tuatara.defaults::use-places
-                                            (tuatara.defaults::make-found-lines (vector (list (namestring path) 5 0)) -1)))
+                                            (tuatara.defaults::make-found-lines (vector (list (namestring path) 5 0)) -1 "five")))
                                 "M-g n")
                           :file path :width 100)
         (let ((b (session-buffer editor)))

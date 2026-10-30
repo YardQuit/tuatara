@@ -337,6 +337,19 @@ force; *compile* killed afterwards."
         (kill-buffers-visiting dir))
       (is equal '(("b.txt" 0 0) ("b.txt" 1 0) ("b.txt" 0 0)) (reverse *places-reached*)))))
 
+(defun lines-diagnosed ()
+  "Once d.txt is visited, give it a diagnostic on its lines 1, 3 and 5 (from
+0), as a language server would; true then."
+  (let ((b (tuatara.buffer:find-buffer "d.txt")))
+    (when b
+      (setf (tuatara.buffer:buffer-local b 'tuatara.defaults::lsp-diagnostics)
+            (list (cons :one (tuatara.defaults::make-placed
+                              (tuatara.buffer:buffer-version b)
+                              (loop for line in '(1 3 5)
+                                    for at = (tuatara.buffer:buffer-goto-line b line)
+                                    collect (tuatara.defaults::make-diagnostic at (+ at 2) 1 "wrong" "test"))))))
+      t)))
+
 (define-test (compiling diagnostics-are-places)
   ;; once a language server's diagnostic has been gone to, M-g n and M-g p go through that
   ;; buffer's diagnostics, each press one further
@@ -346,28 +359,58 @@ force; *compile* killed afterwards."
           (tuatara.defaults::*places-in-force* nil)
           (*places-reached* '()))
       (alexandria:write-string-into-file (format nil "~{line ~d~%~}" (loop for i below 8 collect i)) file)
-      (flet ((diagnose ()
-               (let ((b (tuatara.buffer:find-buffer "d.txt")))
-                 (when b
-                   (setf (tuatara.buffer:buffer-local b 'tuatara.defaults::lsp-diagnostics)
-                         (list (cons :one (tuatara.defaults::make-placed
-                                           (tuatara.buffer:buffer-version b)
-                                           (loop for line in '(1 3 5)
-                                                 for at = (tuatara.buffer:buffer-goto-line b line)
-                                                 collect (tuatara.defaults::make-diagnostic at (+ at 2) 1 "wrong" "test"))))))
-                   t))))
-        (unwind-protect
-             (auto-save-session
-              (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring file)))
-                    (list :until #'diagnose)
-                    "M-< M-x l s p - n e x t - d i a g n o s t i c RET" (reached '("d.txt" 1 0))
-                    "M-g n" (reached '("d.txt" 3 0))
-                    "M-g n" (reached '("d.txt" 5 0))
-                    "M-g p" (reached '("d.txt" 3 0))
-                    "M-g p" (reached '("d.txt" 1 0)))
-              :width 100 :height 20)
-          (kill-buffers-visiting dir))
-        (is equal '(("d.txt" 1 0) ("d.txt" 3 0) ("d.txt" 5 0) ("d.txt" 3 0) ("d.txt" 1 0)) (reverse *places-reached*))))))
+      (unwind-protect
+           (auto-save-session
+            (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring file)))
+                  (list :until #'lines-diagnosed)
+                  "M-< M-x l s p - n e x t - d i a g n o s t i c RET" (reached '("d.txt" 1 0))
+                  "M-g n" (reached '("d.txt" 3 0))
+                  "M-g n" (reached '("d.txt" 5 0))
+                  "M-g p" (reached '("d.txt" 3 0))
+                  "M-g p" (reached '("d.txt" 1 0)))
+            :width 100 :height 20)
+        (kill-buffers-visiting dir))
+      (is equal '(("d.txt" 1 0) ("d.txt" 3 0) ("d.txt" 5 0) ("d.txt" 3 0) ("d.txt" 1 0)) (reverse *places-reached*)))))
+
+(define-test (compiling ends-of-places-said-alike)
+  ;; at either end of a list of places, M-g n and M-g p say so in the same words, naming the
+  ;; list: a search of files' lines, a buffer's diagnostics (a compile's: output-shown-and-places-visited)
+  (with-test-directory (dir)
+    (compile-project dir "")
+    (let ((tuatara.defaults::*modal-editing* nil)
+          (tuatara.defaults::*places-in-force* nil)
+          (*places-reached* '()))
+      (unwind-protect
+           (auto-save-session
+            (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring (merge-pathnames "a.c" dir))))
+                  "M-s g b e t a RET" (reached '("b.txt" 0 0))
+                  "M-g p" (said "No place before this one in the search for beta")
+                  "M-g n" (reached '("b.txt" 1 0))
+                  "M-g n" (said "No more places in the search for beta"))
+            :width 100 :height 20)
+        (kill-buffers-visiting dir))
+      (is equal '(("b.txt" 0 0) "No place before this one in the search for beta" ("b.txt" 1 0)
+                  "No more places in the search for beta")
+          (reverse *places-reached*))))
+  (with-test-directory (dir)
+    (let ((file (merge-pathnames "d.txt" dir))
+          (tuatara.defaults::*modal-editing* nil)
+          (tuatara.defaults::*places-in-force* nil)
+          (*places-reached* '()))
+      (alexandria:write-string-into-file (format nil "~{line ~d~%~}" (loop for i below 8 collect i)) file)
+      (unwind-protect
+           (auto-save-session
+            (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring file)))
+                  (list :until #'lines-diagnosed)
+                  "M-< M-x l s p - n e x t - d i a g n o s t i c RET" (reached '("d.txt" 1 0))
+                  "M-g p" (said "No place before this one in the diagnostics of d.txt")
+                  "M-g n M-g n" (reached '("d.txt" 5 0))
+                  "M-g n" (said "No more places in the diagnostics of d.txt"))
+            :width 100 :height 20)
+        (kill-buffers-visiting dir))
+      (is equal '(("d.txt" 1 0) "No place before this one in the diagnostics of d.txt" ("d.txt" 5 0)
+                  "No more places in the diagnostics of d.txt")
+          (reverse *places-reached*)))))
 
 (defun kill-pids-after (word text)
   "Kill (SIGKILL) the process whose number follows WORD in TEXT, a test's leftover, when there is one."
