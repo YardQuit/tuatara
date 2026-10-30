@@ -143,6 +143,12 @@ Lisp, =M-x ielm= is a REPL, and =M-.= goes to the source of anything.
   indent and select (from Helix, MPL 2.0).
 - =test/= :: the tests (Parachute), one file per part; =tools/= the scripts.
 
+C libraries (GTK, ncurses, tree-sitter, the terminal library) are called
+through SBCL's own foreign calls (=sb-alien=), loaded when first needed by
+=foreign-library-p=: a function by =define-c-function= or =foreign-call=,
+text given to C by =with-c-string= and read back by =sap-string=
+(=src/io/posix.lisp=, =src/runtime/resources.lisp=).
+
 Tuatara carries no packages of its own: a package is loaded on asking from a
 git repository or a folder, =(load-package "NAME" :source ...)= in the init
 file, and is written, tested and kept where it lives ("Writing a package").

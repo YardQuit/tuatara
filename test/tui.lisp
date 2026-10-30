@@ -145,3 +145,19 @@
           (setf recording nil)
           (let ((few (consed 2)) (many (consed 40)))
             (true (< (/ (- many few) 38) 48) "~d octets of garbage for a row of 40 spans, ~d for one of 2" many few)))))))
+
+(define-test (tui frontends-call-c-one-way)
+  ;; the terminal and the window call their C libraries as the rest of the editor
+  ;; does, through SBCL's own foreign calls: no library of their own to do it
+  (let ((libraries '("cffi" "babel" "trivial-features")))
+    (labels ((needed (name)
+               (let ((system (asdf:find-system name nil)))
+                 (when system
+                   (cons (asdf:primary-system-name system)
+                         (loop for dependency in (asdf:system-depends-on system)
+                               when (stringp dependency) append (needed dependency)))))))
+      (dolist (system '("tuatara/terminal" "tuatara/frontend-tui" "tuatara/frontend-gtk"))
+        (is equal '() (intersection libraries (needed system) :test #'string=) "~a needs ~a" system
+            (intersection libraries (needed system) :test #'string=)))))
+  (dolist (file (directory (merge-pathnames "frontends/**/*.lisp" (asdf:system-source-directory :tuatara))))
+    (false (search "cffi:" (uiop:read-file-string file)) "~a calls C through cffi" (enough-namestring file))))

@@ -234,8 +234,8 @@ version)."
     ("kitty, by Kovid Goyal" "the graphics and keyboard protocols")
     ("Ao" "the colour theme, by the same author (github.com/YardQuit/ao)")
     ("SBCL" "the Common Lisp Tuatara is written in and runs on")
-    ("alexandria, babel, CFFI, cl-ppcre, trivial-features, ASDF and Quicklisp" "the Common Lisp libraries Tuatara is built with; each one's"
-                                                                               "licence goes with every release"))
+    ("alexandria, cl-ppcre, ASDF and Quicklisp" "the Common Lisp libraries Tuatara is built with; each one's"
+                                                 "licence goes with every release"))
   "Where Tuatara's ideas come from, as \\[credits] shows them: each a name and
 the lines saying what came from it.")
 

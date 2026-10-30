@@ -87,14 +87,14 @@
 (defsystem "tuatara/frontend-tui"
   :description "The ncurses terminal frontend."
   :license "GPL-3.0-or-later"
-  :depends-on ("tuatara/core" "cffi")
+  :depends-on ("tuatara/core")
   :pathname "frontends/tui/"
   :components ((:file "tui")))
 
 (defsystem "tuatara/frontend-gtk"
   :description "The GTK4 frontend: Tuatara in a window of its own, painted with Pango and Cairo; the libraries are loaded when a window opens."
   :license "GPL-3.0-or-later"
-  :depends-on ("tuatara/core" "cffi")
+  :depends-on ("tuatara/core")
   :pathname "frontends/gtk/"
   :serial t
   :components ((:file "ffi") (:file "gtk") (:file "input") (:file "paint") (:file "window")))

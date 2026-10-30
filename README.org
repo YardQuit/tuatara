@@ -362,7 +362,7 @@ Tuatara says where its ideas come from:
   marks for pictures in text.
 - Ao :: the colour theme, by the same author (github.com/YardQuit/ao).
 - SBCL :: the Common Lisp Tuatara is written in and runs on.
-- alexandria, babel, CFFI, cl-ppcre, trivial-features, ASDF and Quicklisp :: the
-  Common Lisp libraries Tuatara is built with, compiled into its program; each
-  one's licence goes with every release.
+- alexandria, cl-ppcre, ASDF and Quicklisp :: the Common Lisp libraries Tuatara
+  is built with, compiled into its program; each one's licence goes with every
+  release.
 
