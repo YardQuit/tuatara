@@ -93,9 +93,11 @@ when given, is called when a frame is wanted after quiet. LAST-OUTPUT is when
 the program last printed (internal real time); TO-COMPRESS is set while its
 scrollback has not been compressed since. CELL-WIDTH and CELL-HEIGHT are a
 cell's pixels where known (0 else); PLACEMENTS the library's iterator over the
-pictures shown, when pictures are on, and PICTURES the pictures made of them
-for the editor, by what they were made from; PLACEHOLDERS, for each row of
-the screen, the cells standing for a part of a picture (ROW-PLACEHOLDERS).
+pictures shown, when pictures are on, PICTURES the pictures made of them for
+the editor, by what they were made from, and PICTURES-SHOWN those of them a
+frame shows; PLACEHOLDERS, for each row of the screen, the cells standing
+for a part of a picture (ROW-PLACEHOLDERS), and PLACEHOLDER-ENDS the table a
+frame joins their runs with (PLACEHOLDER-AREAS).
 INPUT-LOCK guards the encoders and their events, which hold what the program
 last asked of keys and the mouse (SYNC-INPUT-STATE), so that typing never
 waits for the library; BRACKETED and SCROLLS-BY-KEYS say, as of the
@@ -105,7 +107,8 @@ library's answers to the program waiting in OUTBOX (*TERMINAL-REPLY-LIMIT*)."
   (id 0 :type fixnum) terminal render-state iterator cells encoder event mouse-encoder mouse-event process (fd -1 :type fixnum)
   (last-output 0 :type integer) to-compress
   (cell-width 0 :type fixnum) (cell-height 0 :type fixnum) placements placeholders
-  (pictures (make-hash-table :test 'equal))
+  (pictures (make-hash-table :test 'equal)) (pictures-shown (make-hash-table :test 'equal))
+  (placeholder-ends (make-hash-table))
   (lock (sb-thread:make-mutex :name "terminal"))
   (input-lock (sb-thread:make-mutex :name "terminal input"))
   (turn (sb-thread:make-waitqueue :name "terminal turn"))
@@ -986,7 +989,9 @@ shows them over its cells: each (IMAGE ROW COLUMN COLUMNS ROWS), ROW and
 COLUMN of the screen from 0, the part of a picture partly off the screen
 alone. Pictures are made once for each picture the program sends and kept
 \(EMULATOR's PICTURES) while it shows them. To be called holding the library."
-  (let ((kept (emulator-pictures emulator)) (used '()) (shown '()) (virtual (make-hash-table)))
+  (let ((kept (emulator-pictures emulator))
+        (used (setf (emulator-pictures-shown emulator) (emptied-table (emulator-pictures-shown emulator))))
+        (shown '()) (virtual (make-hash-table)))
     (sb-alien:with-alien ((graphics sb-sys:system-area-pointer (tuatara.io:null-pointer))
                           (id (sb-alien:unsigned 32) 0))
      (tuatara.io:with-foreign-memory (info (vt :render-info-size))
@@ -1046,12 +1051,14 @@ alone. Pictures are made once for each picture the program sends and kept
                                                                      (min w (- (tuatara.frontend:image-width whole) x))
                                                                      (min h (- (tuatara.frontend:image-height whole) y)))))))
                                       (setf (gethash key kept) (list part))
-                                      (push key used) (push (list :whole id) used)
+                                      (setf (gethash key used) t (gethash (list :whole id) used) t)
                                       (push (list part (+ row above) (+ column left) shown-columns shown-rows) shown)))))))))))
            ;; pictures in text: the areas of cells standing for them, each drawn at its cells' size
            (when (and (emulator-placeholders emulator) (plusp (hash-table-count virtual))
                       (plusp (emulator-cell-width emulator)) (plusp (emulator-cell-height emulator)))
-             (dolist (area (placeholder-areas (emulator-placeholders emulator)))
+             (dolist (area (placeholder-areas (emulator-placeholders emulator)
+                                              (setf (emulator-placeholder-ends emulator)
+                                                    (emptied-table (emulator-placeholder-ends emulator)))))
                (let ((placement (gethash (first area) virtual)))
                  (when placement
                    (destructuring-bind (handle columns rows) placement
@@ -1060,17 +1067,18 @@ alone. Pictures are made once for each picture the program sends and kept
                          (let* ((cw (emulator-cell-width emulator)) (ch (emulator-cell-height emulator))
                                 (columns (if (plusp columns) columns (ceiling (tuatara.frontend:image-width whole) cw)))
                                 (rows (if (plusp rows) rows (ceiling (tuatara.frontend:image-height whole) ch)))
-                                (key (list* :text generation columns rows cw ch area))
+                                ;; the area's own place first: keys alike in their first few parts hash alike
+                                (key (list* (second area) (third area) (first area) :text generation columns rows cw ch area))
                                 (part (or (car (gethash key kept))
                                           (placeholder-picture whole area columns rows cw ch))))
                            (setf (gethash key kept) (list part))
-                           (push key used) (push (list :whole (first area)) used)
+                           (setf (gethash key used) t (gethash (list :whole (first area)) used) t)
                            (destructuring-bind (id row column area-columns area-rows &rest more) area
                              (declare (ignore id more))
                              (push (list part row column area-columns area-rows) shown))))))))))
            ;; let go of what no longer shows
            (loop for key being the hash-keys of kept
-                 unless (member key used :test #'equal) do (remhash key kept))
+                 unless (gethash key used) do (remhash key kept))
            (nreverse shown))))))
 
 (defvar *kitty-mark-numbers*
@@ -1100,13 +1108,22 @@ after its column."
           (push this out)
           (setf before this))))))
 
-(defun placeholder-areas (rows)
+(defun emptied-table (table)
+  "TABLE emptied for the next frame; when the last frame filled a quarter of
+it at most, a new, smaller table of its kind instead."
+  (let ((size (hash-table-size table)) (count (hash-table-count table)))
+    (if (and (> size 256) (< (* 4 count) size))
+        (make-hash-table :test (hash-table-test table) :size (max 64 (* 2 count)))
+        (clrhash table))))
+
+(defun placeholder-areas (rows &optional (ends (make-hash-table)))
   "The parts of pictures ROWS (EMULATOR's PLACEHOLDERS, a vector of
 ROW-PLACEHOLDERS lists) stand for, each (PICTURE ROW COLUMN COLUMNS ROWS
 PART-ROW PART-COLUMN): the screen's cells from ROW and COLUMN, COLUMNS by
 ROWS, showing that much of the picture from its cell PART-ROW, PART-COLUMN;
 the cells of a row in a run, and the runs of the rows below that carry on
-from it, one area."
+from it, one area. ENDS, an empty EQL table, is used to join them. Takes
+time in step with the cells."
   (let ((runs '()))
     ;; the runs of each row: cells one after another, of one picture and row, its columns in turn
     (loop for cells across rows
@@ -1120,20 +1137,20 @@ from it, one area."
                        (progn (when run (push run runs))
                               (setf run (list id screen-row column 1 1 row part-column))))))
                (when run (push run runs))))
-    ;; a run joined to the area above it when it carries on from it
+    ;; a run joined to the area above it when it carries on from it; each area kept in
+    ;; ENDS by the row below its last and its column, the only place a run carrying it on
+    ;; can be, as areas of one row never share a cell
     (let ((areas '()))
       (dolist (run (nreverse runs) (nreverse areas))
         (destructuring-bind (id screen-row column columns rows row part-column) run
           (declare (ignore rows))
-          (let ((above (find-if (lambda (area)
-                                  (destructuring-bind (a-id a-row a-column a-columns a-rows a-part-row a-part-column) area
-                                    (and (= a-id id) (= a-column column) (= a-columns columns)
-                                         (= (+ a-row a-rows) screen-row) (= (+ a-part-row a-rows) row)
-                                         (= a-part-column part-column))))
-                                areas)))
-            (if above
-                (incf (fifth above))
-                (push (copy-list run) areas))))))))
+          (let* ((place (+ (* screen-row 65536) column))
+                 (above (gethash place ends))
+                 (area (if (and above (= (first above) id) (= (fourth above) columns)
+                                (= (+ (sixth above) (fifth above)) row) (= (seventh above) part-column))
+                           (progn (incf (fifth above)) above)
+                           (car (push run areas)))))
+            (setf (gethash (+ place 65536) ends) area)))))))
 
 (defun placeholder-picture (whole area columns rows cell-width cell-height)
   "The part of the picture WHOLE that AREA (PLACEHOLDER-AREAS') shows, drawn

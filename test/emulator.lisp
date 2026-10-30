@@ -271,3 +271,51 @@ the octets it consed."
                                          :bytes t)
                          (* 200 50))))
             (true (< each 24) "~:[blank~;coloured~] cells: ~,1f octets a cell" coloured (float each))))))))
+
+;;; Files of octets a terminal shows
+
+(defun write-octets-file (file &rest parts)
+  "Write FILE of PARTS, each a string (its characters' codes, all below 256,
+the octets) or a list of a count and a string written that many times."
+  (with-open-file (out file :direction :output :element-type '(unsigned-byte 8) :if-exists :supersede)
+    (flet ((put (string) (loop for c across string do (write-byte (char-code c) out))))
+      (dolist (part parts)
+        (if (consp part) (loop repeat (first part) do (put (second part))) (put part))))))
+
+;;; Pictures in text
+
+(defun picture-screen-file (file runs &key (placements 0))
+  "Write FILE of two pictures in text (kitty's Unicode placeholders), RUNS
+pairs of cells standing for them in turn (each cell its own run), and
+PLACEMENTS more places of the first beside its place in text; then a line
+\"shown\"."
+  (let ((cell (map 'string #'code-char '(#xf4 #x8e #xbb #xae))))
+    (apply #'write-octets-file file
+           (append (list (format nil "~c_Ga=t,f=24,s=1,v=1,i=1,q=2;AAAA~c\\~:*~:*~c_Ga=p,i=1,p=1,U=1,c=1,r=1,q=2~c\\" #\Escape #\Escape)
+                         (format nil "~c_Ga=t,f=24,s=1,v=1,i=2,q=2;AAAA~c\\~:*~:*~c_Ga=p,i=2,p=1,U=1,c=1,r=1,q=2~c\\" #\Escape #\Escape))
+                   (loop for k from 2 below (+ 2 placements)
+                         collect (format nil "~c_Ga=p,i=1,p=~d,P=1,Q=1,q=2~c\\" #\Escape k #\Escape))
+                   (list (format nil "~c[H" #\Escape)
+                         (list runs (format nil "~c[38;5;1m~a~:*~:*~c[38;5;2m~a" #\Escape cell))
+                         (format nil "~c[0m~c~cshown" #\Escape #\Return #\Newline))))))
+
+(defun picture-frame-time (file)
+  "The least internal real time of three whole frames of a terminal 200 by 50
+showing FILE (PICTURE-SCREEN-FILE's), its pictures on, a row of it changed
+before each by its program."
+  (with-emulator (e "sh" (list "-c" (format nil "cat '~a'; while :; do printf '\\033[50;10Hz'; sleep 0.02; done" file))
+                 :columns 200 :rows 50 :pictures t :cell-width 10 :cell-height 20)
+    (true (find-if (lambda (r) (search "shown" r)) (emulator-screen e :until (screen-has "shown") :seconds 30)))
+    (least-of-three (lambda () (tuatara.defaults::emulator-frame e (lambda (&rest row) (declare (ignore row))) :all t)))))
+
+(define-test (emulator picture-runs-framed-in-linear-time)
+  ;; two pictures in text, the screen's cells standing for them in turn, 1,200 runs and
+  ;; then 4,900: what each run more adds to a frame is a few microseconds
+  (with-test-directory (dir)
+    (let ((few (namestring (merge-pathnames "few.txt" dir))) (many (namestring (merge-pathnames "many.txt" dir))))
+      (picture-screen-file few 600)
+      (picture-screen-file many 2450)
+      (let* ((a (picture-frame-time few)) (b (picture-frame-time many))
+             (each (/ (* 1e6 (/ (- b a) internal-time-units-per-second)) 3700)))
+        (true (< each 20) "~,1f µs a run more (~,3f s and ~,3f s a frame)" each
+              (/ a internal-time-units-per-second) (/ b internal-time-units-per-second))))))
