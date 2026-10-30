@@ -122,7 +122,7 @@ what marks a project; check-health saying which are installed.")
                 (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file)) "M-x f o r m a t - b u f f e r RET"
                                          (list :until #'formatting-done-p) (list :wait 0.1)))
               (declare (ignore editor))
-              (true (tuatara.frontend.fake:fake-frame-showing f "a.py was not formatted by fmt.sh: bad"))
+              (true (tuatara.frontend.fake:fake-frame-showing f "fmt.sh could not format a.py: bad"))
               (let ((buffer (tuatara.buffer:find-buffer "a.py"))) (when buffer (tuatara.buffer:kill-buffer buffer)))))
           ;; a formatter that gives nothing back, or what is not text, changes nothing, said so
           (loop for (script words) in '(("cat >/dev/null" "it gave nothing back")
@@ -724,6 +724,58 @@ what marks a project; check-health saying which are installed.")
         (is equal '("oops found") (mapcar #'first first-seen))
         (is equal '() seen)))))
 
+(define-test (lsp format-endings-said)
+  ;; a server's formatting that changes nothing says why, each way in its own words: its failure
+  ;; in short, no answer in time, nothing to change; and with no server, why it was only indented
+  (with-test-directory (dir)
+    (ensure-directories-exist (merge-pathnames ".git/" dir))
+    (let* ((log (merge-pathnames "told.log" dir))
+           (tuatara.defaults::*modal-editing* nil)
+           (tuatara-user:*language-servers* (stand-in-server-setting log))
+           (tuatara-user:*language-formatters* '((python)))
+           (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+           (tuatara-user:*format-seconds* 1))
+      (unwind-protect
+           (loop for (name text words) in '(("fails.py" "x = unformattable" "python3 could not format fails.py: Failed to spawn rustfmt")
+                                            ("slow.py" "x = slowformat" "python3 could not format slow.py: no answer within 1 second (*format-seconds*)")
+                                            ("done.py" "x = 1" "done.py formatted by python3: it was laid out already"))
+                 for opened from 1
+                 do (let ((file (namestring (merge-pathnames name dir))))
+                      (alexandria:write-string-into-file (format nil "~a~%" text) file)
+                      (let ((f (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
+                                                        (list :until (lambda () (= opened (count "textDocument/didOpen" (told log) :test #'string=))))
+                                                        "M-x f o r m a t - b u f f e r RET"
+                                                        (list :until (lambda () (search words (or (tuatara.command:editor-message tuatara.command::*editor*) ""))))
+                                                        (list :wait 0.1))
+                                                  :width 160)))
+                        (true (tuatara.frontend.fake:fake-frame-showing f words) "~a" name)
+                        (is string= (format nil "~a~%" text) (tuatara.buffer:buffer-string (tuatara.buffer:find-buffer name)))
+                        (tuatara.buffer:kill-buffer (tuatara.buffer:find-buffer name)))))
+        (tuatara.defaults::lsp-stop-all))
+      ;; no server: indented, and why said
+      (let ((tuatara-user:*language-servers* '()))
+        (multiple-value-bind (f editor)
+            (run-keys "M-x p y t h o n - m o d e RET M-x f o r m a t - b u f f e r RET" :text (format nil "x = 1~%") :width 160)
+          (declare (ignore editor))
+          (true (tuatara.frontend.fake:fake-frame-showing f "no formatter is known for it, and no language server formats it")))))))
+
+(define-test (lsp failure-words-short)
+  ;; why a question came to nothing, in one short way: a command line by its program alone,
+  ;; other words as they are, the first line only, no answer in time with its setting
+  (flet ((words (message) (tuatara.defaults::lsp-error-words (tuatara.text:json-object "message" message))))
+    (is string= "Failed to spawn rustfmt" (words "Failed to spawn cd \"/x/src\" && RUSTUP_AUTO_INSTALL=\"0\" \"rustfmt\""))
+    (is string= "Failed to spawn rustfmt" (words "Failed to spawn \"/usr/bin/rustfmt\" \"--edition\" \"2021\""))
+    (is string= "unresolved import \"a/b\"" (words (format nil "unresolved import \"a/b\"~%more")))
+    (is string= "it failed" (words ""))
+    (is string= "no answer within 2 seconds (*lsp-wait*)" (tuatara.defaults::lsp-error-words :timeout :seconds 2))
+    (is string= "no answer within 1 second (*format-seconds*)"
+        (tuatara.defaults::lsp-error-words :timeout :seconds 1 :setting 'tuatara-user:*format-seconds*))
+    (is string= "a key stopped the wait" (tuatara.defaults::lsp-error-words :stopped))
+    (is string= "no answer within 0.5 seconds (*lsp-wait*)" (tuatara.defaults::lsp-error-words :timeout :seconds 1/2))
+    (is string= "no answer within 3 seconds (*lsp-wait*)" (tuatara.defaults::lsp-error-words :timeout :seconds 3.0))
+    ;; a formatter's error output: its first line that says anything
+    (is string= "error: expected item" (tuatara.defaults::short-failure-words (format nil "~%error: expected item~% --> a.rs:1:1~%")))))
+
 (defun stand-in-server (name status &rest capabilities)
   "A language server named NAME of STATUS offering CAPABILITIES, for tests that need none running."
   (let ((server (tuatara.defaults::make-lsp-server name '("true") "/tmp/" 'python nil nil)))
@@ -731,6 +783,26 @@ what marks a project; check-health saying which are installed.")
           (tuatara.defaults::lsp-server-capabilities server)
           (apply #'tuatara.text:json-object (loop for c in capabilities append (list c t))))
     server))
+
+(define-test (lsp not-formatting-said-of-each-server)
+  ;; why no server laid the code out, said of each: starting, not formatting, or not a part
+  (let ((buffer (tuatara.buffer:make-buffer "unformatted.py")))
+    (unwind-protect
+         (flet ((servers (&rest servers)
+                  (let ((doc (tuatara.defaults::make-lsp-doc buffer nil "file:///tmp/unformatted.py")))
+                    (setf (tuatara.defaults::lsp-doc-servers doc) servers
+                          (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc)))))
+           (is string= "no language server formats it" (tuatara.defaults::servers-not-formatting-words buffer))
+           (servers (stand-in-server "kea" :ready "documentFormattingProvider"))
+           (is string= "kea formats whole files only" (tuatara.defaults::servers-not-formatting-words buffer t))
+           (servers (stand-in-server "kea" :ready "hoverProvider") (stand-in-server "tui" :starting))
+           (is string= "kea does not format code, tui is still starting" (tuatara.defaults::servers-not-formatting-words buffer))
+           ;; a note whose source blocks alone are seen
+           (setf (tuatara.defaults::lsp-doc-shadow (first (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs)))
+                 (constantly ""))
+           (is string= "its language servers see only its source blocks" (tuatara.defaults::servers-not-formatting-words buffer)))
+      (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+      (tuatara.buffer:kill-buffer buffer))))
 
 (define-test (lsp texts-kept-until-spoken-of)
   ;; the texts sent are kept, eight at most, until every server has said what it found in a
@@ -791,6 +863,13 @@ what marks a project; check-health saying which are installed.")
            (is equal '(8) (kept)))
       (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
       (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (lsp titles-in-a-sentence)
+  ;; an action's title inside a sentence: its first letter small, an abbreviation kept
+  (is string= "import `HashMap` from std::collections" (tuatara.defaults::title-in-a-sentence "Import `HashMap` from std::collections"))
+  (is string= "CSS: sort properties" (tuatara.defaults::title-in-a-sentence "CSS: sort properties"))
+  (is string= "inline variable" (tuatara.defaults::title-in-a-sentence "inline variable"))
+  (is string= "" (tuatara.defaults::title-in-a-sentence "")))
 
 (define-test (lsp completion-documentation-asked-for)
   ;; a server that leaves a completion's documentation until it is chosen: asked then, shown beside the list

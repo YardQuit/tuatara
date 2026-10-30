@@ -32,7 +32,9 @@ and logs the answer's error code ("answered unknown CODE"); a text holding
 "editme" has it ask to change files in its project, outside it, on another
 machine and not there, logging whether that was done ("applied true"); a
 text holding "stall" has it stop reading what it is sent; asked to describe
-"die" it ends without answering, and "huge" it describes in 200,000 words.
+"die" it ends without answering, and "huge" it describes in 200,000 words;
+a text holding "unformattable" it fails to lay out, saying it could not run
+its formatter, and one holding "slowformat" it never answers.
 
 As a build run on each save does, it checks the file as saved for "oops", an
 error: a second after each save it says what that check found, with what it
@@ -437,6 +439,11 @@ while True:
         diagnostics(params['textDocument']['uri'])
     elif method == 'textDocument/didSave':
         check_saved(params['textDocument']['uri'])
+    elif method == 'textDocument/formatting' and 'slowformat' in TEXTS.get(params['textDocument']['uri'], ''):
+        pass
+    elif method == 'textDocument/formatting' and 'unformattable' in TEXTS.get(params['textDocument']['uri'], ''):
+        send({'jsonrpc': '2.0', 'id': message['id'], 'error': {'code': -32603, 'message':
+              'Failed to spawn cd "/tmp/project/src" && RUSTUP_AUTO_INSTALL="0" "rustfmt" "--edition" "2021"\nmore words'}})
     elif method in ANSWERS:
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': ANSWERS[method](params)})
     elif method == 'shutdown':

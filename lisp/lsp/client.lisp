@@ -93,6 +93,14 @@ its events for \\[lsp-events]."
 
 ;;; What a server sends, taken in with care
 
+(defparameter *command-line-scanner*
+  (cl-ppcre:create-scanner "(?:(?<=spawn )|cd \"[^\"]*\" && )(?:[A-Za-z_][A-Za-z0-9_]*=\"[^\"]*\" )*\"([^\"]+)\"(?: \"[^\"]*\")*")
+  "The pattern of a command line a server could not run, as it writes one in
+its words (rust-analyzer's Failed to spawn cd \"folder\" &&
+RUSTUP_AUTO_INSTALL=\"0\" \"rustfmt\"): after spawn, or beginning cd
+\"folder\" &&; then settings NAME=\"value\", the program and its
+arguments, each in quotes. Words it does not match are said whole.")
+
 (defun lsp-error (code words)
   "A JSON-RPC error of CODE, a number the protocol gives, saying WORDS."
   (tuatara.text:json-object "code" code "message" words))
@@ -144,15 +152,25 @@ let go."
   "Tell SERVER of METHOD with PARAMS, wanting no answer."
   (lsp-send server (tuatara.text:json-object "jsonrpc" "2.0" "method" method "params" (or params :omit))))
 
-(defun lsp-request (server method params then)
+(defvar *lsp-deadlines* '()
+  "The requests to servers that are given up when not answered in time
+\(LSP-REQUEST's SECONDS; LSP-REQUEST-NOW's too, which waits for its answer),
+each (DEADLINE SERVER ID), DEADLINE as TUATARA.RUNTIME:DEADLINE-IN gives it.")
+
+(defun lsp-request (server method params then &key seconds)
   "Ask SERVER METHOD with PARAMS; THEN is called on the editor's thread with
 the answer's result and its error (a JSON object, or NIL) once it comes.
-Returns the request's number."
+With SECONDS, a question not answered in that time is no longer wanted
+\(LSP-CANCEL), THEN called with no result and the error :TIMEOUT
+\(LSP-GIVE-UP-LATE); LSP-REQUEST-NOW asks so and waits. Returns the
+request's number."
   (let ((id (shiftf (lsp-server-next-id server) (1+ (lsp-server-next-id server)))))
     (setf (gethash id (lsp-server-waiting server)) then)
-    (unless (lsp-send server (tuatara.text:json-object "jsonrpc" "2.0" "id" id "method" method "params" (or params :omit)))
-      (remhash id (lsp-server-waiting server))
-      (funcall then nil (tuatara.text:json-object "message" "the server is not running")))
+    (if (lsp-send server (tuatara.text:json-object "jsonrpc" "2.0" "id" id "method" method "params" (or params :omit)))
+        (when seconds
+          (push (list (tuatara.runtime:deadline-in seconds) server id) *lsp-deadlines*))
+        (progn (remhash id (lsp-server-waiting server))
+               (funcall then nil (tuatara.text:json-object "message" "the server is not running"))))
     id))
 
 (defun lsp-cancel (server id)
@@ -160,20 +178,72 @@ Returns the request's number."
   (when (remhash id (lsp-server-waiting server))
     (lsp-notify server "$/cancelRequest" (tuatara.text:json-object "id" id))))
 
+(defun lsp-give-up-late ()
+  "Give up each request of *LSP-DEADLINES* past its time, telling what waited
+for it :TIMEOUT, and let go of those answered; the seconds until the next is
+due, or NIL when none waits."
+  (let ((soonest nil))
+    (dolist (entry *lsp-deadlines*)
+      (destructuring-bind (deadline server id) entry
+        (let ((then (gethash id (lsp-server-waiting server)))
+              (left (tuatara.runtime:seconds-left deadline)))
+          (cond ((null then) (setf *lsp-deadlines* (remove entry *lsp-deadlines*)))
+                ((minusp left)
+                 (setf *lsp-deadlines* (remove entry *lsp-deadlines*))
+                 (lsp-cancel server id)
+                 (handler-case (funcall then nil :timeout)
+                   (error (e) (log-message (format nil "~a: what waited for an answer failed: ~a" (lsp-server-name server) e)))))
+                (t (setf soonest (if soonest (min soonest left) left)))))))
+    (and soonest (max 0.01 soonest))))
+
+(defun short-failure-words (words)
+  "WORDS, why a program or a server failed, short enough for the echo area:
+their first line that says anything, a program it could not run named
+alone, not by the command line it was run by (*COMMAND-LINE-SCANNER*):
+Failed to spawn rustfmt; \"it failed\" when they say nothing."
+  (let ((line (find-if (lambda (l) (plusp (length l)))
+                       (mapcar (lambda (l) (string-trim '(#\Space #\Tab #\Return) l))
+                               (uiop:split-string (or words "") :separator '(#\Newline))))))
+    (if (null line)
+        "it failed"
+        (cl-ppcre:regex-replace-all *command-line-scanner* line
+                                    (lambda (match program)
+                                      (declare (ignore match))
+                                      (tuatara.io:native-file-name program))
+                                    :simple-calls t))))
+
+(defun seconds-words (seconds)
+  "SECONDS as a person reads them: 1 second, 2 seconds, 0.5 seconds."
+  (let ((n (if (and (rationalp seconds) (not (integerp seconds))) (float seconds) seconds)))
+    (when (and (floatp n) (= n (round n))) (setf n (round n)))
+    (format nil "~a second~:[s~;~]" n (eql n 1))))
+
+(defun lsp-error-words (error &key (seconds *lsp-wait*) (setting '*lsp-wait*))
+  "Why a question to a server came to nothing, in words short enough for the
+echo area: for ERROR :TIMEOUT, no answer within SECONDS (as SETTING says);
+for :STOPPED, that a key stopped the wait; for a server's answer saying it
+failed, its words made short (SHORT-FAILURE-WORDS)."
+  (case error
+    (:timeout (format nil "no answer within ~a (~(~a~))" (seconds-words seconds) setting))
+    (:stopped "a key stopped the wait")
+    (t (short-failure-words (and (hash-table-p error) (tuatara.text:json-text error "message"))))))
+
 (defun lsp-request-now (server method params)
   "Ask SERVER METHOD with PARAMS and wait for the answer on the editor's thread,
-*LSP-WAIT* seconds at most, a key stopping the wait: two values, the result,
-and the error or :TIMEOUT. What comes meanwhile is taken in."
+*LSP-WAIT* seconds at most (LSP-REQUEST's SECONDS), a key stopping the wait:
+two values, the result, and the error, :TIMEOUT or :STOPPED (LSP-ERROR-WORDS
+says each). What comes meanwhile is taken in."
   (let* ((answer nil)
-         (id (lsp-request server method params (lambda (result error) (setf answer (list result error)))))
-         (deadline (tuatara.runtime:deadline-in *lsp-wait*)))
+         (id (lsp-request server method params (lambda (result error) (setf answer (list result error)))
+                          :seconds *lsp-wait*)))
     (loop until answer
-          do (when (or (minusp (tuatara.runtime:seconds-left deadline)) (key-waiting-p))
+          do (when (key-waiting-p)
                (lsp-cancel server id)
-               (return-from lsp-request-now (values nil :timeout)))
+               (return-from lsp-request-now (values nil :stopped)))
              ;; woken as soon as anything comes; a key looked for meanwhile
              (sb-thread:wait-on-semaphore *lsp-arrived* :timeout 1/20)
-             (lsp-take-in))
+             (lsp-take-in)
+             (lsp-give-up-late))
     (values-list answer)))
 
 ;;; Reading
@@ -324,14 +394,17 @@ error when no function answers METHOD, or the function failed."
             (funcall answer result))))))
 
 (defun lsp-tick (editor)
-  "Take in what servers sent (LSP-TAKE-IN), and send the changes waiting
-\(LSP-SEND-CHANGES); look again when the soonest change still waiting is due
-\(LSP-CHANGES-DUE-IN), else not until a server sends something or a key is
+  "Take in what servers sent (LSP-TAKE-IN), send the changes waiting
+\(LSP-SEND-CHANGES), and give up the questions not answered in their time
+\(LSP-GIVE-UP-LATE); look again when the soonest change still waiting or
+question's time is due, else not until a server sends something or a key is
 typed."
   (declare (ignore editor))
   (lsp-take-in)
   (lsp-send-changes)
-  (lsp-changes-due-in))
+  (let ((changes (lsp-changes-due-in))
+        (late (lsp-give-up-late)))
+    (if (and changes late) (min changes late) (or changes late))))
 
 ;;; Starting and stopping
 
@@ -425,7 +498,7 @@ program cannot be started (said so)."
                   "initializationOptions" (or options :omit))
                  (lambda (result error)
                    (if error
-                       (progn (message "~a did not start: ~a" (lsp-server-name server) (tuatara.text:json-text error "message"))
+                       (progn (message "~a did not start: ~a" (lsp-server-name server) (lsp-error-words error))
                               (lsp-stop server))
                        (lsp-server-ready server result))))
     (message "Starting ~a for ~a" (lsp-server-name server) (abbreviated-path root))
