@@ -224,7 +224,7 @@ HEIGHT pixels, on a new picture, as a vector of octets."
                 (let* ((data (tuatara.frontend.gtk::cairo-image-surface-get-data surface))
                        (size (* height (tuatara.frontend.gtk::cairo-image-surface-get-stride surface)))
                        (pixels (make-array size :element-type '(unsigned-byte 8))))
-                  (dotimes (i size pixels) (setf (aref pixels i) (cffi:mem-aref data :uint8 i)))))
+                  (dotimes (i size pixels) (setf (aref pixels i) (sb-sys:sap-ref-8 data i)))))
       (tuatara.frontend.gtk::cairo-destroy cr)
       (tuatara.frontend.gtk::cairo-surface-destroy surface))))
 
@@ -371,13 +371,13 @@ Adwaita Mono 11 on ao-dark."
               do (loop for (from below strip) in row-pieces
                        do (let* ((w (* (- below from) cw))
                                  (texture (tuatara.frontend.gtk::strip-texture f strip w)))
-                            (cffi:with-foreign-object (data :uint8 (* 4 w ch))
+                            (tuatara.io:with-foreign-memory (data (* 4 w ch))
                               (tuatara.gtk:gdk-texture-download texture data (* 4 w))
                               (dotimes (y ch)
                                 (dotimes (x w)
                                   (dotimes (c 3)
                                     (incf seen)
-                                    (unless (= (cffi:mem-aref data :uint8 (+ (* 4 (+ x (* y w))) c))
+                                    (unless (= (sb-sys:sap-ref-8 data (+ (* 4 (+ x (* y w))) c))
                                                (aref whole (+ (* (+ 4 (* row ch) y) stride) (* 4 (+ 6 (* from cw) x)) c)))
                                       (incf wrong))))))
                             (tuatara.gtk:g-object-unref texture))))
@@ -600,14 +600,15 @@ windows side by side."
     ;; a drag tells the editor each cell it reaches once, as GTK's gesture calls it;
     ;; the button let go is the click's to tell, once
     (flet ((call (callback x y)
-             (cffi:foreign-funcall-pointer callback () :pointer (cffi:null-pointer) :double x :double y
-                                                        :pointer (cffi:null-pointer) :void)))
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-begin) 20d0 45d0)
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-update) 1d0 1d0)
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-update) 30d0 0d0)
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-update) 31d0 0d0)
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-update) 30d0 20d0)
-      (call (cffi:callback tuatara.frontend.gtk::on-drag-end) 30d0 20d0))
+             (sb-alien:alien-funcall (sb-alien:sap-alien callback (function sb-alien:void sb-sys:system-area-pointer sb-alien:double
+                                                                            sb-alien:double sb-sys:system-area-pointer))
+                                     (tuatara.io:null-pointer) x y (tuatara.io:null-pointer))))
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-begin) 20d0 45d0)
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-update) 1d0 1d0)
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-update) 30d0 0d0)
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-update) 31d0 0d0)
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-update) 30d0 20d0)
+      (call (tuatara.gtk:callback tuatara.frontend.gtk::on-drag-end) 30d0 20d0))
     (is equal '((:drag-mouse-1 5 2) (:drag-mouse-1 5 3))
         (loop for event = (tuatara.frontend.gtk::queue-pop (tuatara.frontend.gtk::gtk-queue f) 0)
               while event
@@ -756,17 +757,23 @@ windows side by side."
   ;; files as a file manager drops them: a GdkFileList in a GValue
   (tuatara.gtk:load-gtk-libraries)
   (let* ((paths (list "/tmp/a file.txt" "/tmp/b [2].txt" (format nil "/tmp/caf~a.txt" (code-char #xe9))))
-         (files (let ((list (cffi:null-pointer)))
+         (files (let ((list (tuatara.io:null-pointer)))
                   (dolist (path (reverse paths) list)
-                    (setf list (cffi:foreign-funcall "g_slist_prepend" :pointer list
-                                                     :pointer (cffi:foreign-funcall "g_file_new_for_path" :string path :pointer)
-                                                     :pointer)))))
-         (file-list (cffi:foreign-funcall "gdk_file_list_new_from_list" :pointer files :pointer)))
-    (cffi:foreign-funcall "g_slist_free_full" :pointer files :pointer (cffi:foreign-symbol-pointer "g_object_unref") :void)
-    (cffi:with-foreign-object (value :uint8 24)
-      (dotimes (i 24) (setf (cffi:mem-aref value :uint8 i) 0))
-      (cffi:foreign-funcall "g_value_init" :pointer value :unsigned-long (tuatara.gtk:gdk-file-list-get-type) :pointer)
-      (cffi:foreign-funcall "g_value_take_boxed" :pointer value :pointer file-list :void)
+                    (setf list (tuatara.runtime:foreign-call "g_slist_prepend" sb-sys:system-area-pointer
+                                                             (sb-sys:system-area-pointer list)
+                                                             (sb-sys:system-area-pointer
+                                                              (tuatara.runtime:foreign-call "g_file_new_for_path" sb-sys:system-area-pointer
+                                                                                            ((sb-alien:c-string :external-format :utf-8) path))))))))
+         (file-list (tuatara.runtime:foreign-call "gdk_file_list_new_from_list" sb-sys:system-area-pointer
+                                                  (sb-sys:system-area-pointer files))))
+    (tuatara.runtime:foreign-call "g_slist_free_full" sb-alien:void (sb-sys:system-area-pointer files)
+                                  (sb-sys:system-area-pointer (sb-sys:int-sap (sb-sys:find-dynamic-foreign-symbol-address "g_object_unref"))))
+    ;; a GValue: 24 octets, all zero before it is set up
+    (tuatara.io:with-foreign-memory (value 24 :zero t)
+      (tuatara.runtime:foreign-call "g_value_init" sb-sys:system-area-pointer (sb-sys:system-area-pointer value)
+                                    (sb-alien:unsigned-long (tuatara.gtk:gdk-file-list-get-type)))
+      (tuatara.runtime:foreign-call "g_value_take_boxed" sb-alien:void (sb-sys:system-area-pointer value)
+                                    (sb-sys:system-area-pointer file-list))
       (unwind-protect
            (progn
              (is equal paths (tuatara.frontend.gtk::dropped-paths value))
@@ -774,15 +781,17 @@ windows side by side."
              (let* ((f (tuatara.frontend.gtk:make-gtk-frontend))
                     (tuatara.frontend.gtk::*frontend* f))
                (setf (tuatara.frontend.gtk::cell-width f) 9 (tuatara.frontend.gtk::cell-height f) 20)
-               (true (cffi:foreign-funcall-pointer (cffi:callback tuatara.frontend.gtk::on-drop) ()
-                                                   :pointer (cffi:null-pointer) :pointer value
-                                                   :double 20d0 :double 45d0 :pointer (cffi:null-pointer) :boolean))
+               (true (sb-alien:alien-funcall
+                      (sb-alien:sap-alien (tuatara.gtk:callback tuatara.frontend.gtk::on-drop)
+                                          (function (sb-alien:boolean 32) sb-sys:system-area-pointer sb-sys:system-area-pointer
+                                                    sb-alien:double sb-alien:double sb-sys:system-area-pointer))
+                      (tuatara.io:null-pointer) value 20d0 45d0 (tuatara.io:null-pointer)))
                (let ((event (tuatara.frontend.gtk::queue-pop (tuatara.frontend.gtk::gtk-queue f) 0)))
                  (is eq :drop (tuatara.frontend:event-kind event))
                  (is equal paths (tuatara.frontend:event-files event))
                  (is = 2 (tuatara.frontend:event-column event))
                  (is = 2 (tuatara.frontend:event-row event)))))
-        (cffi:foreign-funcall "g_value_unset" :pointer value :void)))))
+        (tuatara.runtime:foreign-call "g_value_unset" sb-alien:void (sb-sys:system-area-pointer value))))))
 
 (define-test (gtk pointer-shapes)
   ;; the text beam over text, an arrow on mode lines and the echo row, a sideways arrow on a divider
@@ -830,8 +839,10 @@ windows side by side."
     (true (tuatara.frontend:frontend-toggle-state f :fullscreen))
     (is equal '(:fullscreen :fullscreen) (tuatara.frontend.gtk::gtk-toggles f))
     ;; with no window open yet, the requests are taken and nothing is done
-    (false (cffi:foreign-funcall-pointer (cffi:callback tuatara.frontend.gtk::on-toggle-state) ()
-                                         :pointer (cffi:null-pointer) :boolean))
+    (false (sb-alien:alien-funcall
+            (sb-alien:sap-alien (tuatara.gtk:callback tuatara.frontend.gtk::on-toggle-state)
+                                (function (sb-alien:boolean 32) sb-sys:system-area-pointer))
+            (tuatara.io:null-pointer)))
     (false (tuatara.frontend.gtk::gtk-toggles f))))
 
 (define-test (gtk short-waits)
@@ -1192,9 +1203,9 @@ windows side by side."
         (unwind-protect
              (dotimes (p 4)
                (let ((alpha (aref pixels (+ (* 4 p) 3))))
-                 (is = alpha (cffi:mem-aref data :uint8 (+ (* 4 p) 3)))
+                 (is = alpha (sb-sys:sap-ref-8 data (+ (* 4 p) 3)))
                  (loop for (to from) in '((0 2) (1 1) (2 0))
-                       do (true (<= (abs (- (cffi:mem-aref data :uint8 (+ (* 4 p) to))
+                       do (true (<= (abs (- (sb-sys:sap-ref-8 data (+ (* 4 p) to))
                                             (floor (* alpha (aref pixels (+ (* 4 p) from))) 255)))
                                     1)))))
           (tuatara.frontend.gtk::cairo-surface-destroy surface))))))
@@ -1218,3 +1229,28 @@ windows side by side."
     (false (command #xfe51 0))
     (false (command #x55 (logior 4 1)))
     (true (command #x55 4))))
+
+(define-test (gtk picture-written-to-a-name-not-utf-8)
+  ;; a file name the window gives GTK or Cairo reaches the system as it was read, raw bytes and all
+  (tuatara.gtk:load-gtk-libraries)
+  (let* ((folder (tuatara.io:path-join (uiop:native-namestring (uiop:temporary-directory))
+                                       (tuatara.io:slash-ended (format nil "tuatara-test-~a" (tuatara.io:random-name)))))
+         (path (format nil "~apicture-~c.png" folder (code-char #xDCFF))))
+    (tuatara.io:make-directory folder #o700)
+    (unwind-protect
+         (sb-int:with-float-traps-masked (:overflow :invalid :divide-by-zero :inexact :underflow)
+           (let ((surface (tuatara.gtk:cairo-image-surface-create 0 4 4)))
+             (unwind-protect (is = 0 (tuatara.gtk:cairo-surface-write-to-png surface path))
+               (tuatara.gtk:cairo-surface-destroy surface)))
+           (is eq :regular (tuatara.io:path-kind path)))
+      (tuatara.io:delete-tree folder))))
+
+(define-test (gtk callback-pointers-kept)
+  ;; a callback's C function pointer is found once and kept: nothing made each time it is given to GTK
+  (flet ((pointer () (tuatara.gtk:callback tuatara.frontend.gtk::on-draw-request)))
+    (is = (sb-sys:sap-int (sb-alien:alien-sap (sb-alien:alien-callable-function 'tuatara.frontend.gtk::on-draw-request)))
+        (sb-sys:sap-int (pointer)))
+    (pointer)
+    (let* ((before (tuatara.bench::bytes-consed))
+           (consed (progn (dotimes (i 1000) (pointer)) (- (tuatara.bench::bytes-consed) before))))
+      (true (< consed 1000) "~d octets for 1000 pointers" consed))))

@@ -13,6 +13,7 @@
 
 (defpackage #:tuatara.frontend.gtk
   (:use #:cl #:tuatara.gtk)
+  (:import-from #:tuatara.io #:null-pointer #:null-pointer-p #:sap-string)
   (:import-from #:tuatara-user #:*gui-font* #:*gui-renderer* #:*gui-padding* #:*window-colours-from-desktop*)
   (:documentation "The GTK4 frontend: Tuatara in a window of its own, one drawing area painted with Pango and Cairo.")
   (:export #:gtk-frontend #:make-gtk-frontend #:run-in-window #:gdk-key #:paint-frame-to-png
@@ -64,7 +65,7 @@ set before Tuatara started.")
   "The renderer drawing WINDOW, realised, as GTK names its type (GskGLRenderer,
 GskVulkanRenderer, GskCairoRenderer), or NIL when it has none."
   (let ((renderer (gtk-native-get-renderer window)))
-    (unless (cffi:null-pointer-p renderer) (g-type-name-from-instance renderer))))
+    (unless (null-pointer-p renderer) (g-type-name-from-instance renderer))))
 
 (defvar *desktop-colours* nil
   "The desktop's text and ground colours as GTK's theme last gave them, a list
@@ -214,24 +215,43 @@ OFFSET), as TUATARA.FRONTEND:FRONTEND-PUT-IMAGE takes them."
    (format *error-output* "~&Tuatara: the window's ~(~a~) failed: ~a~%" name condition)
    (finish-output *error-output*)))
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun remove-ignored (declarations)
+    "DECLARATIONS, DECLARE forms, without what they say of variables not used."
+    (loop for (nil . specifiers) in declarations
+          for kept = (remove-if (lambda (s) (member (first s) '(ignore ignorable))) specifiers)
+          when kept collect `(declare ,@kept))))
+
 (defmacro define-callback (name-and-options return-type (&rest arguments) &body body)
-  "Define a function for GTK to call, as CFFI:DEFCALLBACK does. NAME-AND-OPTIONS
-is its name, or a list of its name and :FAILED FORM. An error in BODY is
-reported on the error output and answered with the value of FORM (NIL by
-default) rather than taking the editor down with GTK's thread."
+  "Define a function for GTK to call, whose C function pointer (CALLBACK NAME)
+is given to GTK. NAME-AND-OPTIONS is its name, or a list of its name and
+:FAILED FORM. RETURN-TYPE and each of ARGUMENTS, (ARGUMENT TYPE), are of the
+types TUATARA.IO:C-TYPE knows: a :string argument is read as text, a :boolean
+result given as GLib's truth value. An error in BODY is reported on the error
+output and answered with the value of FORM (NIL by default) rather than
+taking the editor down with GTK's thread, never unwinding through GTK."
   (destructuring-bind (name &key failed) (if (listp name-and-options) name-and-options (list name-and-options))
     (multiple-value-bind (forms declarations) (alexandria:parse-body body)
-      `(cffi:defcallback ,name ,return-type ,arguments
-         ,@declarations
-         (handler-case (progn ,@forms)
-           (serious-condition (condition)
-             (callback-failed ',name condition)
-             ,failed))))))
+      (let ((names (mapcar #'first arguments))
+            (texts (loop for (argument type) in arguments when (eq type :string) collect argument))
+            (result (gensym "RESULT")))
+        `(sb-alien:define-alien-callable ,name ,(tuatara.io:c-type (if (eq return-type :boolean) :int return-type))
+             ,(loop for (argument type) in arguments
+                    collect (list argument (tuatara.io:c-type (if (eq type :string) :pointer type))))
+           ;; each argument named, used or not: a callable's body takes no declarations
+           ,@names
+           (let ((,result (handler-case
+                              (let (,@(loop for text in texts collect `(,text (sap-string ,text))))
+                                (locally ,@(remove-ignored declarations) ,@forms))
+                            (serious-condition (condition)
+                              (callback-failed ',name condition)
+                              ,failed))))
+             ,(if (eq return-type :boolean) `(if ,result 1 0) result)))))))
 
 (defun request-draw (f)
   "Have the window painted again soon, from GTK's thread; any thread may ask."
   (unless (sb-thread:with-mutex ((gtk-lock f)) (shiftf (gtk-draw-pending f) t))
-    (g-idle-add (cffi:callback on-draw-request) (cffi:null-pointer))))
+    (g-idle-add (callback on-draw-request) (null-pointer))))
 
 (defmethod tuatara.frontend:frontend-start ((f gtk-frontend))
   ;; the window was opened on GTK's thread; wait for it to know its size
@@ -243,7 +263,7 @@ default) rather than taking the editor down with GTK's thread."
 (defmethod tuatara.frontend:frontend-stop ((f gtk-frontend))
   (setf tuatara.display:*row-scaling* nil
         (gtk-done f) t)
-  (g-idle-add (cffi:callback on-close-window) (cffi:null-pointer)))
+  (g-idle-add (callback on-close-window) (null-pointer)))
 
 (defmethod tuatara.frontend:frontend-size ((f gtk-frontend))
   (sb-thread:with-mutex ((gtk-lock f)) (values (gtk-columns f) (gtk-rows f))))
@@ -265,8 +285,8 @@ default) rather than taking the editor down with GTK's thread."
 
 (defmethod tuatara.frontend:frontend-description ((f gtk-frontend))
   (format nil "in a GTK ~d.~d window"
-          (cffi:foreign-funcall "gtk_get_major_version" :uint)
-          (cffi:foreign-funcall "gtk_get_minor_version" :uint)))
+          (tuatara.runtime:foreign-call "gtk_get_major_version" sb-alien:unsigned-int)
+          (tuatara.runtime:foreign-call "gtk_get_minor_version" sb-alien:unsigned-int)))
 
 (defmethod tuatara.frontend:frontend-health ((f gtk-frontend))
   (list (cons "Display" "a window of its own (GTK 4), 24-bit colour")
@@ -276,12 +296,12 @@ default) rather than taking the editor down with GTK's thread."
 
 (defmethod tuatara.frontend:frontend-set-clipboard ((f gtk-frontend) text)
   (sb-thread:with-mutex ((gtk-lock f)) (setf (gtk-clipboard-out f) text))
-  (g-idle-add (cffi:callback on-set-clipboard) (cffi:null-pointer))
+  (g-idle-add (callback on-set-clipboard) (null-pointer))
   t)
 
 (defmethod tuatara.frontend:frontend-set-primary-selection ((f gtk-frontend) text)
   (sb-thread:with-mutex ((gtk-lock f)) (setf (gtk-primary-out f) text))
-  (g-idle-add (cffi:callback on-set-clipboard) (cffi:null-pointer))
+  (g-idle-add (callback on-set-clipboard) (null-pointer))
   t)
 
 (defmethod tuatara.frontend:frontend-font-steps ((f gtk-frontend))
@@ -290,20 +310,20 @@ default) rather than taking the editor down with GTK's thread."
 (defmethod (setf tuatara.frontend:frontend-font-steps) (steps (f gtk-frontend))
   (let ((steps (sb-thread:with-mutex ((gtk-lock f))
                  (setf (gtk-font-steps f) (font-steps-fitting f steps)))))
-    (g-idle-add (cffi:callback on-rescale-font) (cffi:null-pointer))
+    (g-idle-add (callback on-rescale-font) (null-pointer))
     steps))
 
 (defun call-with-font-families (function)
   "Call FUNCTION with each font family installed, a Pango font family."
   (load-gtk-libraries)
   (with-gtk-float-traps
-    (cffi:with-foreign-objects ((families :pointer) (count :int))
-      (pango-font-map-list-families (pango-cairo-font-map-get-default) families count)
-      (let ((array (cffi:mem-ref families :pointer)))
-        (unwind-protect
-             (dotimes (i (cffi:mem-ref count :int))
-               (funcall function (cffi:mem-aref array :pointer i)))
-          (g-free array))))))
+    (sb-alien:with-alien ((families sb-sys:system-area-pointer (null-pointer)) (found sb-alien:int 0))
+      (pango-font-map-list-families (pango-cairo-font-map-get-default)
+                                    (sb-alien:alien-sap (sb-alien:addr families)) (sb-alien:alien-sap (sb-alien:addr found)))
+      (unwind-protect
+           (dotimes (i found)
+             (funcall function (sb-sys:sap-ref-sap families (* sb-vm:n-word-bytes i))))
+        (g-free families)))))
 
 (defun font-families (&key monospace)
   "The names of the font families installed, sorted; with MONOSPACE, only those
@@ -334,12 +354,12 @@ the desktop's monospace font's; 11 points when neither names one."
 (defun family-variants (family size)
   "The variants of the Pango font FAMILY drawn as themselves, as (NAME FONT)
 with FONT the full name that chooses each at SIZE (Pango units), sorted by name."
-  (cffi:with-foreign-objects ((faces :pointer) (count :int))
-    (pango-font-family-list-faces family faces count)
-    (let ((array (cffi:mem-ref faces :pointer)))
+  (sb-alien:with-alien ((faces sb-sys:system-area-pointer (null-pointer)) (found sb-alien:int 0))
+    (pango-font-family-list-faces family (sb-alien:alien-sap (sb-alien:addr faces)) (sb-alien:alien-sap (sb-alien:addr found)))
+    (let ((array faces))
       (unwind-protect
-           (sort (loop for i below (cffi:mem-ref count :int)
-                       for face = (cffi:mem-aref array :pointer i)
+           (sort (loop for i below found
+                       for face = (sb-sys:sap-ref-sap array (* sb-vm:n-word-bytes i))
                        unless (pango-font-face-is-synthesized face)
                          collect (let ((description (pango-font-face-describe face)))
                                    (unwind-protect
@@ -373,7 +393,7 @@ with FONT the full name that chooses each at SIZE (Pango units), sorted by name.
                (pango-font-description-set-size description (font-size-in-use)))
              (let ((full (pango-font-description-to-string description)))
                (setf *gui-font* full)
-               (g-idle-add (cffi:callback on-rescale-font) (cffi:null-pointer))
+               (g-idle-add (callback on-rescale-font) (null-pointer))
                full))
         (pango-font-description-free description)))))
 
@@ -396,18 +416,17 @@ with FONT the full name that chooses each at SIZE (Pango units), sorted by name.
 (defmethod tuatara.frontend:frontend-toggle-state ((f gtk-frontend) state)
   (sb-thread:with-mutex ((gtk-lock f))
     (setf (gtk-toggles f) (append (gtk-toggles f) (list state))))
-  (g-idle-add (cffi:callback on-toggle-state) (cffi:null-pointer))
+  (g-idle-add (callback on-toggle-state) (null-pointer))
   t)
 
 (defun settings-desktop-style ()
   "The desktop's style as GTK's settings have it (GTK 4.20 on), :dark or
 :light; NIL when GTK cannot tell. On GTK's thread."
   (let ((settings (gtk-settings-get-default)))
-    (when (and (not (cffi:null-pointer-p settings))
-               (not (cffi:null-pointer-p
-                     (cffi:foreign-funcall "g_object_class_find_property"
-                                           :pointer (cffi:mem-ref settings :pointer)
-                                           :string "gtk-interface-color-scheme" :pointer))))
+    (when (and (not (null-pointer-p settings))
+               (not (null-pointer-p
+                     ;; the settings' class, which the object's first field points at
+                     (g-object-class-find-property (sb-sys:sap-ref-sap settings 0) "gtk-interface-color-scheme"))))
       ;; 1: no preference, which desktops show light; 2: dark; 3: light
       (case (g-object-get-int settings "gtk-interface-color-scheme")
         (2 :dark)
@@ -441,7 +460,7 @@ those the desktop's theme names for windows, else GTK's own. On GTK's thread."
             (and (not (gtk-settings-pending f))
                  (not (and (equal font (gtk-font-in-use f)) (equal padding (gtk-padding f))))
                  (setf (gtk-settings-pending f) t)))
-      (g-idle-add (cffi:callback on-rescale-font) (cffi:null-pointer)))))
+      (g-idle-add (callback on-rescale-font) (null-pointer)))))
 
 (defmethod tuatara.frontend:frontend-desktop-style ((f gtk-frontend))
   (sb-thread:with-mutex ((gtk-lock f)) (gtk-desktop-style f)))
@@ -449,7 +468,7 @@ those the desktop's theme names for windows, else GTK's own. On GTK's thread."
 (defmethod tuatara.frontend:frontend-set-title ((f gtk-frontend) title)
   (sb-thread:with-mutex ((gtk-lock f))
     (setf (gtk-title f) title))
-  (g-idle-add (cffi:callback on-set-title) (cffi:null-pointer)))
+  (g-idle-add (callback on-set-title) (null-pointer)))
 
 (defmethod tuatara.frontend:frontend-clipboard ((f gtk-frontend))
   (read-clipboard-now f nil))
@@ -469,7 +488,7 @@ most; NIL when there is none."
       ;; or, the change still not in, the text kept before it
       (return-from read-clipboard-now (gtk-clipboard-kept f)))
     (setf (gtk-clipboard-in f) :waiting)
-    (g-idle-add (if primary (cffi:callback on-read-primary) (cffi:callback on-read-clipboard)) (cffi:null-pointer))
+    (g-idle-add (if primary (callback on-read-primary) (callback on-read-clipboard)) (null-pointer))
     ;; a clipboard that does not answer within a second counts as none
     (tuatara.runtime:wait-on-until (gtk-changed f) (gtk-lock f) (lambda () (not (eq (gtk-clipboard-in f) :waiting))) 1)
     (let ((text (gtk-clipboard-in f)))

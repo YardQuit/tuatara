@@ -117,7 +117,7 @@ bold, italic, bold italic. A NAME without a size is taken at 11 points."
     (unwind-protect
          (progn
            (pango-layout-set-font-description layout (aref (gtk-fonts f) 0))
-           (pango-layout-set-text layout "M" -1)
+           (pango-layout-set-text layout "M")
            (multiple-value-bind (width height) (pango-layout-get-pixel-size layout)
              (sb-thread:with-mutex ((gtk-lock f))
                (setf (cell-width f) (max 1 width)
@@ -222,7 +222,7 @@ let go of when those change (FORGET-LAYOUTS)."
             (remhash key (aref layouts 1))
             (setf (gethash key (aref layouts 0)) old)))
         (let ((layout (font-layout f cr font index)))
-          (pango-layout-set-text layout text -1)
+          (pango-layout-set-text layout text)
           (setf (gethash key (aref layouts 0)) layout)))))
 
 (defun draw-text (f cr layouts text column y flags &optional font shape)
@@ -880,7 +880,7 @@ place. The texture, in the screen's own pixels, fills the picture's size."
     (loop for i from slot below (length pictures)
           for entry = (aref pictures i)
           when (fourth entry)
-            do (gtk-picture-set-paintable (first entry) (cffi:null-pointer))
+            do (gtk-picture-set-paintable (first entry) (null-pointer))
                (gtk-widget-set-visible (first entry) nil)
                (setf (fourth entry) nil))))
 
@@ -889,13 +889,13 @@ place. The texture, in the screen's own pixels, fills the picture's size."
 the rows: a picture of one pixel, stretched to that size."
   (let ((colour (nth-value 1 (face-colours nil))) (ground (gtk-ground f)))
     (unless (equal colour (gtk-ground-colour f))
-      (cffi:with-foreign-object (pixel :uint8 4)
+      (sb-alien:with-alien ((pixel (array (sb-alien:unsigned 8) 4)))
         (destructuring-bind (r g b) colour
-          (setf (cffi:mem-aref pixel :uint8 0) (round (* 255 b))
-                (cffi:mem-aref pixel :uint8 1) (round (* 255 g))
-                (cffi:mem-aref pixel :uint8 2) (round (* 255 r))
-                (cffi:mem-aref pixel :uint8 3) 255))
-        (let* ((bytes (g-bytes-new pixel 4))
+          (setf (sb-alien:deref pixel 0) (round (* 255 b))
+                (sb-alien:deref pixel 1) (round (* 255 g))
+                (sb-alien:deref pixel 2) (round (* 255 r))
+                (sb-alien:deref pixel 3) 255))
+        (let* ((bytes (g-bytes-new (sb-alien:alien-sap pixel) 4))
                (texture (gdk-memory-texture-new 1 1 29 bytes 4)))
           (g-bytes-unref bytes)
           (gtk-picture-set-paintable ground texture)
@@ -910,7 +910,7 @@ red, green and blue, with alpha when it has four channels."
          (channels (tuatara.frontend:image-channels image))
          (pixels (tuatara.frontend:image-pixels image))
          (stride (* width channels)))
-    (cffi:with-pointer-to-vector-data (data pixels)
+    (tuatara.io:with-octets-sap (data pixels)
       (let* ((bytes (g-bytes-new data (length pixels)))
              ;; 5: R8G8B8A8, 7: R8G8B8 (GdkMemoryFormat)
              (texture (gdk-memory-texture-new width (tuatara.frontend:image-height image)
@@ -1058,8 +1058,8 @@ other way are let go of (LET-GO-OF-PICTURES)."
   (unless (eq on (gtk-on-card f))
     (setf (gtk-on-card f) on)
     (let-go-of-pictures f on)
-    (gtk-drawing-area-set-draw-func (gtk-area f) (if on (cffi:null-pointer) (cffi:callback on-draw))
-                                    (cffi:null-pointer) (cffi:null-pointer))
+    (gtk-drawing-area-set-draw-func (gtk-area f) (if on (null-pointer) (callback on-draw))
+                                    (null-pointer) (null-pointer))
     (gtk-widget-set-visible (gtk-grid f) on)
     (gtk-widget-set-visible (gtk-pictures-layer f) on)
     (gtk-widget-set-visible (gtk-above f) on)))
@@ -1161,8 +1161,8 @@ height in pixels, and the width and height of a cell; its value is returned."
          (offset (+ (* y (cairo-image-surface-get-stride surface)) (* 4 x))))
     ;; 32 bits a pixel, blue first in memory on this machine
     (tuatara.display:colour-hex
-     (list (cffi:mem-aref data :uint8 (+ offset 2)) (cffi:mem-aref data :uint8 (+ offset 1))
-           (cffi:mem-aref data :uint8 offset)))))
+     (list (sb-sys:sap-ref-8 data (+ offset 2)) (sb-sys:sap-ref-8 data (+ offset 1))
+           (sb-sys:sap-ref-8 data offset)))))
 
 (defun paint-frame-to-png (frame path &rest options)
   "Paint FRAME as the window would into a PNG file at PATH, without a display;
