@@ -161,7 +161,9 @@ or :HUNG, so that each of several sessions in a test says how it ended."
                   :text *narrowing-text* :width 80))
     (is = 20 (session-point editor))
     (false (tuatara.buffer:buffer-narrowed-p (session-buffer editor)))
-    (true (tuatara.frontend.fake:fake-frame-showing f "Widened *scratch* to show line 5"))))
+    (true (tuatara.frontend.fake:fake-frame-showing f "Widened *scratch* to show line 5"))
+    ;; and the mode line no longer says Narrow
+    (false (shown-now-p f " Narrow "))))
 
 (define-test (narrowing search-finds-nothing-outside)
   (let ((text (format nil "needle one~%two~%three~%needle four~%")))
