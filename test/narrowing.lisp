@@ -611,3 +611,16 @@ or :HUNG, so that each of several sessions in a test says how it ended."
   (multiple-value-bind (f editor) (narrowing-keys (list *narrow-to-two-and-three* "M-x h e x - m o d e RET") :text *narrowing-text* :width 120)
     (false (tuatara.display:hex-view-p (session-buffer editor)))
     (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "is narrowed, and the hex view shows every octet"))))
+
+(define-test (narrowing nothing-drawn-past-the-end)
+  ;; an Org section narrowed to: the next headline's sign is not drawn on the row after the part
+  (with-test-directory (dir)
+    (let ((path (put-file (merge-pathnames "notes.org" dir)
+                          (format nil "* Kererū~%seen in the bush~%* Tūī~%two voices~%* Kea~%cheeky~%"))))
+      (let* ((f (narrowing-keys "C-n C-n C-x x s" :file path :width 60))
+             (rows (last-screen-rows f))
+             (body (position-if (lambda (row) (search "two voices" row)) rows)))
+        (true body)
+        (when body
+          (is string= "" (string-trim " " (nth (1+ body) rows))))
+        (is = 1 (count-if (lambda (row) (search "◉" row)) rows))))))

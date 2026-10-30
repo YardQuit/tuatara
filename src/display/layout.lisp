@@ -474,7 +474,8 @@ wrap, a row of a long line also begins every *WRAP-STRETCH* octets
 \(NEXT-WRAP-ANCHOR). UNTIL, an octet,
 ends the layout before a row that would begin past it. TEXT-END, an octet,
 is where the text shown ends, ROPE's end unless given: of a narrowed
-buffer, the end of the part shown. With INVISIBLE, a
+buffer, the end of the part shown, nothing of the text after it drawn there
+\(no HIDDEN text or fold, PREFIX or SCALE of its). With INVISIBLE, a
 character that draws nothing (`*invisible-characters*') is shown as its code,
 <FEFF>, in :invisible-character, taking those columns, as a raw byte is shown
 as \\xNN in :raw-byte. A grapheme cluster takes the columns of its first
@@ -489,6 +490,8 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
   (tuatara.text:with-octet-block (chunk +reader-chunk+)
     (let ((rows (make-array 0 :adjustable t :fill-pointer 0))
           (total (shown-text-end rope text-end))
+          ;; the text shown ends before the rope does: nothing of what lies after is drawn
+          (cut (and text-end (< text-end (tuatara.text:rope-bytes rope))))
           (reader (make-reader rope start (shown-text-end rope text-end) chunk))
           (position start)
           (line-start (tuatara.text:rope-line-start rope start))
@@ -505,7 +508,7 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
         (setf continuation (and wrap t) before -1))
       (loop while (and (< used height) (<= position total) (or (null until) (<= position until)))
             do (unless (and continuation (plusp (length rows)))
-                 (setf line-scale (if scale (max 1 (or (funcall scale (tuatara.text:rope-line-start rope position)) 1)) 1)))
+                 (setf line-scale (if (and scale (not (and cut (>= position total)))) (max 1 (or (funcall scale (tuatara.text:rope-line-start rope position)) 1)) 1)))
                ;; a large row fits, or nothing more is laid out (but a first row, made to fit)
                (let ((room (- height used)))
                  (when (> line-scale room)
@@ -521,7 +524,7 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
                  (setf (row-continuation-p row) continuation)
                  (unless (or continuation (zerop (length rows))) (setf line-start position before 0))
                  (setf anchor (and wrap (next-wrap-anchor rope line-start position)))
-                 (when prefix
+                 (when (and prefix (not (and cut (>= line-start total))))
                    (multiple-value-bind (text face) (funcall prefix line-start continuation)
                      (when (and text (plusp (length text)))
                        (loop for c across text
@@ -547,7 +550,10 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
                    ;; a fold: its ellipsis, then on after it
                    (let ((at (reader-position reader)))
                      (loop while (and hidden (hidden-passed-p (first hidden) at)) do (pop hidden))
-                     (when (and hidden (>= at (car (first hidden))))
+                     (when (and hidden (>= at (car (first hidden)))
+                                ;; a sign or a fold of the text after the part shown is not drawn at its end
+                                (not (and cut (>= (car (first hidden)) total)
+                                          (/= (car (first hidden)) (hidden-end (first hidden))))))
                        (let ((entry (pop hidden)))
                          (when (>= skipped hscroll)
                            (multiple-value-bind (text face) (if (consp (cdr entry))
