@@ -192,6 +192,8 @@ version)."
     ("eglot, Flymake and ElDoc" "how language servers look and feel: problems marked and"
                                 "shown under the cursor, a call's parameters in the echo area")
     ("Magit" "the state of a git repository, staging, commits and the log")
+    ("compile and smerge-mode" "running a build or the tests and going from place to place in its"
+                               "messages; the conflicts a merge left in a file, shown and put right")
     ("EasyPG" "the GnuPG commands, and .gpg files opened and saved")
     ("jinx, by Daniel Mendler" "checking the spelling of only the words shown, with enchant"
                                "called directly")

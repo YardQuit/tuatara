@@ -301,6 +301,10 @@ Tuatara says where its ideas come from:
   the Language Server Protocol, whose snippet syntax Tuatara's snippets share.
 - Magit :: the state of a git repository (=C-x g=): its files staged,
   unstaged and not tracked, their changes, commits, the log.
+- compile and smerge-mode :: running a build or the tests and going from one
+  place in its messages to the next (=M-x compile=, =M-g n=, =M-g p=); the
+  conflicts a merge left in a file, shown and put right (=C-c ^=,
+  =lisp/editing/conflicts.lisp=).
 - EasyPG :: the GnuPG commands: files and regions encrypted, decrypted, signed
   and verified, keys listed and managed, =.gpg= files opened and saved.
 - jinx, by Daniel Mendler :: the way of checking spelling: only the words
