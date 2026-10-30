@@ -318,3 +318,19 @@ the frontend and the editor."
       (let ((buffer (tuatara.buffer:find-buffer "a.txt")))
         (is string= (format nil "x~%two~%") (tuatara.buffer:buffer-string buffer))
         (is = 2 (tuatara.buffer:buffer-point buffer))))))
+
+(define-test (conflicts sides-shown-from-the-file-folder)
+  ;; the buffer showing how the sides differ stands in the conflicted file's folder, as the
+  ;; mode line shows
+  (with-test-directory (dir)
+    (flet ((shown () (tuatara.buffer:find-buffer "*Conflict: a.txt*")))
+      (conflict-session dir *two-conflicts* (list "M-< C-c ^ n C-c ^ ="
+                                                  (list :until (lambda () (and (shown) (search "---" (tuatara.buffer:buffer-string (shown))))))))
+      (let ((shown (shown)))
+        (unwind-protect
+             (progn
+               (is string= (tuatara.command:buffer-directory (tuatara.buffer:find-buffer "a.txt"))
+                   (tuatara.command:buffer-directory shown))
+               (is string= (tuatara.command::buffer-directory-name (tuatara.buffer:find-buffer "a.txt"))
+                   (tuatara.command::buffer-directory-name shown)))
+          (tuatara.buffer:kill-buffer shown))))))

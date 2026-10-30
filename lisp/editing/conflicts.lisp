@@ -594,6 +594,8 @@ background, the editor free meanwhile."
                 (rope (if (tuatara.buffer:buffer-mapping buffer)
                           (tuatara.buffer:buffer-slice buffer 0 (tuatara.buffer:buffer-size buffer))
                           (tuatara.buffer:buffer-text buffer))))
+            ;; files asked for from it are looked for beside the conflicted file
+            (setf (tuatara.buffer:buffer-local shown :directory) (buffer-directory buffer))
             (tuatara.runtime:start-job-thread
              (make-conflict-sides-job shown rope (cons (next-line-start buffer start) (or base separator))
                                       (cons (next-line-start buffer separator) end)
