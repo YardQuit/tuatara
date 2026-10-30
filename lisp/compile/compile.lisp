@@ -46,6 +46,14 @@ the rest waits for the next, so that typing never waits on a flood of output.")
   "The most octets of a compile's output read and not yet in its buffer: the
 program waits to write more until the editor has taken some in.")
 
+(defparameter *compile-rope-least* 8192
+  "The fewest octets of a piece of a compile's output that go into its buffer
+as they were read, sharing their memory, rather than copied.")
+
+(defvar *compiles-ending* '()
+  "The compiles that have ended whose output is still being put in, a part
+at each tick, before the line saying how they ended.")
+
 (defparameter *compile-line-looked-at* 4096
   "How many octets of each line of a compile's output are looked at for a file
 and line it names: a longer line's rest is shown but not read for one.")
@@ -607,10 +615,6 @@ ended."
 
 ;;; Taking the output in
 
-(defparameter *compile-rope-least* 8192
-  "The fewest octets of a piece of a compile's output that go into its buffer
-as they were read, sharing their memory, rather than copied.")
-
 (defun piece-size (piece)
   "The octets of PIECE, a piece of a compile's output: an octet vector or a rope."
   (if (tuatara.text:rope-p piece) (tuatara.text:rope-bytes piece) (length piece)))
@@ -684,10 +688,6 @@ is noted asleep, to wake the editor with the next."
       (when (and taken (live-buffer-p buffer) (eq (compile-job-run job) (tuatara.buffer:buffer-local buffer 'compile-run)))
         (add-compile-output buffer (nreverse taken))))
     (and taken t)))
-
-(defvar *compiles-ending* '()
-  "The compiles that have ended whose output is still being put in, a part
-at each tick, before the line saying how they ended.")
 
 (defun compile-under-way (buffer)
   "The compile whose output goes into BUFFER that has not finished: running,
