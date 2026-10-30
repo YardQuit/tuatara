@@ -122,14 +122,18 @@ SHOW is called with the candidate and a function to give the buffers made
 only for the preview. However FUNCTION ends, the window shows what it showed
 before, as it showed it, buffers already open that were shown elsewhere have
 point back where it was, and the buffers made for the preview are killed,
-where point was in their files not remembered."
+where point was in their files not remembered. A place outside the part
+shown of a narrowed buffer is shown widened, as choosing it shows it, and
+narrowed again after."
   (let* ((window (editor-window *editor*))
          (original (tuatara.display:window-buffer window))
          (point (tuatara.display:window-point window))
          (start (tuatara.display:window-start window))
          (made '())
          ;; buffers already open whose point a preview moved: each (BUFFER . POINT)
-         (moved '()))
+         (moved '())
+         ;; narrowed buffers widened to show a place outside: each (BUFFER . NARROWING)
+         (widened '()))
     (unwind-protect
          (funcall function
                   (lambda (candidate)
@@ -146,8 +150,16 @@ where point was in their files not remembered."
                         (when position
                           (unless (or (eq buffer original) (member buffer made) (assoc buffer moved))
                             (push (cons buffer (tuatara.buffer:buffer-point buffer)) moved))
-                          (setf (tuatara.display:window-point window) (min position (tuatara.buffer:buffer-size buffer)))
+                          (let ((at (min position (tuatara.buffer:buffer-size buffer))))
+                            (when (/= at (tuatara.buffer:within-narrowing buffer at))
+                              (push (cons buffer (tuatara.buffer:buffer-narrowing buffer)) widened)
+                              (tuatara.buffer:widen-buffer buffer))
+                            (setf (tuatara.display:window-point window) at))
                           (tuatara.display:window-recenter window))))))
+      (loop for (buffer . narrowing) in widened
+            when (and (live-buffer-p buffer) (null (tuatara.buffer:buffer-narrowing buffer)))
+              do (setf (tuatara.buffer:buffer-narrowing buffer) narrowing)
+                 (tuatara.buffer:keep-within-narrowing buffer))
       (when (member window (editor-windows *editor*))
         (unless (eq original (tuatara.display:window-buffer window))
           (tuatara.display:set-window-buffer window original :remember nil))

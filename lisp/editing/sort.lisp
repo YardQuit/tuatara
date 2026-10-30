@@ -1520,12 +1520,13 @@ records' header (LIST-HEADER-P), or NIL."
 matches, or with KEEP those it does not, in the background when large; what
 of a line the pattern is tried on is asked first in a file of records cut
 into fields (READ-LINE-FILTER, WORDS heading the question). With WHOLE,
-every line when nothing is selected. COMMAND names the command in messages,
+every line when nothing is selected (of the part shown, in a narrowed
+buffer). COMMAND names the command in messages,
 NOUN what a line is called in them."
   (let ((b (current-buffer)))
     (multiple-value-bind (start end) (selected-lines b)
       (when (and (null start) whole)
-        (setf start 0 end (tuatara.text:rope-bytes (tuatara.buffer:buffer-text b))))
+        (multiple-value-setq (start end) (tuatara.buffer:buffer-bounds b)))
       (if (null start)
           (message "No selection: ~(~a~) was not run" command)
           (multiple-value-bind (pattern regex matcher what first) (read-line-filter b words start end)

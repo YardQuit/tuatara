@@ -49,6 +49,7 @@ it is NIL, whatever *SENTENCE-END-DOUBLE-SPACE* says."
     tuatara.buffer:make-buffer tuatara.buffer:find-buffer tuatara.buffer:kill-buffer tuatara.buffer:live-buffer-p
     tuatara.buffer:unique-buffer-name tuatara.buffer:buffer-name tuatara.buffer:buffer-file tuatara.command:buffer-directory
     tuatara.buffer:buffer-point tuatara.buffer:buffer-string tuatara.buffer:buffer-size tuatara.buffer:buffer-region
+    tuatara.buffer:buffer-start tuatara.buffer:buffer-end tuatara.buffer:buffer-narrowed-p tuatara.buffer:with-narrowing-lifted
     tuatara.buffer:buffer-line-start tuatara.buffer:buffer-line-end tuatara.buffer:buffer-line-text
     tuatara.buffer:buffer-char-at tuatara.buffer:buffer-forward-char char-before-position buffer-crlf-p
     tuatara.buffer:buffer-mark-active-p tuatara.buffer:buffer-version tuatara.buffer:buffer-local delete-spans

@@ -35,6 +35,7 @@ itself written #1= ... #1#, so that printing it ends."
   "Show TEXT in *Pp Macroexpand Output*, in Lisp mode, beside the window in use."
   (let ((b (find-or-make-buffer "*Pp Macroexpand Output*" :mode 'lisp-mode)))
     (setf (tuatara.buffer:buffer-local b :kind) :macroexpansion)
+    (tuatara.buffer:widen-buffer b)
     (tuatara.buffer:buffer-replace b 0 (tuatara.buffer:buffer-size b) (string-left-trim '(#\Newline) text))
     (setf (tuatara.buffer:buffer-undo-stack b) '() (tuatara.buffer:buffer-redo-stack b) '()
           (tuatara.buffer:buffer-point b) 0)

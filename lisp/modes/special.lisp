@@ -82,8 +82,9 @@ by special-mode's highlight method (MADE-SPANS-BETWEEN); BUTTONS, each (START
 END ACTION), are its buttons (\\[push-button]); KEY is what the list was made
 from, for KEEP-SHOWN-CURRENT, worked out by its kind's key function when not
 given; REFILL, when given, is how BUFFER is made again (its :REFILL local,
-which \\[revert-buffer] calls with BUFFER). Point is left where the change
-leaves it. O(size of TEXT + number of SPANS)."
+which \\[revert-buffer] calls with BUFFER). A narrowed BUFFER is widened
+first. Point is left where the change leaves it. O(size of TEXT + number of SPANS)."
+  (tuatara.buffer:widen-buffer buffer)
   (tuatara.buffer:with-read-only-lifted (buffer :after t)
     (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) text))
   (let ((spans (coerce spans 'simple-vector)))

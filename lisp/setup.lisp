@@ -5,7 +5,8 @@
 
 (defparameter *global-bindings*
   '(("C-x C-f" find-file) ("C-x C-s" save-buffer) ("C-x s" save-some-buffers) ("C-x C-w" write-file) ("C-x C-c" save-buffers-kill-editor) ("C-x C-q" read-only-mode)
-    ("C-x C-r" find-recent-file) ("C-x x b" switch-other-buffer) ("C-x j" list-jobs) ("C-x J" stop-job)
+    ("C-x C-r" find-recent-file) ("C-x x b" switch-other-buffer)
+    ("C-x x n" narrow-to-region) ("C-x x s" narrow-to-section) ("C-x x w" widen) ("C-x j" list-jobs) ("C-x J" stop-job)
     ;; windows swapped, rotated and turned, beside the C-x 0 1 2 3 o ^ { } + - keys
     ("C-x w h" swap-window-left) ("C-x w j" swap-window-below) ("C-x w k" swap-window-above) ("C-x w l" swap-window-right)
     ("C-x w x" window-swap-states) ("C-x w r" rotate-windows) ("C-x w R" rotate-windows-back) ("C-x w t" transpose-window-layout)
@@ -194,6 +195,7 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-rewrites)
     (install-jobs)
     (install-files)
+    (install-narrowing)
     (install-recent-files)
     (install-auto-save)
     (install-session)

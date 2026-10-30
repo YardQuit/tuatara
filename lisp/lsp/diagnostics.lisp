@@ -357,7 +357,7 @@ then (USE-PLACES)."
                 (find-if (lambda (d) (< (diagnostic-start d) here)) all :from-end t))))
     (cond ((null all) (message "Nothing found wrong here~@[ (no language server)~]" (null (buffer-servers (current-buffer)))))
           ((null d) (message "Nothing more ~:[before~;after~] this" forward))
-          (t (goto (diagnostic-start d))
+          (t (goto-shown (current-buffer) (diagnostic-start d))
              (unless (diagnostic-say *editor*)
                (message "~a" (diagnostic-words d)))))))
 
@@ -434,11 +434,11 @@ window always."
              (if (null buffer)
                  (message "~a cannot be opened" (abbreviated-path path))
                  (progn (pop-to-buffer buffer :other t)
-                        (goto at))))))
+                        (goto-shown buffer at))))))
         ((live-buffer-p (car entry))
          (use-places (make-diagnostic-places (car entry)))
          (pop-to-buffer (car entry) :other t)
-         (goto (min (diagnostic-start (cdr entry)) (tuatara.buffer:buffer-size (car entry))))
+         (goto-shown (car entry) (min (diagnostic-start (cdr entry)) (tuatara.buffer:buffer-size (car entry))))
          (message "~a" (diagnostic-words (cdr entry))))
         (t (message "~a has been killed" (tuatara.buffer:buffer-name (car entry))))))
 

@@ -482,6 +482,32 @@ given to DEFER-ACTION there run as EDITOR's next commands, in that order too."
       (when actions
         (setf (editor-deferred editor) (append (editor-deferred editor) (reverse actions)))))))
 
+(defvar *command-notes* nil
+  "While a command run from a key runs (RUN-COMMAND), a list cell whose car is
+a property list of what is noted for that command alone: an answer given once
+for all its edits, words to say with each of its later messages
+\(SAY-WITH-COMMAND-MESSAGES). NIL when no command runs: a tick, work in the background,
+a buffer edited from Lisp outside the command loop.")
+
+(defun say-with-command-messages (control &rest arguments)
+  "Say a formatted message, as MESSAGE does, and while a command runs have it
+said too with each message the command says after it, joined to that one:
+something the command did on the way that the person must see (a buffer
+widened to show where it went), whatever the command goes on to say."
+  (let ((text (apply #'message control arguments)))
+    (when *command-notes*
+      (setf (getf (car *command-notes*) :said-too) text))
+    text))
+
+(defun with-command-notes-said (text)
+  "TEXT, a message, as the echo area shows it: followed by what the command
+running had said too (SAY-WITH-COMMAND-MESSAGES), its first letter lower
+case, when TEXT does not hold it already."
+  (let ((also (and *command-notes* (getf (car *command-notes*) :said-too))))
+    (if (and also (not (search also text)))
+        (format nil "~a; ~a~a" text (string-downcase (subseq also 0 1)) (subseq also 1))
+        text)))
+
 (defun message (control &rest arguments)
   "Show a formatted message in the echo area until the next command, and keep
 it in the *Messages* buffer (LOG-MESSAGE). The keys CONTROL names as
@@ -489,7 +515,8 @@ it in the *Messages* buffer (LOG-MESSAGE). The keys CONTROL names as
 in :help-key-binding. Said by work away from the editor's thread, while
 *MESSAGES-KEPT* holds a cell, it is kept there to be shown later; said there
 otherwise, it is handed to the editor's thread, which shows it as soon as it
-is woken."
+is woken. What the command running said too (SAY-WITH-COMMAND-MESSAGES) is
+shown after it."
   (let ((text (unmark-keys (apply #'format nil (substitute-command-keys control :marks t :for-format t) arguments))))
     (cond (*messages-kept*
            (push text (car *messages-kept*)))
@@ -497,7 +524,7 @@ is woken."
            (hand-to-editor-thread text *messages-from-threads*))
           (t
            (when *editor*
-             (setf (editor-message *editor*) text))
+             (setf (editor-message *editor*) (with-command-notes-said text)))
            (ignore-errors (log-message text))))
     text))
 

@@ -134,14 +134,17 @@ the text's end. END at the start of a line past START belongs to the line
 before it (RANGE-LAST-PLACE), unless COLUMNS, when that line is taken too.
 With VISIBLE, lines are those a window shows: a line whose end a fold hides
 is whole with all the fold hides, as a folded headline with its body; a line
-shown is whole without the lines search filters hide after it."
+shown is whole without the lines search filters hide after it. Of a
+narrowed buffer, the lines of the part shown, cut at its edges."
   (let* ((low (min start end)) (high (max start end))
          (last (if columns high (range-last-place buffer low high))))
-    (if visible
-        (values (tuatara.display:visible-line-start buffer low :hidden nil) (line-after buffer last))
-        (let* ((rope (tuatara.buffer:buffer-text buffer))
-               (newline (tuatara.text:rope-find-octet rope 10 :start last)))
-          (values (tuatara.text:rope-line-start rope low) (if newline (1+ newline) (tuatara.text:rope-bytes rope)))))))
+    (multiple-value-bind (from to)
+        (if visible
+            (values (tuatara.display:visible-line-start buffer low :hidden nil) (line-after buffer last))
+            (let* ((rope (tuatara.buffer:buffer-text buffer))
+                   (newline (tuatara.text:rope-find-octet rope 10 :start last)))
+              (values (tuatara.text:rope-line-start rope low) (if newline (1+ newline) (tuatara.text:rope-bytes rope)))))
+      (values (tuatara.buffer:within-narrowing buffer from) (tuatara.buffer:within-narrowing buffer to)))))
 
 (defun whole-lines-span (buffer start end)
   "The whole lines a window shows from START to END of BUFFER (WHOLE-LINES,

@@ -109,24 +109,36 @@ text (well-formed UTF-8) for one that is; NIL when it may be."
           ((and (raw-p output) (not (raw-p input))) "what it gave back is not text (UTF-8)"))))
 
 (defun indent-whole-buffer (buffer)
-  "Indent every line of BUFFER as its mode indents it; returns what INDENT-LINES does."
-  (indent-lines buffer 0 (tuatara.text:rope-bytes (tuatara.buffer:buffer-text buffer))))
+  "Indent every line of BUFFER as its mode indents it, or while it is narrowed
+every line of the part shown; returns what INDENT-LINES does."
+  (multiple-value-call #'indent-lines buffer (tuatara.buffer:buffer-bounds buffer)))
 
 (defun start-formatting (buffer &key then)
   "Lay out BUFFER's text: by its language's formatter in the background, or,
 with none installed, by Tuatara's own indentation at once; THEN, a function
 of the buffer and whether its text was laid out, called once it is over.
-Says what it did."
+Says what it did. While BUFFER is narrowed only the part shown is laid out:
+by its language server where it lays out a part, else by indentation; a
+formatter of the whole file is not run then, and that is said."
   (let* ((language (buffer-language buffer))
          (command (and language (language-formatter-command language)))
          (program (installed-program command))
-         (refusal (and program (outside-program-refusal buffer))))
+         (refusal (and program (outside-program-refusal buffer)))
+         (narrowed (tuatara.buffer:buffer-narrowed-p buffer)))
     (cond
       ((or (tuatara.io:safe-visit-p buffer) (tuatara.buffer:buffer-local buffer :read-only))
        (message "~a is ~:[read only~;opened safely~]: not formatted" (tuatara.buffer:buffer-name buffer) (tuatara.io:safe-visit-p buffer))
        (when then (funcall then buffer nil)))
+      ;; narrowed: the part shown, by a language server that lays out a part
+      ((and narrowed (buffer-servers buffer)
+            (multiple-value-bind (start end) (tuatara.buffer:buffer-bounds buffer)
+              (lsp-format buffer :start start :end end :then then))))
+      ;; a formatter lays out the whole file, never only the part shown
+      ((and narrowed program (not refusal))
+       (message "~a" (tuatara.buffer:outside-narrowing-words buffer))
+       (when then (funcall then buffer nil)))
       ;; no formatter of its own here: its language server, when one lays out code
-      ((and (null program) (buffer-servers buffer) (lsp-format buffer :then then)))
+      ((and (not narrowed) (null program) (buffer-servers buffer) (lsp-format buffer :then then)))
       ((or (null program) refusal)
        (let ((changed (indent-whole-buffer buffer)))
          (case changed
@@ -194,7 +206,9 @@ clang-format, shfmt...), in the background, shut in the sandbox; the change is o
 \\[undo] takes back whole. With no formatter installed, its language server
 lays it out where one does, else each line is indented as the mode indents
 it. A file opened safely, in *safe-directories*, or the text of an encrypted
-file is only indented, never given to another program."
+file is only indented, never given to another program. In a narrowed buffer
+only the part shown: indented, or laid out by a language server that lays
+out a part; a formatter of the whole file is not run, and that is said."
   (start-formatting (current-buffer)))
 
 ;;; Before saving

@@ -16,6 +16,8 @@
          :documentation "An anchor holding the mark, or NIL when no mark is set.")
    (mark-active :initform nil :accessor buffer-mark-active-p
                 :documentation "True while the region between point and mark is active.")
+   (narrowing :initform nil :accessor buffer-narrowing
+              :documentation "While the buffer is narrowed (NARROW-BUFFER), the anchors its part shown starts and ends at, (START . END); NIL while all of it is.")
    (file :initform nil :initarg :file :accessor buffer-file
          :documentation "The pathname the buffer visits, or NIL.")
    (mapping :initform nil :accessor buffer-mapping
@@ -50,6 +52,7 @@ Every edit commits a new version; snapshots are versions and stay valid."))
       (documentation 'buffer-version 'function) "The current text version of BUFFER; setting it is for the buffer's own editing functions."
       (documentation 'buffer-file 'function) "The pathname BUFFER visits, or NIL."
       (documentation 'buffer-mark-active-p 'function) "True while BUFFER's region between point and mark is active."
+      (documentation 'buffer-narrowing 'function) "While BUFFER is narrowed, the anchors its part shown starts and ends at, (START . END); else NIL."
       (documentation 'buffer-undo-stack 'function) "Undo groups of BUFFER, newest first; each a list of batches undone together."
       (documentation 'buffer-redo-stack 'function) "Groups of BUFFER undone and available for redo, newest first."
       (documentation 'buffer-undo-held 'function) "The octets of memory BUFFER's undo stack holds."
@@ -215,10 +218,13 @@ number, and remember the numbers before and after BATCH for undo and redo."
   (tuatara.text:anchor-position (buffer-point-anchor buffer) (buffer-version buffer)))
 
 (defun (setf buffer-point) (byte buffer)
-  "Move point of BUFFER to byte offset BYTE, which must be a character boundary."
+  "Move point of BUFFER to byte offset BYTE, which must be a character
+boundary; while BUFFER is narrowed, no further than the edges of the part
+shown (BUFFER-START, BUFFER-END)."
   (check-position buffer byte)
-  (tuatara.text:anchor-move (buffer-point-anchor buffer) (buffer-version buffer) byte)
-  byte)
+  (let ((byte (within-narrowing buffer byte)))
+    (tuatara.text:anchor-move (buffer-point-anchor buffer) (buffer-version buffer) byte)
+    byte))
 
 (defun buffer-mark (buffer)
   "The mark of BUFFER as a byte offset, or NIL when no mark is set."
@@ -226,10 +232,12 @@ number, and remember the numbers before and after BATCH for undo and redo."
     (and anchor (tuatara.text:anchor-position anchor (buffer-version buffer)))))
 
 (defun (setf buffer-mark) (byte buffer)
-  "Set the mark of BUFFER to byte offset BYTE, or remove it with NIL."
+  "Set the mark of BUFFER to byte offset BYTE, or remove it with NIL; while
+BUFFER is narrowed, no further than the edges of the part shown."
   (if (null byte)
       (setf (buffer-mark-anchor buffer) nil (buffer-mark-active-p buffer) nil)
       (progn (check-position buffer byte)
+             (setf byte (within-narrowing buffer byte))
              (if (buffer-mark-anchor buffer)
                  (tuatara.text:anchor-move (buffer-mark-anchor buffer) (buffer-version buffer) byte)
                  (setf (buffer-mark-anchor buffer)
@@ -251,6 +259,146 @@ mark, ordered, or NIL when no mark is set."
       (error "Position ~a is outside buffer ~s (0..~a)." byte (buffer-name buffer) (tuatara.text:rope-bytes rope)))
     (unless (tuatara.text:char-boundary-p rope byte)
       (error "Position ~a in buffer ~s is inside a character." byte (buffer-name buffer)))))
+
+;;; Narrowing
+
+(defvar *narrowing-in-force* nil
+  "The buffer a command runs in, while it runs: an edit of that buffer
+reaching outside the part it is narrowed to is refused then. Edits of other
+buffers, the editor's own writing (WITH-READ-ONLY-LIFTED), and work in the
+background, taken in at once or later, are not held to it.")
+
+(defun buffer-start (buffer)
+  "Where the part of BUFFER that commands reach starts: the start of the part
+it is narrowed to (NARROW-BUFFER), else 0, the start of its text. O(1)."
+  (let ((narrowing (buffer-narrowing buffer)))
+    (if narrowing
+        (tuatara.text:anchor-position (car narrowing) (buffer-version buffer))
+        0)))
+
+(defun buffer-end (buffer)
+  "Where the part of BUFFER that commands reach ends: the end of the part it
+is narrowed to (NARROW-BUFFER), else BUFFER-SIZE, the end of its text. O(1)."
+  (let ((narrowing (buffer-narrowing buffer)))
+    (if narrowing
+        (let ((version (buffer-version buffer)))
+          (max (tuatara.text:anchor-position (car narrowing) version)
+               (tuatara.text:anchor-position (cdr narrowing) version)))
+        (buffer-size buffer))))
+
+(defun buffer-bounds (buffer)
+  "Two values: the start and end of the part of BUFFER that commands reach,
+BUFFER-START and BUFFER-END; all of its text while it is not narrowed."
+  (values (buffer-start buffer) (buffer-end buffer)))
+
+(defun buffer-narrowed-p (buffer)
+  "True while BUFFER is narrowed to a part of its text (NARROW-BUFFER)."
+  (and (buffer-narrowing buffer) t))
+
+(defun within-narrowing (buffer byte)
+  "BYTE, an offset of BUFFER's text, moved to the nearer edge of the part
+BUFFER is narrowed to when it is outside it; BYTE itself while BUFFER is not
+narrowed."
+  (if (buffer-narrowing buffer)
+      (max (buffer-start buffer) (min byte (buffer-end buffer)))
+      byte))
+
+(defun keep-within-narrowing (buffer)
+  "Move BUFFER's point and mark into the part it is narrowed to, where a
+change made outside it (undone, or taken in from work in the background)
+left them outside."
+  (when (buffer-narrowing buffer)
+    (let ((point (buffer-point buffer)) (mark (buffer-mark buffer)))
+      (unless (= point (within-narrowing buffer point))
+        (setf (buffer-point buffer) point))
+      (when (and mark (/= mark (within-narrowing buffer mark)))
+        (setf (buffer-mark buffer) mark)))))
+
+(defun narrow-buffer (buffer start end)
+  "Narrow BUFFER to its text from octet START below END: commands then reach
+only that part of it (BUFFER-START, BUFFER-END), and windows show only that.
+Its edges move with the text as it is edited, what is typed at either going
+inside. Point and the mark are moved inside. Saving, and work in the
+background begun before, still reach the whole text."
+  (check-position buffer start) (check-position buffer end)
+  (when (< end start) (rotatef start end))
+  (let ((version (buffer-version buffer)))
+    (setf (buffer-narrowing buffer)
+          (cons (tuatara.text:make-anchor version start :bias :before)
+                (tuatara.text:make-anchor version end :bias :after))))
+  (keep-within-narrowing buffer)
+  buffer)
+
+(defun widen-buffer (buffer)
+  "Make all of BUFFER's text reachable and shown again (NARROW-BUFFER)."
+  (setf (buffer-narrowing buffer) nil)
+  buffer)
+
+(defvar *narrowings-lifted* '()
+  "The buffers whose narrowing WITH-NARROWING-LIFTED lifts now, each (BUFFER
+. NARROWING), NARROWING the anchors it puts back, or NIL once a jump outside
+them (LET-GO-OF-LIFTED-NARROWING) has the buffer stay widened.")
+
+(defun lifted-narrowing-outside-p (buffer byte)
+  "True when BUFFER's narrowing is lifted now (WITH-NARROWING-LIFTED) and BYTE
+is outside the part it is to be narrowed to again."
+  (let ((narrowing (cdr (assoc buffer *narrowings-lifted*))))
+    (and narrowing
+         (let* ((version (buffer-version buffer))
+                (start (tuatara.text:anchor-position (car narrowing) version))
+                (end (max start (tuatara.text:anchor-position (cdr narrowing) version))))
+           (not (<= start byte end))))))
+
+(defun let-go-of-lifted-narrowing (buffer)
+  "Have BUFFER, whose narrowing is lifted now, stay widened once the change
+lifting it is done, point where that leaves it: a jump went outside it."
+  (let ((entry (assoc buffer *narrowings-lifted*)))
+    (when entry (setf (cdr entry) nil))))
+
+(defun call-with-narrowing-lifted (buffer function)
+  "Call FUNCTION with all of BUFFER's text reachable, as WITH-NARROWING-LIFTED
+says, and return what it returns."
+  (let ((narrowing (buffer-narrowing buffer)))
+    (if (null narrowing)
+        (funcall function)
+        ;; where point is, held before what goes in at it, as it stood
+        (let* ((here (tuatara.text:make-anchor (buffer-version buffer) (buffer-point buffer) :bias :before))
+               (entry (cons buffer narrowing))
+               (*narrowings-lifted* (cons entry *narrowings-lifted*)))
+          (setf (buffer-narrowing buffer) nil)
+          (unwind-protect (let ((*narrowing-in-force* nil)) (funcall function))
+            (when (cdr entry)
+              (setf (buffer-narrowing buffer) narrowing
+                    (buffer-point buffer) (tuatara.text:anchor-position here (buffer-version buffer)))
+              (keep-within-narrowing buffer)))))))
+
+(defmacro with-narrowing-lifted ((buffer) &body body)
+  "Run BODY with all of BUFFER's text reachable though it is narrowed, for a
+change asked for on something outside the part shown (a task clocked out,
+an entry of the agenda, a name renamed in every file); then narrow it again
+as it was, its edges moved by the changes, point back where it was, before
+what went in there. A jump BODY makes outside the part (to a subtree just
+refiled) leaves the buffer widened instead, point where the jump took it."
+  `(call-with-narrowing-lifted ,buffer (lambda () ,@body)))
+
+(defun outside-narrowing-words (buffer)
+  "The words saying a change would reach outside the part of BUFFER shown,
+and that widening shows the rest."
+  (format nil "That would change text outside the part of ~a shown: widen shows all of it again" (buffer-name buffer)))
+
+(defun refuse-outside-narrowing (buffer)
+  "Signal the error that says a change would reach outside the part of
+BUFFER shown (OUTSIDE-NARROWING-WORDS)."
+  (error "~a" (outside-narrowing-words buffer)))
+
+(defun check-within-narrowing (buffer start end)
+  "Signal an error when an edit of BUFFER from octet START to END reaches
+outside the part it is narrowed to while a command runs in BUFFER. A job
+taken in is not refused, whenever it is taken in: one begun while BUFFER
+was narrowed works within the bounds it was given."
+  (when (and (eq *narrowing-in-force* buffer) (null tuatara.runtime:*job-taken-in*) (buffer-narrowing buffer)
+             (or (< start (buffer-start buffer)) (> end (buffer-end buffer))))
+    (refuse-outside-narrowing buffer)))
 
 ;;; How much the undo history holds
 
@@ -416,9 +564,10 @@ return the positions vector (where each insertion ends). With GROUP true, the
 batch joins the newest undo group instead of starting one, so that characters
 typed one after another undo together. *BEFORE-EDIT-FUNCTIONS* see EDITS
 first, and may refuse them; the change functions run after. An error when the
-buffer-local :READ-ONLY is set, and in the hex view (the buffer-local
+buffer-local :READ-ONLY is set, in the hex view (the buffer-local
 :HEX-VIEW) for edits that would change the buffer's size
-\(CHECK-HEX-VIEW-SIZE). A text whose lines are still being counted is edited
+\(CHECK-HEX-VIEW-SIZE), and, while a command runs in BUFFER, for edits
+outside the part of it shown when it is narrowed. A text whose lines are still being counted is edited
 at once: the count is made again around the edits once it ends
 \(TUATARA.IO:FINISH-INDEXING)."
   (when (buffer-local buffer :read-only)
@@ -426,6 +575,8 @@ at once: the count is made again around the edits once it ends
   (when (buffer-local buffer :hex-view)
     (check-hex-view-size buffer (reduce #'+ edits :key (lambda (e) (- (tuatara.text:edit-insert-length e)
                                                                       (tuatara.text:edit-delete-length e))))))
+  (when (and (buffer-narrowing buffer) (plusp (length edits)))
+    (check-within-narrowing buffer (tuatara.text:edit-start (elt edits 0)) (tuatara.text:edit-end (elt edits (1- (length edits))))))
   (run-before-edit buffer edits)
   (multiple-value-bind (version batch) (tuatara.text:version-commit (buffer-version buffer) edits)
     (setf (buffer-version buffer) version)
@@ -458,11 +609,14 @@ BUFFER-EDIT. A rope of more than *LARGE-EDIT-OCTETS* goes in as one splice
 of BUFFER as one undoable step that copies nothing: the text is spliced
 (TUATARA.TEXT:SPLICE-ROPE), and undo swaps the old one back. Positions before
 START stay, those after END move with the text, those between go to START.
-Refused in the hex view when it would change the size (CHECK-HEX-VIEW-SIZE).
+Refused in the hex view when it would change the size (CHECK-HEX-VIEW-SIZE),
+and, while a command runs in BUFFER, outside the part of it shown when it is
+narrowed.
 Returns the offset just after the text put in."
   (check-position buffer start) (check-position buffer end)
   (when (< end start) (rotatef start end))
   (check-hex-view-size buffer (- (if rope (tuatara.text:rope-bytes rope) 0) (- end start)))
+  (check-within-narrowing buffer start end)
   (ensure-indexed buffer)
   (let* ((old (buffer-text buffer))
          (length (if rope (tuatara.text:rope-bytes rope) 0))
@@ -487,7 +641,8 @@ each (START . END), in order and apart, and take the others away, as one
 undoable step that copies nothing, as BUFFER-SPLICE does for one stretch.
 Positions in a span go to its start (in the first, after ROPE when their bias
 is :AFTER), those after it move with the text. Refused in the hex view when
-it would change the size (CHECK-HEX-VIEW-SIZE), and when a span's edge is not
+it would change the size (CHECK-HEX-VIEW-SIZE), while a command runs in
+BUFFER outside the part of it shown when it is narrowed, and when a span's edge is not
 a character's (CHECK-POSITION) or the spans are out of order. Returns the
 offset just after ROPE; NIL, nothing done, for no SPANS."
   (when (null spans) (return-from buffer-splice-spans nil))
@@ -500,6 +655,7 @@ offset just after ROPE; NIL, nothing done, for no SPANS."
          spans))
   (check-hex-view-size buffer (- (if rope (tuatara.text:rope-bytes rope) 0)
                                  (reduce #'+ spans :key (lambda (span) (- (cdr span) (car span))))))
+  (check-within-narrowing buffer (car (elt spans 0)) (cdr (elt spans (1- (length spans)))))
   (ensure-indexed buffer)
   (let* ((spans (coerce spans 'simple-vector))
          (n (length spans))
@@ -630,9 +786,29 @@ it. Returns the new batch."
           (when check (run-before-edit buffer edits))
           (commit-without-record buffer edits)))))
 
+(defun changed-outside-p (buffer before start end)
+  "True when the changes BUFFER's text went through since its version BEFORE
+reached outside the stretch from START to END of the text of BEFORE, the
+stretch followed through each change. A swap of the whole text ends the
+looking."
+  (loop with version = before
+        for next = (tuatara.text:version-next version)
+        while next
+        do (let ((batch (tuatara.text:version-batch next)))
+             (when (tuatara.text:batch-swap batch) (return nil))
+             (when (some (lambda (edit) (or (< (tuatara.text:edit-start edit) start) (> (tuatara.text:edit-end edit) end)))
+                         (tuatara.text:batch-edits batch))
+               (return t))
+             (setf start (tuatara.text:map-position start batch :before)
+                   end (tuatara.text:map-position end batch :after)
+                   version next))
+        until (eq version (buffer-version buffer))))
+
 (defun buffer-undo (buffer)
   "Undo the newest undo group of BUFFER. Returns the group undone (a list of
-batches), or NIL when there is nothing to undo. Point moves to the start of the
+batches), or NIL when there is nothing to undo, and as a second value true
+when, BUFFER being narrowed, what was taken back reached outside the part
+shown: undo reaches every change, wherever it is. Point moves to the start of the
 undone change, or, when the change taken back last swapped the whole text (a
 job's change), stays where that moves it. Signals an error when the buffer is
 read-only.
@@ -640,7 +816,9 @@ read-only.
 the text is left as it was and the group stays to undo."
   (when (buffer-local buffer :read-only)
     (error "Buffer ~a is read-only." (buffer-name buffer)))
-  (let ((group (pop (buffer-undo-stack buffer))))
+  (let ((part (and (buffer-narrowing buffer) (multiple-value-list (buffer-bounds buffer))))
+        (before (buffer-version buffer))
+        (group (pop (buffer-undo-stack buffer))))
     (when group
       (let ((first-start nil) (undone '()) (done nil))
         ;; undo the group's batches newest first
@@ -660,7 +838,8 @@ the text is left as it was and the group stays to undo."
           (setf (buffer-content-number buffer)
                 (if contents (car contents) (tuatara.text:version-number (buffer-version buffer)))))
         (when first-start (setf (buffer-point buffer) first-start))
-        group))))
+        (keep-within-narrowing buffer)
+        (values group (and part (changed-outside-p buffer before (first part) (second part))))))))
 
 (defun merge-undo-groups (buffer since)
   "Make the undo groups BUFFER gained since its undo stack was SINCE one group,
@@ -907,6 +1086,7 @@ changes carried over do not lead to FINAL; true otherwise."
                 (setf (car place) (nthcdr (- (length groups) (length (ldiff (car place) since)))
                                           (buffer-undo-stack buffer)))))
             (let-go-of-oldest-changes buffer)
+            (keep-within-narrowing buffer)
             t))))))
 
 (defun buffer-redo (buffer)
@@ -946,6 +1126,7 @@ the text is left as it was and the group stays to redo."
         ;; a job's change, a swap of the whole text, leaves point where it is, as the text moved it
         (when (and last-position (notany #'tuatara.text:batch-swap group))
           (setf (buffer-point buffer) last-position))
+        (keep-within-narrowing buffer)
         new-group))))
 
 ;;; Navigation helpers (byte offsets, character aware)
@@ -1130,9 +1311,11 @@ its own it keeps under symbols of its own package."
 (defmacro with-read-only-lifted ((buffer &key (after nil after-given)) &body body)
   "Run BODY with BUFFER writable for the change it makes, then make BUFFER read
 only again as it was before; or, with AFTER, as AFTER (evaluated once BODY is
-done or left) says. BUFFER is evaluated once."
+done or left) says. BUFFER is evaluated once. The change may reach outside
+the part of BUFFER shown when it is narrowed, as the editor's own writing
+does."
   (let ((place (gensym "BUFFER")) (before (gensym "BEFORE")))
-    `(let* ((,place ,buffer) (,before (buffer-local ,place :read-only)))
+    `(let* ((,place ,buffer) (,before (buffer-local ,place :read-only)) (*narrowing-in-force* nil))
        (declare (ignorable ,before))
        (setf (buffer-local ,place :read-only) nil)
        (unwind-protect (progn ,@body)

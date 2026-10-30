@@ -297,38 +297,47 @@ cursors, a block, banked lines, the selection), else the whole buffer after
 a leading % and the line at point without. For the others the whole buffer
 after a leading %, the region when one was active as the search began, the
 whole buffer for a prompt opened for replacing, else the line the search
-began on, its newline included."
-  (let* ((b (current-buffer)) (rope (tuatara.buffer:buffer-text b)) (size (tuatara.buffer:buffer-size b))
+began on, its newline included. Of a narrowed buffer the whole buffer is the
+part shown, and nothing reaches past it."
+  (let* ((b (current-buffer)) (rope (tuatara.buffer:buffer-text b))
+         (whole (if (tuatara.buffer:buffer-narrowed-p b) "in the part shown" "in the buffer"))
          (region (search-region state))
          (preset (search-state-preset state)))
-    (cond ((getf preset :every-after-percent)
-           (let ((selected (getf preset :selected)))
-             (cond (selected
-                    (values (min size (car (first selected))) (min size (cdr (car (last selected))))
-                            (format nil "in ~a" (getf preset :selected-words))
-                            (and (rest selected) selected)))
-                   ((search-line-whole-buffer (search-line-of state)) (values 0 size "in the buffer"))
-                   (t (let ((origin (min (search-state-origin state) size)))
-                        (values (tuatara.text:rope-line-start rope origin) (tuatara.text:rope-line-end rope origin)
-                                "on this line"))))))
-          ((search-line-whole-buffer (search-line-of state))
-           (values 0 size "in the buffer"))
-          (region (values (min (car region) size) (min (cdr region) size) "in the region"))
-          ((search-state-preset state) (values 0 size "in the buffer"))
-          (t (let ((origin (min (search-state-origin state) size)))
-               (values (tuatara.text:rope-line-start rope origin)
-                       (min size (1+ (tuatara.text:rope-line-end rope origin)))
-                       "on this line"))))))
+    (multiple-value-bind (low high) (tuatara.buffer:buffer-bounds b)
+      (cond ((getf preset :every-after-percent)
+             (let ((selected (getf preset :selected)))
+               (cond (selected
+                      (values (search-place b (car (first selected))) (search-place b (cdr (car (last selected))))
+                              (format nil "in ~a" (getf preset :selected-words))
+                              (and (rest selected) selected)))
+                     ((search-line-whole-buffer (search-line-of state)) (values low high whole))
+                     (t (let ((origin (search-place b (search-state-origin state))))
+                          (values (search-place b (tuatara.text:rope-line-start rope origin))
+                                  (search-place b (tuatara.text:rope-line-end rope origin))
+                                  "on this line"))))))
+            ((search-line-whole-buffer (search-line-of state))
+             (values low high whole))
+            (region (values (search-place b (car region)) (search-place b (cdr region)) "in the region"))
+            ((search-state-preset state) (values low high whole))
+            (t (let ((origin (search-place b (search-state-origin state))))
+                 (values (search-place b (tuatara.text:rope-line-start rope origin))
+                         (search-place b (1+ (tuatara.text:rope-line-end rope origin)))
+                         "on this line")))))))
+
+(defun search-place (buffer position)
+  "POSITION, a place a search kept, within BUFFER's text as it is now: no
+further than its end, and within the part shown when it is narrowed."
+  (tuatara.buffer:within-narrowing buffer (min position (tuatara.buffer:buffer-size buffer))))
 
 (defun search-bounds (state &optional (buffer (current-buffer)))
   "Values: the start and end of the text STATE searches in BUFFER, the current
 one unless given, and words for them when they are not the whole buffer: the
-scope of a replacement; for a search, the region active as it began."
-  (let ((region (search-region state))
-        (size (tuatara.buffer:buffer-size buffer)))
+scope of a replacement; for a search, the region active as it began; of a
+narrowed buffer, within the part shown."
+  (let ((region (search-region state)))
     (cond ((search-replacing-p state) (search-scope state))
-          (region (values (min (car region) size) (min (cdr region) size) "in the region"))
-          (t (values 0 size nil)))))
+          (region (values (search-place buffer (car region)) (search-place buffer (cdr region)) "in the region"))
+          (t (multiple-value-call #'values (tuatara.buffer:buffer-bounds buffer) nil)))))
 
 (defun search-pieces (state)
   "The stretches, (START . END) in order, that STATE's replacement is limited

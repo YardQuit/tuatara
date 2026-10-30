@@ -531,9 +531,12 @@ buffer: each where the text as it was sent has it, moved with the text typed sin
   (text-edits edits (lambda (range) (doc-range-bytes doc server range))))
 
 (defun put-in-edits (buffer edits)
-  "Make EDITS, a vector of TUATARA.TEXT:EDIT, in BUFFER as one change undo takes back whole; how many."
+  "Make EDITS, a vector of TUATARA.TEXT:EDIT, in BUFFER as one change undo
+takes back whole; how many. They are made wherever they go, though BUFFER is
+narrowed to another part, as a server's changes reach the whole file."
   (when (plusp (length edits))
-    (tuatara.buffer:buffer-edit buffer edits))
+    (tuatara.buffer:with-narrowing-lifted (buffer)
+      (tuatara.buffer:buffer-edit buffer edits)))
   (length edits))
 
 (defun workspace-edit-changes (edit)

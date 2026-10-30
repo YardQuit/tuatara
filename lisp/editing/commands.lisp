@@ -56,9 +56,23 @@ fold, else to its start (TUATARA.DISPLAY:POINT-OUT-OF-FOLDS)."
     (when (tuatara.display:buffer-hides-p buffer)
       (tuatara.display:point-out-of-folds buffer before))))
 
+(defun widen-to-show (buffer byte)
+  "Widen BUFFER when the octet BYTE is outside the part of it shown, saying
+so, for a jump there: one never lands at the edge instead. Made while
+BUFFER's narrowing is lifted for a change, the jump has it stay widened."
+  (when (or (/= byte (tuatara.buffer:within-narrowing buffer byte))
+            (tuatara.buffer:lifted-narrowing-outside-p buffer byte))
+    (tuatara.buffer:widen-buffer buffer)
+    (tuatara.buffer:let-go-of-lifted-narrowing buffer)
+    (let ((line (tuatara.buffer:buffer-known-line-number buffer byte)))
+      ;; seen whatever the command says after it
+      (say-with-command-messages "Widened ~a to show line ~:[…~;~:*~:d~]" (tuatara.buffer:buffer-name buffer) (and line (1+ line))))))
+
 (defun goto-shown (buffer byte &key (open byte))
   "Put BUFFER's point at the octet BYTE, the fold that hides OPEN (BYTE unless
-given) opened first, so that point is never inside what is hidden."
+given) opened first, so that point is never inside what is hidden; BUFFER
+widened first, and that said, when BYTE is outside the part of it shown."
+  (widen-to-show buffer byte)
   (let ((fold (tuatara.display:fold-at buffer open)))
     (when fold (tuatara.display:unfold-region buffer (car fold) (cdr fold))))
   (setf (tuatara.buffer:buffer-point buffer) byte))
@@ -173,14 +187,16 @@ unless the region is active or a count was given."
     (push-mark)))
 
 (define-command beginning-of-buffer ()
-  "Move point to the start of the buffer. The mark is left where point was
+  "Move point to the start of the buffer. In a narrowed buffer, to the start of
+the part shown (\\[narrow-to-region]). The mark is left where point was
 \(the mark before on the mark ring), unless the region is active."
   (unless (hex-motion :start)
     (push-mark-before-jump)
     (goto 0)))
 
 (define-command end-of-buffer ()
-  "Move point to the end of the buffer. The mark is left where point was
+  "Move point to the end of the buffer. In a narrowed buffer, to the end of
+the part shown (\\[narrow-to-region]). The mark is left where point was
 \(the mark before on the mark ring), unless the region is active."
   (unless (hex-motion :end)
     (push-mark-before-jump)
@@ -343,7 +359,8 @@ use to group digits (100,000,000); NIL when there is none."
 the mark left where it was unless the region is active. Digits may be grouped as the mode line shows them: 100,000,000. In the hex view,
 go to an offset instead (0x for hex). While a large file's lines are still
 being counted, a line in its first 64 MB is found at once; one further in
-waits until the count has passed it, not for the whole file."
+waits until the count has passed it, not for the whole file. A line outside
+the part shown of a narrowed buffer widens it, and that is said."
   (if (hex-view-here-p)
       (hex-goto-offset)
       (let ((n (parse-line-number (read-string "Go to line: ")))
@@ -351,10 +368,10 @@ waits until the count has passed it, not for the whole file."
         (if n
             (progn
               (unless (region-active-p b) (push-mark))
-              (goto (or (and (not (tuatara.buffer:buffer-indexed-p b))
-                           (or (tuatara.buffer:buffer-scan-line b (max 0 (1- n)))
-                               (wait-for-counting b (max 0 (1- n)))))
-                      (tuatara.buffer:buffer-goto-line b (max 0 (1- n))))))
+              (goto-shown b (or (and (not (tuatara.buffer:buffer-indexed-p b))
+                                     (or (tuatara.buffer:buffer-scan-line b (max 0 (1- n)))
+                                         (wait-for-counting b (max 0 (1- n)))))
+                                (tuatara.buffer:buffer-goto-line b (max 0 (1- n))))))
             (message "Not a number")))))
 
 (defun scroll-by-count (window direction)
@@ -475,10 +492,11 @@ ASCII ones, are passed over a window at a time."
                      (setf p start)
                      (return (1+ q))))))))))
 
-(defun words-forward (buffer position count &optional (limit (tuatara.buffer:buffer-size buffer)))
+(defun words-forward (buffer position count &optional (limit (tuatara.buffer:buffer-end buffer)))
   "Where COUNT words forward of POSITION end in BUFFER, as forward-word goes:
-past what is not a word, then past the word; no further than LIMIT, where it
-stops at once whatever the count. Refused when *TEXT-SCAN-LIMIT* comes first."
+past what is not a word, then past the word; no further than LIMIT (the end
+of the text, or of the part shown of a narrowed buffer), where it stops at
+once whatever the count. Refused when *TEXT-SCAN-LIMIT* comes first."
   (let* ((scan (min limit (+ position *text-scan-limit*))) (p position))
     (loop repeat count
           until (>= p limit)
@@ -488,9 +506,10 @@ stops at once whatever the count. Refused when *TEXT-SCAN-LIMIT* comes first."
              (when (and (= p scan) (< scan limit)) (error "No end of the word within ~a" (scan-limit-words))))
     p))
 
-(defun words-backward (buffer position count &optional (limit 0))
+(defun words-backward (buffer position count &optional (limit (tuatara.buffer:buffer-start buffer)))
   "Where COUNT words back from POSITION begin in BUFFER, as backward-word goes;
-no further back than LIMIT, where it stops at once whatever the count.
+no further back than LIMIT (the start of the text, or of the part shown of a
+narrowed buffer), where it stops at once whatever the count.
 Refused when *TEXT-SCAN-LIMIT* comes first."
   (let* ((scan (max limit (- position *text-scan-limit*))) (p position))
     (loop repeat count
@@ -1094,12 +1113,13 @@ the previous command was a kill too, and on the system clipboard
 (define-command kill-line ()
   "Kill the rest of the current line; at the end of a line, kill the newline.
 On a line whose end a fold hides (a folded headline), nothing is killed: the
-fold is shown instead, and the key pressed again kills what can then be seen."
-  (let* ((b (current-buffer)) (p (point)) (end (tuatara.buffer:buffer-line-end b p)))
+fold is shown instead, and the key pressed again kills what can then be seen.
+In a narrowed buffer, no further than the end of the part shown."
+  (let* ((b (current-buffer)) (p (point)) (end (tuatara.buffer:within-narrowing b (tuatara.buffer:buffer-line-end b p))))
     (let ((fold (tuatara.display:fold-hiding b end nil)))
       (when fold
         (show-fold-and-refuse b fold "The rest of this line is hidden, shown now: the same key again kills to its end")))
-    (when (= end p) (setf end (tuatara.buffer:buffer-forward-char b p)))
+    (when (= end p) (setf end (tuatara.buffer:within-narrowing b (tuatara.buffer:buffer-forward-char b p))))
     (when (> end p) (kill-span b p end))))
 
 (defvar *kill-parts* nil
@@ -1401,7 +1421,7 @@ back through the buffers where marks were set, and round."
           (unless (eq buffer (current-buffer))
             (show-buffer buffer))
           (when position
-            (setf (tuatara.buffer:buffer-point buffer) position))))))
+            (goto-shown buffer position))))))
 
 (define-command exchange-point-and-mark ()
   "Swap point and mark."
@@ -1424,8 +1444,11 @@ until then goes, such as the matches of the last search."
 ;;; Undo
 
 (define-command undo ()
-  "Undo the last change."
-  (unless (tuatara.buffer:buffer-undo (current-buffer)) (message "Nothing to undo")))
+  "Undo the last change. In a narrowed buffer a change outside the part shown
+is undone too, and that is said."
+  (multiple-value-bind (group outside) (tuatara.buffer:buffer-undo (current-buffer))
+    (cond ((null group) (message "Nothing to undo"))
+          (outside (message "Undid a change outside the part shown")))))
 
 (define-command redo ()
   "Redo the last undone change: the cursor goes after what it makes again, but

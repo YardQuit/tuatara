@@ -302,7 +302,7 @@ PLACE-BUFFERS call, made after the defaults."
                   ((:help :beside) ((0 0 40 19) (40 0 40 19)) ("*scratch*" "*Help*"))
                   ((:help :below :size 5) ((0 0 80 13) (0 13 80 6)) ("*scratch*" "*Help*"))
                   ((:help :nowhere) ((0 0 80 19)) ("*scratch*"))
-                  (("*Help*" :bottom :size :fit) ((0 0 80 11) (0 11 80 8)) ("*scratch*" "*Help*"))
+                  (("*Help*" :bottom :size :fit) ((0 0 80 10) (0 10 80 9)) ("*scratch*" "*Help*"))
                   ((help-mode :bottom :size 0.5 :select t) ((0 0 80 9) (0 9 80 10)) ("*scratch*" "*Help*"))))
     (destructuring-bind (rule boxes buffers) case
       (multiple-value-bind (f editor) (run-keys-placing "C-h f u n d o RET" (list rule))

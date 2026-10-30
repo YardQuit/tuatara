@@ -330,12 +330,6 @@ when the command began, as (BUFFER . STACK): what one undo of the command goes
 back to. A command that makes several steps to undo of its own, as playing
 recorded keys does, one step a play, sets STACK to where its last step ends.")
 
-(defvar *command-notes* nil
-  "While a command run from a key runs (RUN-COMMAND), a list cell whose car is
-a property list of what is noted for that command alone: an answer given once
-for all its edits. NIL when no command runs: a tick, work in the background,
-a buffer edited from Lisp outside the command loop.")
-
 (defvar *command-refusal-function* nil
   "A function of a command's name returning NIL when the command may run now,
 or what to say instead of running it: the defaults refuse a command made for
@@ -382,6 +376,8 @@ what FUNCTION returns."
 
 (defun run-command (editor command)
   "Run COMMAND (a symbol) with the editor context, catching errors into messages.
+An edit it makes in the buffer it runs in, reaching outside the part of it
+shown when that buffer is narrowed, is refused.
 The windows are laid out first as they are with the key typed, so that a
 panel of key hints shown before it does not shorten them for the command.
 Running out of stack or heap in a command also becomes a message where SBCL can
@@ -419,6 +415,7 @@ keys that are playing."
         (flet ((backtrace-shown-p () (and *debug-on-error* *backtrace-function*)))
           (call-with-guard (lambda ()
                              (let ((*current-buffer* nil) ; SET-BUFFER lasts until the command ends
+                                   (tuatara.buffer:*narrowing-in-force* undo-buffer)
                                    (*command-notes* (list '()))
                                    (*command-undo-since* undo-since))
                                (funcall function)

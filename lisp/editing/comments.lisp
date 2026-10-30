@@ -230,7 +230,9 @@ language has no comments."
 to the next line, or uncomment them when they are all commented
 \(\\`C-x C-;'). It puts the language's marker (;; in Lisp, // in Rust, # in
 shell scripts) at their smallest indentation or, where a comment has an end
-\(/* */ in CSS), each line between the two. A count comments as many lines."
+\(/* */ in CSS), each line between the two. A count comments as many lines,
+no further than the end of the buffer, or of the part shown when it is
+narrowed."
   (let* ((b (current-buffer))
          (active (and (tuatara.buffer:buffer-mark-active-p b)
                       (multiple-value-bind (s e) (tuatara.buffer:buffer-region b) (< s e)))))
@@ -241,14 +243,19 @@ shell scripts) at their smallest indentation or, where a comment has an end
             (message "No comment syntax is defined"))
           (setf (tuatara.buffer:buffer-mark-active-p b) nil))
         (let* ((n (max 1 (prefix)))
+               (end (tuatara.buffer:buffer-end b))
                (start (tuatara.buffer:buffer-line-start b (point)))
+               ;; as many lines as there are, of the part shown of a narrowed buffer
                (last (loop with p = start repeat (1- n)
                            do (let ((next (1+ (tuatara.buffer:buffer-line-end b p))))
-                                (if (< next (tuatara.buffer:buffer-size b)) (setf p next) (return p)))
+                                (if (< next end) (setf p next) (return p)))
                            finally (return p))))
-          (if (comment-or-uncomment-lines b start last)
-              (let ((after (1+ (tuatara.buffer:buffer-line-end b (min (tuatara.buffer:buffer-size b) last)))))
-                (goto (min after (tuatara.buffer:buffer-size b))))
+          ;; to the end of the last line, so that the line is one of them
+          (if (comment-or-uncomment-lines b start (tuatara.buffer:buffer-line-end b last))
+              ;; the end as the change leaves it
+              (let* ((end (tuatara.buffer:buffer-end b))
+                     (after (1+ (tuatara.buffer:buffer-line-end b (min end last)))))
+                (goto (min after end)))
               (message "No comment syntax is defined"))))))
 
 (defun end-of-line-comment-at (buffer line-start line-end marker)

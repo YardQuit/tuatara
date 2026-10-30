@@ -126,8 +126,9 @@ it is still an open CLOCK: line; else NIL."
 first: the list item with a checkbox whose first line point is on, else the
 headline it is under. CLOCK: and the time go at the top of its :LOGBOOK:
 drawer (ORG-LOG-EDIT), made when it has none; a headline's with no drawer
-when *ORG-CLOCK-INTO-DRAWER* is NIL. Saved when that is BUFFER's only
-change (ORG-SAVE-CHANGED), so that the clock runs again after a restart."
+when *ORG-CLOCK-INTO-DRAWER* is NIL, though BUFFER is narrowed to a part
+below the headline. Saved when that is BUFFER's only change
+\(ORG-SAVE-CHANGED), so that the clock runs again after a restart."
   ;; the clock running stopped first: its line changes the text the new one goes into
   (when *org-clock* (org-clock-out-now :now now))
   (multiple-value-bind (tree text) (org-tree-now buffer)
@@ -145,7 +146,9 @@ change (ORG-SAVE-CHANGED), so that the clock runs again after a restart."
                  ;; where the clock's line begins in the text after the edit
                  (line-start (+ (first edit) (string-line-start (third edit) at)))
                  (modified (tuatara.io:changes-unsaved-p buffer)))
-            (org-apply-edits buffer (list edit) :point position)
+            ;; the task's headline may be above the part of the buffer shown
+            (tuatara.buffer:with-narrowing-lifted (buffer)
+              (org-apply-edits buffer (list edit) :point position))
             (setf *org-clock* (make-org-clock :started started :task title))
             (org-clock-hold *org-clock* buffer (org-char->byte buffer line-start))
             (org-save-changed buffer modified :existing t)
@@ -165,16 +168,17 @@ to save."
 (defun org-clock-out-now (&key (now (org-now)))
   "Clock out of the clock running: its line finished with the time it ended
 and how long it ran (=> 1:12), and saved when that is its buffer's only
-change (ORG-SAVE-CHANGED)."
+change (ORG-SAVE-CHANGED). The line is finished wherever it is, though its
+buffer is narrowed to another part; the clock stops only once it is."
   (let ((clock *org-clock*))
     (unless (org-clock-live-buffer clock)
       (return-from org-clock-out-now nil))
     ;; a buffer that may not be written keeps the clock running, its line open
     (check-writable (org-clock-buffer clock))
-    (setf *org-clock* nil)
     (multiple-value-bind (start end) (org-clock-open-line clock)
       (if (null start)
-          (message "The clock's line is gone: nothing to finish")
+          (progn (setf *org-clock* nil)
+                 (message "The clock's line is gone: nothing to finish"))
           (let* ((buffer (org-clock-buffer clock))
                  (ended (org-minute now))
                  (minutes (floor (- ended (org-clock-started clock)) 60))
@@ -184,9 +188,14 @@ change (ORG-SAVE-CHANGED)."
                               (org-timestamp-text ended) (org-duration-text minutes)))
                  (point (tuatara.buffer:buffer-point buffer))
                  (modified (tuatara.io:changes-unsaved-p buffer)))
-            (tuatara.buffer:buffer-replace buffer start end new)
+            ;; the task's line may be outside the part of its buffer shown
+            (tuatara.buffer:with-narrowing-lifted (buffer)
+              (tuatara.buffer:buffer-replace buffer start end new))
+            ;; point on the line stays on it, as far in as the new line goes
             (setf (tuatara.buffer:buffer-point buffer)
                   (if (> point end) (+ point (- (tuatara.text:string-octet-length new) (- end start))) (min point (+ start (tuatara.text:string-octet-length new)))))
+            ;; the clock is let go only once its line is finished
+            (setf *org-clock* nil)
             (org-save-changed buffer modified :existing t)
             (message "Clock stopped at ~a after ~a: ~a" (format-time "%R" ended)
                      (string-left-trim " " (org-duration-text minutes)) (org-clock-task clock)))))))

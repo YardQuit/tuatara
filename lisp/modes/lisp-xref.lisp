@@ -32,8 +32,8 @@ where \\[xref-go-back] goes back to; the newest *HISTORY-KEPT* of them.")
   "Show MARKER's buffer in the selected window, point where MARKER's anchor is now."
   (destructuring-bind (b . anchor) marker
     (show-buffer b)
-    (goto (min (tuatara.buffer:buffer-size b)
-               (or (ignore-errors (tuatara.text:anchor-position anchor (tuatara.buffer:buffer-version b))) 0)))))
+    (goto-shown b (min (tuatara.buffer:buffer-size b)
+                       (or (ignore-errors (tuatara.text:anchor-position anchor (tuatara.buffer:buffer-version b))) 0)))))
 
 (defun live-marker-p (marker)
   "True when MARKER's buffer is still alive."
@@ -101,7 +101,7 @@ for \\[xref-find-definitions] to ask with; NIL for none.")
 why it cannot be reached."
   (multiple-value-bind (b position) (funcall (definition-locate definition))
     (if (typep b 'tuatara.buffer:buffer)
-        (progn (if other (pop-to-buffer b :other t) (show-buffer b)) (goto position))
+        (progn (if other (pop-to-buffer b :other t) (show-buffer b)) (goto-shown b position))
         (message "~a" position))))
 
 (define-command xref-find-definitions ()
@@ -214,7 +214,7 @@ select that window when SELECT; in another window when that one is gone."
               (let ((here (current-window)))
                 (select-window target)
                 (show-buffer b)
-                (goto position)
+                (goto-shown b position)
                 (unless select (select-window here)))))))))
 
 (defmethod list-entry-noun ((mode xref-mode))

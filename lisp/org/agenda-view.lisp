@@ -1083,9 +1083,11 @@ runs there as usual; in any other buffer it is said where it works."
                  ((null start)
                   (message "That entry is no longer in its file as it was: \\<org-agenda-mode>\\[revert-buffer] draws the agenda again, nothing changed"))
                  (t (let ((before (first (tuatara.buffer:buffer-undo-stack buffer))))
+                      ;; the entry may be outside the part of its file shown
                       (let ((*current-buffer* buffer))
-                        (setf (tuatara.buffer:buffer-point buffer) start)
-                        (funcall command))
+                        (tuatara.buffer:with-narrowing-lifted (buffer)
+                          (setf (tuatara.buffer:buffer-point buffer) start)
+                          (funcall command)))
                       ;; the change remembered for undo from the agenda
                       (let ((group (first (tuatara.buffer:buffer-undo-stack buffer))))
                         (when (and group (not (eq group before)))
@@ -1266,8 +1268,7 @@ that day."
          (whats (tuatara.buffer:buffer-local buffer 'list-entries #()))
          (index (position-if (lambda (what) (and (org-agenda-date-line-p what) (= (second what) day))) whats)))
     (when index
-      (setf (tuatara.buffer:buffer-point buffer)
-            (tuatara.buffer:buffer-goto-line buffer (+ index (tuatara.buffer:buffer-local buffer 'list-first-line 0)))))))
+      (goto-shown buffer (tuatara.buffer:buffer-goto-line buffer (+ index (tuatara.buffer:buffer-local buffer 'list-first-line 0)))))))
 
 (define-command org-agenda-goto-calendar ()
   "Show the calendar on the day of the agenda line at point."

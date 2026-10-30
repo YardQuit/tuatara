@@ -377,11 +377,13 @@ NIL when it may."
 
 (defun split-ranges (whole wide)
   "The stretches of the current buffer a split searches, (START . END) in
-order, and what they are called: the whole buffer with WHOLE; else what is
-selected (SELECTED-RANGES, WIDE as it takes it), or the line at point."
+order, and what they are called: the whole buffer with WHOLE (the part shown
+of a narrowed one); else what is selected (SELECTED-RANGES, WIDE as it takes
+it), or the line at point."
   (let ((b (current-buffer)))
     (if whole
-        (values (list (cons 0 (tuatara.buffer:buffer-size b))) "the buffer")
+        (values (list (multiple-value-call #'cons (tuatara.buffer:buffer-bounds b)))
+                (if (tuatara.buffer:buffer-narrowed-p b) "the part shown" "the buffer"))
         (multiple-value-bind (ranges words) (selected-ranges wide)
           (if ranges
               (values ranges words)
@@ -732,7 +734,7 @@ megabyte."
                (read-pattern "split on"
                              :count (lambda (text regex)
                                       (multiple-value-bind (whole regexp) (split-input text regex)
-                                        (let ((scope (if whole (list (cons 0 (tuatara.buffer:buffer-size b))) selected)))
+                                        (let ((scope (if whole (list (multiple-value-call #'cons (tuatara.buffer:buffer-bounds b))) selected)))
                                           ;; a rectangle's block is searched row by row as the split comes to it
                                           (if (block-scope-p scope)
                                               (stretch-pattern-count counter b '() "" t)

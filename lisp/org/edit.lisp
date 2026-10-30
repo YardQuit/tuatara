@@ -34,6 +34,17 @@ every headline."
       (walk tree))
     found))
 
+(defmethod mode-section-bounds ((mode org-mode) buffer position)
+  "The subtree of the headline POSITION of BUFFER is under, its headline
+with it; NIL before the first headline."
+  (declare (ignore mode))
+  (multiple-value-bind (tree text) (org-tree-now buffer)
+    (let* ((*org-current-text* (or text ""))
+           (headline (and tree (org-current-headline tree (org-byte->char buffer position)))))
+      (when headline
+        (values (org-char->byte buffer (org-node-begin headline))
+                (org-char->byte buffer (org-node-end headline)))))))
+
 (defun org-siblings (headline tree)
   "The headlines beside HEADLINE, under the same parent (TREE's top for the first level), in order."
   (org-child-headlines (or (org-node-parent headline) tree)))

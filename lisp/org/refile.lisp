@@ -222,7 +222,7 @@ agenda saves its files. With \\[universal-argument], go to the heading chosen in
           (let ((into (visit-path (second target))))
             (let ((under (org-headline-at-path (org-tree-now into) (cddr target) at)))
               (when under
-                (setf (tuatara.buffer:buffer-point into) (org-char->byte into (org-node-begin under)))))))
+                (goto-shown into (org-char->byte into (org-node-begin under)))))))
         (multiple-value-bind (tree chars) (org-tree-now buffer)
           (declare (ignore chars))
           (let ((headline (and tree (org-current-headline tree (org-point-char buffer)))))

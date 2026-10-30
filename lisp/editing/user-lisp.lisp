@@ -25,15 +25,17 @@ for the current buffer. Signals an error when there is no such buffer."
 
 (defun byte-at (buffer position &key clamp)
   "The offset of POSITION, characters counted from 1, in BUFFER. Outside the
-text it signals an error, or with CLAMP is taken to the nearer end."
+text, or the part shown while BUFFER is narrowed, it signals an error, or
+with CLAMP is taken to the nearer end."
   (tuatara.buffer:ensure-indexed buffer)
   (let* ((rope (tuatara.buffer:buffer-text buffer))
-         (last (1+ (tuatara.text:rope-chars rope))))
+         (first (position-at buffer (tuatara.buffer:buffer-start buffer)))
+         (last (position-at buffer (tuatara.buffer:buffer-end buffer))))
     (unless (integerp position)
       (error "Wrong type argument: ~s is not a position" position))
-    (unless (or clamp (<= 1 position last))
-      (error "Args out of range: position ~d is outside 1 to ~d" position last))
-    (tuatara.text:char->byte rope (1- (max 1 (min last position))))))
+    (unless (or clamp (<= first position last))
+      (error "Args out of range: position ~d is outside ~d to ~d" position first last))
+    (tuatara.text:char->byte rope (1- (max first (min last position))))))
 
 (defun range-at (buffer start end)
   "Two offsets for positions START and END of BUFFER, the lower first."
@@ -49,73 +51,94 @@ characters before it counted from 1."
     (position-at b (tuatara.buffer:buffer-point b))))
 
 (defun tuatara-user:point-min ()
-  "Return the position of the start of the current buffer's text: 1."
-  1)
+  "Return the position of the start of the current buffer's text: 1, or
+while it is narrowed (\\[narrow-to-region]) the start of the part shown."
+  (let ((b (current-buffer)))
+    (position-at b (tuatara.buffer:buffer-start b))))
 
 (defun tuatara-user:point-max ()
   "Return the position of the end of the current buffer's text: one more than
-the characters in it."
+the characters in it, or while it is narrowed the end of the part shown."
   (let ((b (current-buffer)))
-    (position-at b (tuatara.buffer:buffer-size b))))
+    (position-at b (tuatara.buffer:buffer-end b))))
 
 (defun tuatara-user:goto-char (position)
   "Set point to POSITION, characters counted from 1, taken to the start or end
-of the text when it is outside it; return POSITION."
+of the text when it is outside it, or of the part shown while the buffer is
+narrowed; return POSITION."
   (let ((b (current-buffer)))
     (setf (tuatara.buffer:buffer-point b) (byte-at b position :clamp t))
     position))
 
 (defun tuatara-user:bobp ()
-  "Return true when point is at the start of the current buffer."
-  (zerop (tuatara.buffer:buffer-point (current-buffer))))
+  "Return true when point is at the start of the current buffer (of the part
+shown, while it is narrowed)."
+  (let ((b (current-buffer)))
+    (= (tuatara.buffer:buffer-point b) (tuatara.buffer:buffer-start b))))
 
 (defun tuatara-user:eobp ()
-  "Return true when point is at the end of the current buffer."
+  "Return true when point is at the end of the current buffer (of the part
+shown, while it is narrowed)."
   (let ((b (current-buffer)))
-    (= (tuatara.buffer:buffer-point b) (tuatara.buffer:buffer-size b))))
+    (= (tuatara.buffer:buffer-point b) (tuatara.buffer:buffer-end b))))
+
+(defun shown-line-start (buffer byte)
+  "The start of the line holding BYTE in BUFFER, no further back than the
+start of the part shown while it is narrowed."
+  (tuatara.buffer:within-narrowing buffer (tuatara.buffer:buffer-line-start buffer byte)))
+
+(defun shown-line-end (buffer byte)
+  "The end of the line holding BYTE in BUFFER, before its newline, no further
+than the end of the part shown while it is narrowed."
+  (tuatara.buffer:within-narrowing buffer (tuatara.buffer:buffer-line-end buffer byte)))
 
 (defun tuatara-user:bolp ()
-  "Return true when point is at the start of a line."
+  "Return true when point is at the start of a line, or of the part shown
+while the buffer is narrowed."
   (let* ((b (current-buffer)) (p (tuatara.buffer:buffer-point b)))
-    (= p (tuatara.buffer:buffer-line-start b p))))
+    (= p (shown-line-start b p))))
 
 (defun tuatara-user:eolp ()
-  "Return true when point is at the end of a line."
+  "Return true when point is at the end of a line, or of the part shown while
+the buffer is narrowed."
   (let* ((b (current-buffer)) (p (tuatara.buffer:buffer-point b)))
-    (= p (tuatara.buffer:buffer-line-end b p))))
+    (= p (shown-line-end b p))))
 
 (defun tuatara-user:char-after (&optional position)
   "Return the character after POSITION, point when it is not given, or NIL at
-the end of the text."
+the end of the text (of the part shown, while the buffer is narrowed)."
   (let* ((b (current-buffer))
          (byte (if position (byte-at b position :clamp t) (tuatara.buffer:buffer-point b))))
-    (and (< byte (tuatara.buffer:buffer-size b)) (tuatara.buffer:buffer-char-at b byte))))
+    (and (< byte (tuatara.buffer:buffer-end b)) (tuatara.buffer:buffer-char-at b byte))))
 
 (defun tuatara-user:char-before (&optional position)
   "Return the character before POSITION, point when it is not given, or NIL at
-the start of the text."
+the start of the text (of the part shown, while the buffer is narrowed)."
   (let* ((b (current-buffer))
          (byte (if position (byte-at b position :clamp t) (tuatara.buffer:buffer-point b))))
-    (and (plusp byte) (tuatara.buffer:buffer-char-at b (tuatara.buffer:buffer-forward-char b byte -1)))))
+    (and (> byte (tuatara.buffer:buffer-start b))
+         (tuatara.buffer:buffer-char-at b (tuatara.buffer:buffer-forward-char b byte -1)))))
 
 ;;; Lines
 
 (defun line-start-lines-on (buffer byte lines)
   "Two values: the start of the line LINES lines on from the one holding BYTE
 in BUFFER (back when negative), and how many of them could not be gone, the
-text ending sooner."
-  (let ((p (tuatara.buffer:buffer-line-start buffer byte)) (size (tuatara.buffer:buffer-size buffer)) (moved 0))
-    (if (minusp lines)
-        (loop repeat (- lines)
-              while (plusp p)
-              do (setf p (tuatara.buffer:buffer-line-start buffer (1- p)))
-                 (incf moved))
-        (loop repeat lines
-              do (let ((end (tuatara.text:rope-line-end (tuatara.buffer:buffer-text buffer) p)))
-                   (if (< end size)
-                       (setf p (1+ end) moved (1+ moved))
-                       (return)))))
-    (values p (- (abs lines) moved))))
+text ending sooner; while BUFFER is narrowed, the lines of the part shown,
+its first beginning where the part does."
+  (multiple-value-bind (low size) (tuatara.buffer:buffer-bounds buffer)
+    (let ((p (shown-line-start buffer byte)) (moved 0))
+      (if (minusp lines)
+          (loop repeat (- lines)
+                while (> p low)
+                do (setf p (shown-line-start buffer (1- p)))
+                   (incf moved))
+          (loop repeat lines
+                do (let ((end (tuatara.text:rope-line-end (tuatara.buffer:buffer-text buffer) p)))
+                     (if (< end size)
+                         (setf p (1+ end) moved (1+ moved))
+                         (return)))))
+      (values p (- (abs lines) moved)))))
 
 (defun tuatara-user:line-beginning-position (&optional (n 1))
   "Return the position where the current line starts; with N other than 1, the
@@ -127,20 +150,19 @@ start of the line N - 1 lines on (back when negative)."
   "Return the position where the current line ends, before its newline; with N
 other than 1, the end of the line N - 1 lines on (back when negative)."
   (let ((b (current-buffer)))
-    (position-at b (tuatara.buffer:buffer-line-end
-                    b (line-start-lines-on b (tuatara.buffer:buffer-point b) (1- n))))))
+    (position-at b (shown-line-end b (line-start-lines-on b (tuatara.buffer:buffer-point b) (1- n))))))
 
 (defun tuatara-user:forward-line (&optional (n 1))
   "Move point to the start of the line N lines on (back when negative) and
-return how many lines could not be gone, the text ending first: 0 when all
-were. A last line without a newline counts as gone to when point ends at its
-end."
+return how many lines could not be gone, the text (or the part shown, while
+the buffer is narrowed) ending first: 0 when all were. A last line without a
+newline counts as gone to when point ends at its end."
   (let* ((b (current-buffer)) (from (tuatara.buffer:buffer-point b)))
     (multiple-value-bind (p short) (line-start-lines-on b from n)
       (when (and (plusp n) (plusp short))
         ;; lines ran out: to the end of the text, which counts as a line gone
         ;; when point moved to the end of one not ended by a newline
-        (setf p (tuatara.buffer:buffer-size b))
+        (setf p (tuatara.buffer:buffer-end b))
         (when (and (/= p from) (/= 10 (tuatara.text:rope-octet (tuatara.buffer:buffer-text b) (1- p))))
           (decf short)))
       (setf (tuatara.buffer:buffer-point b) p)
@@ -148,9 +170,10 @@ end."
 
 (defun tuatara-user:forward-char (&optional (n 1))
   "Move point N characters on (back when negative). At the start or end of the
-text it stops there and signals an error."
+text, or of the part shown while the buffer is narrowed, it stops there and
+signals an error."
   (let* ((b (current-buffer)) (p (tuatara.buffer:buffer-point b))
-         (to (tuatara.buffer:buffer-forward-char b p n))
+         (to (tuatara.buffer:within-narrowing b (tuatara.buffer:buffer-forward-char b p n)))
          (moved (abs (- (position-at b to) (position-at b p)))))
     (setf (tuatara.buffer:buffer-point b) to)
     (when (< moved (abs n))
@@ -170,12 +193,12 @@ letters and digits."
 
 (defun tuatara-user:line-number-at-pos (&optional position absolute)
   "Return the number of the line POSITION (point when NIL) is on, the first
-line being 1. ABSOLUTE is taken and changes nothing: the whole buffer is
-always in view."
-  (declare (ignore absolute))
+line being 1: of the part shown while the buffer is narrowed, or with
+ABSOLUTE of the whole buffer."
   (let* ((b (current-buffer))
          (byte (if position (byte-at b position) (tuatara.buffer:buffer-point b))))
-    (1+ (tuatara.text:rope-count-newlines (tuatara.buffer:buffer-text b) 0 byte))))
+    (1+ (tuatara.text:rope-count-newlines (tuatara.buffer:buffer-text b)
+                                          (if absolute 0 (tuatara.buffer:buffer-start b)) byte))))
 
 (defun tuatara-user:count-lines (start end)
   "Return how many lines there are between positions START and END: the
@@ -211,8 +234,9 @@ at the start of a line."
       nil)))
 
 (defun tuatara-user:erase-buffer ()
-  "Delete all the text of the current buffer."
+  "Delete all the text of the current buffer, widening it when it is narrowed."
   (let ((b (current-buffer)))
+    (tuatara.buffer:widen-buffer b)
     (tuatara.buffer:buffer-delete b 0 (tuatara.buffer:buffer-size b))
     nil))
 
@@ -223,8 +247,10 @@ at the start of a line."
       (tuatara.buffer:buffer-string b :start low :end high))))
 
 (defun tuatara-user:buffer-string ()
-  "Return all the text of the current buffer as a string."
-  (tuatara.buffer:buffer-string (current-buffer)))
+  "Return the text of the current buffer as a string: all of it, or while it
+is narrowed (\\[narrow-to-region]) the part shown."
+  (let ((b (current-buffer)))
+    (tuatara.buffer:buffer-string b :start (tuatara.buffer:buffer-start b) :end (tuatara.buffer:buffer-end b))))
 
 (defun tuatara-user:buffer-size (&optional buffer)
   "Return how many characters BUFFER holds, the current buffer when it is not given."

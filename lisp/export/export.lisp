@@ -676,10 +676,12 @@ it in turn until one does, put beside the LaTeX file."
              (reverse (pdf-export-failed job)) (and first (error-words job first))))))
 
 (defun show-buffer-place (buffer position)
-  "Show BUFFER in another window, selected, point at POSITION, its line in the middle."
+  "Show BUFFER in another window, selected, point at POSITION, its line in the
+middle; widened first, and that said, when POSITION is outside the part of it
+shown."
   (pop-to-buffer buffer :other t)
   (when (eq buffer (tuatara.display:window-buffer (current-window)))
-    (setf (tuatara.buffer:buffer-point buffer) (min position (tuatara.buffer:buffer-size buffer)))
+    (goto-shown buffer (min position (tuatara.buffer:buffer-size buffer)))
     (tuatara.display:window-recenter (current-window))))
 
 (defun show-place-beside (buffer position stay)

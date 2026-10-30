@@ -1429,7 +1429,7 @@ fold or unfold the section, as in every list in sections."
                   (unless (tuatara.io:safe-visit-p buffer)
                     (conflict-look-through buffer :tell t :go t))))
                ((and (visit-path path) hunk)
-                (goto (tuatara.buffer:buffer-goto-line (current-buffer) (1- (git-hunk-line hunk (fifth entry)))))))))
+                (goto-shown (current-buffer) (tuatara.buffer:buffer-goto-line (current-buffer) (1- (git-hunk-line hunk (fifth entry)))))))))
       (:commit (git-show-commit top (second entry)))
       (:stash (git-show-stash top (second entry)))
       (:submodule (git-show-status (concatenate 'string top (string-right-trim "/" (second entry)) "/")))
@@ -1492,6 +1492,7 @@ asked for from it are looked for from its top."
 by CONTROL (GIT-BUFFER-NAME), holding TEXT, in MODE, point at the start of
 LINE (0 the first), LOCALS, names and values in turn, set in it."
   (let ((buffer (find-or-make-buffer (git-buffer-name control top))))
+    (tuatara.buffer:widen-buffer buffer)
     (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) text)
     (set-major-mode buffer mode)
     (git-set-top buffer top)

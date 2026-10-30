@@ -382,7 +382,8 @@ order of the text. Typing narrows the
 list, and a digit and a space typed first (2 SPC) keep only the headings that
 many levels deep or less, as a prefix argument does. Moving in the list shows
 each heading in the window; \\<minibuffer>\\[minibuffer-done] goes there, leaving the mark where
-point was, and \\[minibuffer-abort] goes back. The list opens on the heading point is under."
+point was, and \\[minibuffer-abort] goes back. The list opens on the heading point is under.
+In a narrowed buffer, the headings of the part shown."
   (let* ((buffer (current-buffer))
          (mode (buffer-major-mode buffer))
          (finder (mode-outline mode buffer))
@@ -393,10 +394,13 @@ point was, and \\[minibuffer-abort] goes back. The list opens on the heading poi
          (colours (and tree language (not (eq (language-colouring language mode) :none))
                        (rules-at-hand language) (language-compiled-query language :colouring)))
          (faces (and colours (multiple-value-call #'query-faces colours (language-colouring language mode))))
-         (entries (outline-collect finder rope tree colours faces (tuatara.display:tab-width-of buffer) buffer)))
+         (entries (multiple-value-bind (low high) (tuatara.buffer:buffer-bounds buffer)
+                    ;; of a narrowed buffer, the headings of the part shown
+                    (remove-if-not (lambda (entry) (and (<= low (first entry)) (< (first entry) high)))
+                                   (outline-collect finder rope tree colours faces (tuatara.display:tab-width-of buffer) buffer)))))
     (if entries
         (outline-choose buffer (current-window) entries)
-        (message "No headings"))))
+        (message "No headings~:[~; in the part shown~]" (tuatara.buffer:buffer-narrowed-p buffer)))))
 
 (defun install-outline ()
   "Bind \\[buffer-outline] to \\`M-g o', and light the line of the

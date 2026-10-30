@@ -148,6 +148,7 @@ Returns a sentence when it was not written, else NIL."
                             (text-with-header old type title keywords identifier time))))
              (cond ((null new) (format nil "~a is not all text, or its lines end two ways: its header was not written" name))
                    (t (unless (string= old new)
+                        (tuatara.buffer:widen-buffer buffer)
                         (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) new)
                         (tuatara.io:save-buffer-file buffer))
                       nil))))

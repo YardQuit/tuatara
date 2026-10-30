@@ -341,6 +341,7 @@ it would write it as it is (ENCRYPTED-SAVE-TRANSFORM)."
 
 (defun encrypted-placeholder (buffer text)
   "Show TEXT, what is happening to it, in BUFFER, an encrypted file's buffer, read only."
+  (tuatara.buffer:widen-buffer buffer)
   (tuatara.buffer:with-read-only-lifted (buffer :after t)
     (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) text))
   (setf (tuatara.buffer:buffer-undo-stack buffer) '() (tuatara.buffer:buffer-redo-stack buffer) '())
@@ -378,6 +379,7 @@ gone."
         (cond
           (text
            (setf (tuatara.buffer:buffer-local buffer :read-only) nil)
+           (tuatara.buffer:widen-buffer buffer)
            (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) text)
            (fill text 0)
            (setf (tuatara.buffer:buffer-undo-stack buffer) '() (tuatara.buffer:buffer-redo-stack buffer) '()

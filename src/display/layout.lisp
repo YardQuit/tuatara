@@ -444,8 +444,14 @@ Complexity: O(log n)."
              (let ((anchor (tuatara.text:rope-char-start rope grid)))
                (when (> anchor position) (return anchor))))))
 
+(declaim (inline shown-text-end))
+(defun shown-text-end (rope text-end)
+  "Where the text LAYOUT shows of ROPE ends: TEXT-END when given, no further
+than ROPE's end; else ROPE's end."
+  (if text-end (min text-end (tuatara.text:rope-bytes rope)) (tuatara.text:rope-bytes rope)))
+
 (defun layout (rope start width height &key (wrap nil) wrap-column word-wrap (tab-width 8) (hscroll 0) highlights crlf hidden
-                                             prefix scale until invisible spares)
+                                             prefix scale until invisible spares text-end)
   "Lay out ROPE from byte START into at most HEIGHT rows of WIDTH columns.
 WRAP true wraps long lines at the column, WRAP-COLUMN when given (no further
 than WIDTH), and with WORD-WRAP at a word's edge: a row ends after the last
@@ -466,7 +472,9 @@ a rational of 1 or more: such a row holds as many times fewer columns, and
 HEIGHT is then the rows' heights added up, not their number. Where lines
 wrap, a row of a long line also begins every *WRAP-STRETCH* octets
 \(NEXT-WRAP-ANCHOR). UNTIL, an octet,
-ends the layout before a row that would begin past it. With INVISIBLE, a
+ends the layout before a row that would begin past it. TEXT-END, an octet,
+is where the text shown ends, ROPE's end unless given: of a narrowed
+buffer, the end of the part shown. With INVISIBLE, a
 character that draws nothing (`*invisible-characters*') is shown as its code,
 <FEFF>, in :invisible-character, taking those columns, as a raw byte is shown
 as \\xNN in :raw-byte. A grapheme cluster takes the columns of its first
@@ -480,8 +488,8 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
   (declare (type fixnum start width height hscroll))
   (tuatara.text:with-octet-block (chunk +reader-chunk+)
     (let ((rows (make-array 0 :adjustable t :fill-pointer 0))
-          (total (tuatara.text:rope-bytes rope))
-          (reader (make-reader rope start (tuatara.text:rope-bytes rope) chunk))
+          (total (shown-text-end rope text-end))
+          (reader (make-reader rope start (shown-text-end rope text-end) chunk))
           (position start)
           (line-start (tuatara.text:rope-line-start rope start))
           (continuation nil)

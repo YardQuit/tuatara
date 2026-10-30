@@ -41,7 +41,8 @@ there is none in force any more, its text not kept for it."
   "Visit the file at PATH as \\[find-file] does and put point on its line LINE
 \(from 1; its last line for one past it), OFFSET octets in, or with COLUMN
 that many characters in from 1, never past the line's end, the line in the
-middle of the window: in the selected window, or with OTHER in another. A
+middle of the window: in the selected window, or with OTHER in another; a
+buffer narrowed to a part not holding it widened first, and that said. A
 file shown otherwise than as text (a PDF's pages) is shown as it is. A file no
 longer there is said, not made. Returns the buffer, or NIL then."
   (unless (tuatara.io:path-kind (tuatara.io:native (tuatara.io:expand-path path)))
@@ -55,10 +56,9 @@ longer there is said, not made. Returns the buffer, or NIL then."
       (let* ((start (tuatara.buffer:buffer-goto-line buffer (max 0 (1- line))))
              (rope (tuatara.buffer:buffer-text buffer))
              (end (tuatara.text:rope-line-end rope start)))
-        (setf (tuatara.buffer:buffer-point buffer)
-              (if column
-                  (min end (cluster-forward buffer start (max 0 (1- column))))
-                  (tuatara.text:rope-char-start rope (min end (+ start offset)))))
+        (goto-shown buffer (if column
+                               (min end (cluster-forward buffer start (max 0 (1- column))))
+                               (tuatara.text:rope-char-start rope (min end (+ start offset)))))
         (tuatara.display:window-recenter (current-window))))
     buffer))
 

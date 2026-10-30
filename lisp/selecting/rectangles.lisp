@@ -388,10 +388,12 @@ any is read."
   "Put the rows TEXTS into BUFFER one above another: the first at POSITION,
 each other at POSITION's column on the screen on the line below the last (a
 short line padded out to it with spaces, a tab across it made spaces), new
-lines made at the end as needed. One change, joining the newest with GROUP.
+lines made at the end as needed; refused when that would be past the part
+shown of a narrowed buffer. One change, joining the newest with GROUP.
 Returns the byte offset after the last row."
   (let* ((column (tuatara.display:buffer-screen-column buffer position))
-         (size (tuatara.buffer:buffer-size buffer))
+         ;; the end of the text, or of the part shown of a narrowed buffer
+         (size (tuatara.buffer:buffer-end buffer))
          (newline (tuatara.buffer:buffer-newline buffer))
          (line (tuatara.buffer:buffer-line-start buffer position))
          (edits '())                    ; (start end text after), bottom first
@@ -408,8 +410,14 @@ Returns the byte offset after the last row."
                          (end (tuatara.buffer:buffer-line-end buffer line)))
                      (push (list s e (concatenate 'string (spaces (- column sc)) text (spaces tail))) edits)
                      (setf last-tail tail
-                           line (if (>= end size) nil (tuatara.buffer:buffer-forward-char buffer end)))))
+                           line (let ((next (and (< end size) (tuatara.buffer:buffer-forward-char buffer end))))
+                                  ;; the line after the part shown is not one of its own
+                                  (and next (not (and (= next size) (< size (tuatara.buffer:buffer-size buffer))))
+                                       next)))))
                  (progn
+                   ;; new lines are made at the end of the text, never at the edge of a part shown
+                   (when (< size (tuatara.buffer:buffer-size buffer))
+                     (tuatara.buffer:refuse-outside-narrowing buffer))
                    (push (list size size (concatenate 'string newline (spaces column) text)) edits)
                    (setf last-tail 0))))
     ;; the rows made at the end go in with the last line's, as one insertion

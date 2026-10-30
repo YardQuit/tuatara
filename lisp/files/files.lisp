@@ -344,7 +344,8 @@ takes back, unless the text could no longer be trusted (then the history goes
 too). Point and the window stay on the same text. A file that only grew has
 just what it grew by added. Asks first when the buffer has changes not saved.
 In a buffer a command made (a list, help, a report), make it again from what
-it shows, point staying on its entry or its line: \\`r' and \\`g r' there."
+it shows, point staying on its entry or its line: \\`r' and \\`g r' there.
+A narrowed buffer is widened: all of it is read again."
   (let* ((buffer (current-buffer))
          (file (tuatara.buffer:buffer-file buffer))
          (refill (tuatara.buffer:buffer-local buffer :refill)))
@@ -361,7 +362,8 @@ it shows, point staying on its entry or its line: \\`r' and \\`g r' there."
                 (not (yes-or-no-p* (format nil "Discard the changes to ~a and read it again?"
                                            (tuatara.buffer:buffer-name buffer)))))
            (message "Not reverted"))
-          (t (let* ((added (and (not (tuatara.buffer:buffer-modified-p buffer))
+          (t (tuatara.buffer:widen-buffer buffer)
+             (let* ((added (and (not (tuatara.buffer:buffer-modified-p buffer))
                                 (tuatara.io:append-from-disk buffer)))
                     (said (and (not added) (nth-value 1 (reload-buffer buffer)))))
                (setf (tuatara.buffer:buffer-local buffer :disk-state-said) nil)

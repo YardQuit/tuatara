@@ -233,8 +233,7 @@ there, said so."
                 (tuatara.buffer:kill-buffer list))
               (let ((file (visit-path path)))
                 (when file
-                  (setf (tuatara.buffer:buffer-point file)
-                        (tuatara.buffer:buffer-goto-line file (min line (max 0 (1- (tuatara.buffer:buffer-line-count file)))))))))
+                  (goto-shown file (tuatara.buffer:buffer-goto-line file (min line (max 0 (1- (tuatara.buffer:buffer-line-count file)))))))))
             (progn
               (if (and list (live-buffer-p list))
                   (rimu-rewind-leave list)

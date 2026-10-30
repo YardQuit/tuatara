@@ -178,7 +178,7 @@ said so, nothing made in its place."
       (if (not (typep buffer 'tuatara.buffer:buffer))
           (message "~a: ~a is no longer there" name (abbreviated-path path))
           (progn (if other (pop-to-buffer buffer :other t) (show-buffer buffer))
-                 (goto (bookmark-place buffer offset context))
+                 (goto-shown buffer (bookmark-place buffer offset context))
                  (state-list-put *bookmarks* (list bookmark)))))))
 
 (defun read-bookmark (prompt)

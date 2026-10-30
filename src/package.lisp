@@ -13,7 +13,9 @@ Lisp package uses this one; TUATARA-USER, which init files are read in, does too
 (defpackage #:tuatara-user
   (:use #:cl #:tuatara)
   ;; Emacs's names, counting characters, in place of the API's of these names, counting octets
-  (:shadow #:buffer-name #:buffer-string #:buffer-size)
+  (:shadow #:buffer-name #:buffer-string #:buffer-size
+           ;; the API's octet bounds of a narrowed buffer's part: point-min and point-max here
+           #:buffer-start #:buffer-end)
   (:documentation "The package user configuration files are read in: BIND-KEY and UNBIND-KEY are
 available unqualified, and the public API of TUATARA is used.")
   (:export #:bind-key #:unbind-key #:define-recorded-keys #:set-face #:load-theme #:load-package #:define-theme #:define-named-pattern

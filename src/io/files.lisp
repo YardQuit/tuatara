@@ -1988,7 +1988,10 @@ BUFFER-SWAP-TEXT maps positions with, forward and back; by default a position
 stays, cut to the new text's size. *BEFORE-EDIT-FUNCTIONS* see the whole text
 changed before the file is read, and may refuse it. A buffer whose text is
 not its file's octets (an encrypted file's, decrypted) is read again by its
-own :REREAD function instead. Returns BUFFER."
+own :REREAD function instead. A narrowed buffer is widened first. Returns
+BUFFER."
+  ;; the file's text comes back whole, shown whole
+  (tuatara.buffer:widen-buffer buffer)
   (let ((reread (tuatara.buffer:buffer-local buffer :reread)))
     (when reread
       (funcall reread buffer)

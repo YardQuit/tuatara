@@ -149,8 +149,12 @@ one given in hex; hex-search-forward and hex-search-backward find octets. Only
 the rows shown are made, so a file of any size shows at once. In a PDF shown
 as its pages, the PDF's own octets, opened safely in the window. While the
 hex view is on, nothing else changes the buffer's size: the keys that would
-insert or delete text say so and do nothing."
+insert or delete text say so and do nothing. A narrowed buffer is not shown
+in hex, every octet of it being shown there: \\[widen] first."
   (let* ((b (current-buffer)) (on (not (tuatara.display:hex-view-p b))))
+    (when (and on (tuatara.buffer:buffer-narrowed-p b))
+      (message "~a is narrowed, and the hex view shows every octet: \\[widen] first" (tuatara.buffer:buffer-name b))
+      (return-from hex-mode nil))
     (when (some (lambda (function) (funcall function b)) *hex-view-functions*)
       (return-from hex-mode nil))
     (if on

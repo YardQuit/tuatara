@@ -120,10 +120,12 @@ header line (WINDOW-HEADER-ROWS)."
                                 (tuatara.buffer:buffer-version (window-buffer window))))
 
 (defun (setf window-start) (byte window)
-  "Make WINDOW show its buffer from byte offset BYTE."
-  (tuatara.text:anchor-move (window-start-anchor window)
-                            (tuatara.buffer:buffer-version (window-buffer window)) byte)
-  byte)
+  "Make WINDOW show its buffer from byte offset BYTE; while the buffer is
+narrowed, from within the part shown."
+  (let* ((buffer (window-buffer window))
+         (byte (tuatara.buffer:within-narrowing buffer byte)))
+    (tuatara.text:anchor-move (window-start-anchor window) (tuatara.buffer:buffer-version buffer) byte)
+    byte))
 
 (defun call-keeping-window-starts (windows function)
   "Call FUNCTION, which puts a new text in place of a buffer's whole text and
@@ -316,7 +318,8 @@ wants), its tab width and its line ends; while the frontend draws rows large
 With END, only the rows up to that octet are wanted: none is laid out that
 begins past it, and what the buffer hides or shows otherwise is looked for no
 further. With SPARES, the rows are filled from WINDOW's rows no longer shown
-\(WINDOW-SPARE-ROWS) while it has any."
+\(WINDOW-SPARE-ROWS) while it has any. Of a narrowed buffer, only the part
+shown is laid out."
   (let* ((buffer (window-buffer window))
          (visual (soft-wrap-of buffer))
          (wrap (or (window-wrap window) (and visual t))))
@@ -327,6 +330,7 @@ further. With SPARES, the rows are filled from WINDOW's rows no longer shown
             :tab-width (tab-width-of buffer)
             :crlf (tuatara.buffer:buffer-crlf-p buffer)
             :until end
+            :text-end (and (tuatara.buffer:buffer-narrowing buffer) (tuatara.buffer:buffer-end buffer))
             :invisible (invisible-characters-of buffer)
             :spares (and spares (window-spare-rows window))
             :hidden (let ((*layout-probe* (and end t))) (window-hidden buffer start (window-width window) height end))
@@ -450,14 +454,16 @@ O(log n + *WRAP-STRETCH*)."
 
 (defun layout-state (window)
   "What decides how WINDOW lays out its buffer, but for where from: the
-buffer's text and settings for laying it out, the window's width, height,
-wrapping and sideways scroll."
+buffer's text, the part of it shown when it is narrowed, and its settings
+for laying it out, the window's width, height, wrapping and sideways
+scroll."
   (let ((buffer (window-buffer window)))
     (list (tuatara.buffer:buffer-version buffer) (window-text-width window) (window-height window)
           (window-hscroll window) (window-wrap window) (soft-wrap-of buffer) (tab-width-of buffer)
           (tuatara.buffer:buffer-line-ending buffer) (invisible-characters-of buffer)
           (tuatara.buffer:buffer-local buffer :folds) (hidden-bounds buffer) (tuatara.buffer:buffer-local buffer :line-prefix-function)
-          (and *row-scaling* (tuatara.buffer:buffer-local buffer :line-scale-function)))))
+          (and *row-scaling* (tuatara.buffer:buffer-local buffer :line-scale-function))
+          (tuatara.buffer:buffer-narrowing buffer))))
 
 (defun row-start-state (window)
   "What decides whether WINDOW's start is where one of its rows starts: its
@@ -467,13 +473,15 @@ start, and how it lays out its buffer (LAYOUT-STATE)."
 (defun rows-back (window position count)
   "Where the row starts that is above the one of WINDOW holding POSITION by
 COUNT rows' height, a row drawn large counting for as much as it is tall, as
-WINDOW lays out its buffer (WINDOW-ROW-START); the text's start at most.
+WINDOW lays out its buffer (WINDOW-ROW-START); the start of the text shown
+at most.
 Complexity: O(COUNT × (log n + *WRAP-STRETCH*)) at most, the rows of a stretch
 of a line laid out once."
   (let ((rope (tuatara.buffer:buffer-text (window-buffer window)))
         (start (window-row-start window position))
         (left count))
-    (loop while (and (plusp left) (plusp start))
+    (loop with top = (tuatara.buffer:buffer-start (window-buffer window))
+          while (and (plusp left) (> start top))
           do (let* ((before (1- start))
                     ;; past the lines hidden above
                     (line (if (buffer-hides-p (window-buffer window))
@@ -495,6 +503,9 @@ of a line laid out once."
   "Lay out WINDOW's buffer from its start, store and return the rows: as text,
 or as a hex dump (HEX-LAYOUT) when the buffer is in the hex view."
   (let ((buffer (window-buffer window)))
+    ;; never from outside the part a narrowed buffer shows
+    (when (tuatara.buffer:buffer-narrowing buffer)
+      (setf (window-start window) (window-start window)))
     ;; never from inside a fold: from the line it begins on
     (let ((fold (and (buffer-hides-p buffer) (not (hex-view-p buffer))
                      (or (fold-at buffer (window-start window)) (hidden-around buffer (window-start window))))))

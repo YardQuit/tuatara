@@ -667,7 +667,8 @@ changes text: the cursor is left where COMMAND leaves it, its selection let go."
 none does: when it fails at one, all are put back, and an EDIT (a command
 that changes text) is taken back everywhere. The changes are one change for
 undo. A key the command asks for is asked once. Only the last cursor's
-messages are kept."
+messages are kept. Refused while a cursor is outside the part of the buffer
+shown, as when cursors were made before it was narrowed."
   (let* ((b (split-buffer split))
          (places (split-places split))
          (states (map 'list (lambda (place) (cursor-state b place)) places))
@@ -677,6 +678,8 @@ messages are kept."
          (this (editor-this-command *editor*))
          (done nil))
     (when edit (check-writable (split-buffer split)))
+    (when (some (lambda (place) (let ((p (cursor-position b place))) (/= p (tuatara.buffer:within-narrowing b p)))) places)
+      (error "Some cursors are outside the part of ~a shown: widen shows them again" (tuatara.buffer:buffer-name b)))
     (setf (split-repeat split) (list :run command arg edit))
     (unwind-protect
          (let ((*read-key-replay* replay))
