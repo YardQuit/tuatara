@@ -26,7 +26,11 @@ scripts below run their Lisp and C work in it by themselves when it is there
 =tools/check-updates.sh= reports which pinned dependencies have newer
 versions upstream (tree-sitter and the grammars, Ghostty and Zig, Quicklisp,
 SBCL, and what the AppImage is made with) in =build/bumpcheck.org=, and
-changes nothing; it asks the network for names and versions only.
+changes nothing; it asks the network for names and versions only. Its first
+section, "Ghostty security advisories the pin does not fix", lists those
+published since the pinned commit whose fix the pin does not hold, or could
+not be checked, read from GitHub's API with =gh= when it is logged in, else
+with =curl= and no token (sixty questions an hour); it needs =jq=.
 =--install= runs it once a week from a systemd user timer, with a notice on
 the desktop when the list changes (=tools/toolbox-setup.sh= asks whether to,
 and does not unless you say yes), and =--remove= stops it.
