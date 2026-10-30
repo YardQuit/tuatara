@@ -478,7 +478,12 @@ force; *compile* killed afterwards."
   ;; the compile asked for after it then runs
   (with-compile-session (dir (format nil "if [ -e second ]; then echo the-second-ran; exit 0; fi~%setsid sh -c 'echo writer $$; while :; do echo x; sleep 0.05; done' &~%sleep 30~%"))
     (let ((began (get-internal-real-time)) (first-output "")
-          (messages-before (let ((m (tuatara.buffer:find-buffer "*Messages*"))) (if m (tuatara.buffer:buffer-size m) 0))))
+          (marker (format nil "stopped-though-an-outside-program-writes begins ~d" (get-universal-time))))
+      ;; a full *Messages* drops its oldest lines as new ones come, so what the compile said is
+      ;; found after a line of the test's own, not after the size the log had
+      (loop repeat tuatara.command:*message-log-max* for n from 0
+            do (tuatara.command:log-message (format nil "filler ~d ~a" n (make-string 200 :initial-element #\x))))
+      (tuatara.command:log-message marker)
       (unwind-protect
            (progn
              (auto-save-session
@@ -492,8 +497,9 @@ force; *compile* killed afterwards."
              (true (search "the-second-ran" (compile-output)))
              (true (< (- (get-internal-real-time) began) (* 9 internal-time-units-per-second)))
              ;; the first said it was stopped, not that something was left running
-             (let ((said (let ((m (tuatara.buffer:find-buffer "*Messages*")))
-                            (tuatara.buffer:buffer-string m :start (min messages-before (tuatara.buffer:buffer-size m))))))
+             (let* ((log (tuatara.buffer:buffer-string (tuatara.buffer:find-buffer "*Messages*")))
+                    (said (subseq log (or (search marker log :from-end t) 0))))
+               (true (search marker log))
                (true (search "Compile stopped" said))
                (false (search "left running" said))))
         (kill-pids-after "writer" first-output)))))
