@@ -707,7 +707,7 @@ colours a program picks are the theme's (*TERMINAL-PALETTE-ROLES*)."
                         ((safe-directory-of here) (format nil "~a is in *safe-directories*" here))))
          (directory (if careful (tuatara.io:home-directory) here))
          (program (or tuatara-user:*terminal-program*
-                      (list (or (uiop:getenv "SHELL") "/bin/sh"))))
+                      (list (tuatara.io:user-shell))))
          (buffer (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "*terminal*"))))
     (set-major-mode buffer 'terminal-mode)
     (setf (tuatara.buffer:buffer-local buffer :modal-class) :editing

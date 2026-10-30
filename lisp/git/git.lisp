@@ -195,7 +195,7 @@ commit's message or history, is for."
 (defun git-trusted-p (top)
   "True when git may run for the repository at TOP: a project trusted
 \(TRUST-PROJECT), asked once when it is not."
-  (trust-project top "Its language servers run its code, starting by themselves,"))
+  (trust-project top))
 
 (defun git-repository ()
   "The top of the repository to act on: the current status's, log's or

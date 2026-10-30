@@ -609,10 +609,7 @@ never given to a server, nor one that is not all UTF-8."
          (unserved (lsp-unserved-words buffer installed)))
     (if unserved
         (message "~a" unserved)
-        (when (every (lambda (root)
-                       (trust-project root (format nil "Its language servers (~{~a~^, ~}) run its code, starting by themselves,"
-                                                   (loop for (r nil . specs) in installed
-                                                         when (string= r root) append (mapcar (lambda (s) (getf s :name)) specs)))))
+        (when (every #'trust-project
                      (remove-duplicates (mapcar #'first installed) :test #'string=))
           (let ((servers (lsp-connect buffer :start t)))
             (dolist (other tuatara.buffer:*buffers*)

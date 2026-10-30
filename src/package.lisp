@@ -52,7 +52,7 @@ available unqualified, and the public API of TUATARA is used.")
            #:*rimu-directories-first* #:*rimu-ignored-extensions*
            #:*rimu-reuse-lists* #:*rimu-preview* #:*rimu-preview-delay* #:*rimu-preview-size* #:*rimu-follow-changes*
            ;; the directory of a buffer with no file, and what makes a project
-           #:*default-directory* #:*project-root-markers* #:*last-used-first* #:*complete-paths* #:*complete-paths-modes*
+           #:*default-directory* #:*project-root-markers* #:*compile-command* #:*compile-output-most* #:*last-used-first* #:*complete-paths* #:*complete-paths-modes*
            ;; Org: notes, the agenda, capture, code files and dynamic blocks
            #:*org-startup-indented* #:*org-bullets* #:*org-list-bullets* #:*org-checkbox-signs*
            #:*org-complete-checkboxes* #:*org-return-cycles-checkboxes* #:*org-return-cycles-todo* #:*org-log-checkboxes*

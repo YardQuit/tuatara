@@ -221,6 +221,8 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-file-local-variables)
     (install-snippets editor)
     (install-paths-in-text editor)
+    (install-next-place)
+    (install-compile)
     (install-state-lists)
     (install-indexes)
     (install-sorting)

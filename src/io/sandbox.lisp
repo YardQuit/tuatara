@@ -164,6 +164,67 @@ runs, waited for and closed, so that none is left behind."
       (ignore-errors (sb-ext:process-wait process))
       (ignore-errors (sb-ext:process-close process)))))
 
+;;; Programs in a session of their own
+
+(defun user-shell ()
+  "The shell a command typed is run with (a compile's, a terminal's): $SHELL, else /bin/sh."
+  (let ((shell (uiop:getenv "SHELL")))
+    (if (plusp (length shell)) shell "/bin/sh")))
+
+(defun session-command (command)
+  "COMMAND, a program's full name and its arguments, run in a session of its
+own with no terminal (setsid -w, which waits for it and gives its exit code):
+a program in it that asks for a password (sudo, ssh, gpg) cannot reach the
+terminal the editor runs in, and SIGNAL-SESSION reaches every program it
+starts. COMMAND as it is when setsid is not there."
+  (multiple-value-bind (program arguments) (setsid-command (first command) (rest command) "-w")
+    (cons program arguments)))
+
+(defun proc-text (path)
+  "The file at PATH under /proc read whole, each octet a character (a
+program's name there may be any octets); NIL when it cannot be read."
+  (ignore-errors (uiop:read-file-string path :external-format :latin-1)))
+
+(defun process-unreaped-p (process)
+  "True while PROCESS, a program started, has not ended and been reaped: its
+number is still its own, to be signalled."
+  (member (sb-ext:process-status process) '(:running :stopped)))
+
+(defun proc-numbers (path)
+  "The numbers in the file at PATH under /proc, read whole as text; NIL when it cannot be read."
+  (let ((text (proc-text path)))
+    (and text (mapcar #'parse-integer (remove "" (uiop:split-string text :separator '(#\Space #\Newline)) :test #'string=)))))
+
+(defun session-leader (process)
+  "The process SESSION-COMMAND's setsid, PROCESS, started in a session of its
+own: its first child, whose number is the session's; NIL when it has none,
+or once PROCESS has ended, its number no longer its own."
+  (when (process-unreaped-p process)
+    (let ((pid (sb-ext:process-pid process)))
+      (first (proc-numbers (format nil "/proc/~d/task/~d/children" pid pid))))))
+
+(defun session-processes (session)
+  "The numbers of the processes in the session numbered SESSION, from /proc."
+  (loop for entry in (ignore-errors (directory "/proc/*/" :resolve-symlinks nil))
+        for name = (car (last (pathname-directory entry)))
+        for stat = (and (every #'digit-char-p name) (proc-text (format nil "/proc/~a/stat" name)))
+        ;; pid (name) state ppid pgrp session ...: the fields after the name's closing parenthesis
+        for fields = (and stat (uiop:split-string (subseq stat (+ 2 (or (position #\) stat :from-end t) -2))) :separator " "))
+        when (and fields (> (length fields) 3) (eql session (ignore-errors (parse-integer (fourth fields)))))
+          collect (parse-integer name)))
+
+(defun signal-session (process session signal)
+  "Send SIGNAL to PROCESS, started by SESSION-COMMAND, with its group, while
+it has not ended (its number may be another's after), and to every process
+of the session numbered SESSION (SESSION-LEADER), when known. True when one
+of the session's processes was still there."
+  (when (process-unreaped-p process)
+    (ignore-errors (sb-ext:process-kill process signal :process-group)))
+  (let ((there (and session (session-processes session))))
+    (dolist (pid there)
+      (ignore-errors (sb-posix:kill pid signal)))
+    (and there t)))
+
 (defun program-output (command &key input (capture t) (seconds 1) wait (environment nil environment-p) directory
                                     (most *program-output-limit*))
   "Run COMMAND, a program's full name and its arguments (never through a

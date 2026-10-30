@@ -875,6 +875,17 @@
   ;; The sign lit while they are searched. Not set: "S"; nil: none.
   ;; (setf *searching-indicator* "")
 
+  ;;; Running a build or the tests (M-x compile)
+
+  ;; The command M-x compile offers before you have typed one, run from the
+  ;; project's root. Not set: "make -k ".
+  ;; (setf *compile-command* "cargo build ")
+
+  ;; The most of a command's output *compile* keeps; past it the output is
+  ;; counted, not kept, and the end says how much was left out. Not set: 256 MB;
+  ;; nil: all of it.
+  ;; (setf *compile-output-most* (* 1024 1024 1024))
+
   ;;; Language servers and formatting (C-c in code lists their keys)
 
   ;; Projects whose servers start by themselves (they run the project's code);

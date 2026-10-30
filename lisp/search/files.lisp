@@ -543,6 +543,29 @@ open or not. One thread at most waits for that moment, for every sign lit."
                (return)))))
        :name "tuatara sign fading"))))
 
+(defstruct (found-lines (:constructor make-found-lines (lines index)) (:copier nil))
+  "The lines a search of files found, as a list of places (STEP-PLACE): LINES,
+a vector of (PATH LINE OFFSET), in the order listed, and INDEX, the one gone
+to last."
+  (lines #() :type simple-vector :read-only t)
+  (index 0 :type fixnum))
+
+(setf (documentation 'found-lines-p 'function) "True when OBJECT is a FOUND-LINES."
+      (documentation 'found-lines-lines 'function) "The lines a search of files found, each (PATH LINE OFFSET)."
+      (documentation 'found-lines-index 'function) "The line of a FOUND-LINES gone to last.")
+
+(defmethod step-place ((places found-lines) direction)
+  "Visit the file of the line found after the one gone to last (DIRECTION 1),
+or before it (-1), at that line, as choosing it in the search does."
+  (let* ((lines (found-lines-lines places))
+         (next (+ (found-lines-index places) direction)))
+    (if (< -1 next (length lines))
+        (destructuring-bind (path line offset) (svref lines next)
+          (setf (found-lines-index places) next)
+          (show-file-line path line :offset offset)
+          (message "Line ~:d of ~:d found" (1+ next) (length lines)))
+        (message "No line found ~:[before~;after~] this one" (plusp direction)))))
+
 (defun search-files-as-read (root prompt &key (left-out-words "Searching the first ~:d files only") preview)
   "Ask with PROMPT for words to find in the files under ROOT, read in the
 background meanwhile (GATHER-FILE-TEXTS), or kept read already
@@ -689,15 +712,11 @@ opened safely (CALL-WITH-WINDOW-PREVIEW)."
                                                :source #'take :keymap *pattern-keymap*
                                                :preview (and preview show)))))))
                (when (consp chosen)
+                 ;; the lines found, for M-g n and M-g p to go on from the one chosen
+                 (let ((lines (map 'vector #'candidate-value found)))
+                   (use-places (make-found-lines lines (or (position chosen lines :test #'eq) 0))))
                  (destructuring-bind (path line offset) chosen
-                   (let ((buffer (visit-path path)))
-                     ;; the file's text, at the line chosen; a file shown otherwise (a PDF's pages) as it is
-                     (when (and (tuatara.buffer:buffer-file buffer)
-                                (eq buffer (tuatara.display:window-buffer (current-window))))
-                       (let ((start (tuatara.buffer:buffer-goto-line buffer (1- line))))
-                         (setf (tuatara.buffer:buffer-point buffer)
-                               (min (tuatara.buffer:buffer-size buffer) (+ start offset))))
-                       (tuatara.display:window-recenter (current-window)))))))
+                   (show-file-line path line :offset offset))))
           (when reading (stop-gathering reading))
           (when searching (stop-gathering searching)))))))
 
@@ -725,7 +744,8 @@ after three characters, the files read in the background as you type and
 searched as they are read; \\<pattern>\\[search-toggle-regex] switches to literal text, what
 is typed found as it stands, spaces and all, and back.
 \\<minibuffer>\\[minibuffer-done] visits the file at that line (the first, once all are
-read, unless you moved to one); with *preview-file-search*, the file of the line
+read, unless you moved to one), and then \\[next-place] and \\[previous-place] go to the
+lines listed after it and before it; with *preview-file-search*, the file of the line
 selected is shown meanwhile, at that line, opened safely. Hidden files and
 directories, backups, binary files and what .gitignore files exclude are left
 out; the access times of those read are not changed."

@@ -6,7 +6,7 @@
   (:use #:cl #:tuatara.command #:tuatara.modes #:tuatara.dates #:tuatara-user)
   ;; commands of these names here, kept apart from the functions of the init file's
   (:shadow #:count-words #:find-file #:point #:forward-char #:backward-char #:load-theme
-           #:switch-to-buffer #:insert)
+           #:switch-to-buffer #:insert #:compile)
   (:shadowing-import-from #:tuatara.display #:define-theme)
   (:import-from #:tuatara.display #:define-face #:set-face-attributes)
   (:import-from #:tuatara.io #:octets-integer #:octets-signed #:octets-words #:directory-name)

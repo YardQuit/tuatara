@@ -250,6 +250,9 @@ text added, on a ground of its own."
 (define-face :symbol-highlight "The name the cursor rests on, and its other uses the language server finds in the window: bold." :bold t)
 (define-face :inlay-hint "What a language server shows within the code, no text of it (a type, a parameter's name): faint." :dim t :italic t)
 (define-face :hint "Hints and debugging marked in text, such as the debug lines of a log." :fg :bright-black)
+(define-face :compile-error "The lines of a compile's output (\\[compile]) that say an error, and the line saying the command failed: as errors are marked in text." :inherit :error)
+(define-face :compile-warning "The lines of a compile's output (\\[compile]) that say a warning: as warnings are marked in text." :inherit :warning)
+(define-face :compile-note "The lines of a compile's output (\\[compile]) that say a note or give help: as information is marked in text." :inherit :info)
 
 ;;; CSV and other delimited data: one colour per column, cycling
 

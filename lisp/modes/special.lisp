@@ -164,11 +164,16 @@ face. O(size of the text)."
 (defun list-entry-at (&optional (buffer (current-buffer)) (position (tuatara.buffer:buffer-point buffer)))
   "The entry RENDER-PIECES was given for the line of BUFFER (the current
 buffer when not given) holding POSITION (point when not given), or NIL on a
-line that shows none (titles, a summary)."
-  (let ((entries (tuatara.buffer:buffer-local buffer 'list-entries))
-        (index (- (tuatara.buffer:buffer-line-number buffer position)
-                  (tuatara.buffer:buffer-local buffer 'list-first-line 0))))
-    (and (< -1 index (length entries)) (elt entries index))))
+line that shows none (titles, a summary). A buffer whose text grows as it
+comes, a compile's output, finds its entries itself: its :ENTRY-AT local, a
+function of the buffer and the position, gives the entry there."
+  (let ((finder (tuatara.buffer:buffer-local buffer :entry-at)))
+    (if finder
+        (funcall finder buffer position)
+        (let ((entries (tuatara.buffer:buffer-local buffer 'list-entries))
+              (index (- (tuatara.buffer:buffer-line-number buffer position)
+                        (tuatara.buffer:buffer-local buffer 'list-first-line 0))))
+          (and (< -1 index (length entries)) (elt entries index))))))
 
 (defun render-pieces (buffer pieces &key (point :keep) (entries nil entries-p) (first-line 0) keys (key nil key-p) refill
                                          redraw mark-key)

@@ -2,9 +2,11 @@
 ;;;; Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
 ;;;;
 ;;;; A project's language servers run its code (a build script, a plugin, a
-;;;; macro), and git runs the programs a repository names for itself (hooks,
-;;;; filters). Neither happens by itself for a project you have not said you
-;;;; trust: once asked and kept between sessions, or in *LSP-TRUSTED-PROJECTS*.
+;;;; macro), git runs the programs a repository names for itself (hooks,
+;;;; filters), and a build (M-x compile) runs its own code. None happens by
+;;;; itself for a project you have not said you trust: once asked and kept
+;;;; between sessions, or in *LSP-TRUSTED-PROJECTS*. One question, the same
+;;;; words whatever asks, says all a yes allows.
 ;;;; A project is known by where it really is, every link followed, so that a
 ;;;; link from a trusted folder to another lends it no trust.
 
@@ -12,8 +14,9 @@
 
 (defvar *lsp-trusted-projects* '()
   "Folders whose projects you trust to run their own programs: their language
-servers start by themselves as their files are opened, and git runs the
-programs they name for themselves (hooks, filters). Besides those trusted when
+servers start by themselves as their files are opened, git runs the
+programs they name for themselves (hooks, filters), and \\[compile] runs their
+build commands without asking. Besides those trusted when
 asked (kept between sessions). Names of folders, ~ for your home folder.")
 
 (defvar *lsp-trusted-kept* 500
@@ -56,14 +59,15 @@ of *LSP-TRUSTED-PROJECTS* (where they really are)."
              (some (lambda (trusted) (tuatara.io:path-within-p real trusted))
                    (trusted-setting-folders))))))
 
-(defun trust-project (root what)
+(defun trust-project (root)
   "True when the project at ROOT may run its own programs: trusted already,
-or asked now, WHAT saying what of it would run (\"its language servers
-rust-analyzer\"), and remembered when the answer is yes."
+or asked now, and remembered when the answer is yes. The question says all a
+yes allows, whatever asks it: its language servers starting by themselves,
+git running the programs it names, and its build commands (\\[compile])."
   (or (project-trusted-p root)
       (let ((real (real-folder root)))
         (when (and real
-                   (yes-or-no-p* (format nil "Trust ~a? ~a and git runs the programs it names (hooks, filters), from now on"
-                                         (abbreviated-path real) what)))
+                   (yes-or-no-p* (format nil "Trust ~a? From now on its language servers start by themselves and run its code, git runs the programs it names (hooks, filters), and its build commands run (M-x compile)"
+                                         (abbreviated-path real))))
           (state-list-put *lsp-trusted* (list real))
           t))))

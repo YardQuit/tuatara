@@ -8,7 +8,8 @@
 ;;;; the cursor as it rests on one (*LSP-DIAGNOSTICS-DISPLAY*), and listed by
 ;;;; M-x lsp-diagnostics across the bottom, with what servers find in files not
 ;;;; open; M-x lsp-next-diagnostic and
-;;;; M-x lsp-previous-diagnostic go from one to the next. Each moves with the
+;;;; M-x lsp-previous-diagnostic go from one to the next, and so do M-g n and
+;;;; M-g p once they have (the list of places in force). Each moves with the
 ;;;; text typed before the server has looked again.
 
 (in-package #:tuatara.defaults)
@@ -321,8 +322,34 @@ nothing else is said there. True when something was said."
 
 ;;; Moving and listing
 
+(defstruct (diagnostic-places (:constructor make-diagnostic-places (buffer)) (:copier nil))
+  "What the language servers found wrong in BUFFER, as a list of places
+\(STEP-PLACE): \\[next-place] and \\[previous-place] go from one to the next."
+  (buffer nil :read-only t))
+
+(setf (documentation 'diagnostic-places-p 'function) "True when OBJECT is a DIAGNOSTIC-PLACES."
+      (documentation 'diagnostic-places-buffer 'function) "The buffer whose diagnostics a DIAGNOSTIC-PLACES goes through.")
+
+(defmethod places-buffer ((places diagnostic-places))
+  "The buffer whose diagnostics PLACES goes through."
+  (diagnostic-places-buffer places))
+
+(defmethod step-place ((places diagnostic-places) direction)
+  "Go to the next place after point the servers found something wrong in the
+buffer (DIRECTION 1), or before it (-1), that buffer shown here, and say what."
+  (let ((buffer (diagnostic-places-buffer places)))
+    (if (live-buffer-p buffer)
+        (progn (unless (eq buffer (current-buffer)) (show-buffer buffer))
+               (goto-diagnostic (plusp direction)))
+        (message "~a has been killed" (tuatara.buffer:buffer-name buffer)))))
+
 (defun goto-diagnostic (forward)
-  "Go to the next of what the servers found after point, FORWARD, else before it, and say it."
+  "Go to the next of what the servers found after point, FORWARD, else before
+it, and say it; what they found in this buffer is the list of places in force
+then (USE-PLACES)."
+  (unless (let ((places *places-in-force*))
+            (and (diagnostic-places-p places) (eq (diagnostic-places-buffer places) (current-buffer))))
+    (use-places (make-diagnostic-places (current-buffer))))
   (let* ((all (buffer-diagnostics (current-buffer)))
          (here (point))
          (d (if forward
@@ -409,6 +436,7 @@ window always."
                  (progn (pop-to-buffer buffer :other t)
                         (goto at))))))
         ((live-buffer-p (car entry))
+         (use-places (make-diagnostic-places (car entry)))
          (pop-to-buffer (car entry) :other t)
          (goto (min (diagnostic-start (cdr entry)) (tuatara.buffer:buffer-size (car entry))))
          (message "~a" (diagnostic-words (cdr entry))))
