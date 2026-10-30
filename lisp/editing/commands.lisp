@@ -128,21 +128,66 @@ in the hex view, COUNT octets."
   (unless (hex-motion :octet count)
     (goto (cluster-forward (current-buffer) (point) count))))
 
+(defun edge-words (forward narrowed)
+  "What is said of a motion or a change that found nowhere to go: \"End of
+buffer\" when FORWARD, else \"Beginning of buffer\"; \"End of the part
+shown\" and \"Beginning of the part shown\" when NARROWED."
+  (if narrowed
+      (if forward "End of the part shown" "Beginning of the part shown")
+      (if forward "End of buffer" "Beginning of buffer")))
+
+(defun fail-play-at-edge (forward)
+  "While recorded keys play, fail the play (NOTE-COMMAND-FAILED): a motion
+found nowhere to go at the end of the current buffer when FORWARD, else at its
+start (of the part shown, when it is narrowed), which the echo area says
+\(EDGE-WORDS). Outside a play, nothing is said."
+  (when (keys-playing-p)
+    (message "~a" (edge-words forward (tuatara.buffer:buffer-narrowed-p (current-buffer))))
+    (note-command-failed)))
+
+(defun motion-place (by-line)
+  "Where the cursor is, as a motion compares it before and after: in the hex
+view, its octet; with BY-LINE, the start of its line, or of its row where long
+lines wrap at a word's edge; else point."
+  (let ((b (current-buffer)))
+    (cond ((hex-view-here-p) (tuatara.display:hex-point b))
+          ((not by-line) (point))
+          ((and (tuatara.display:soft-wrap-of b) (not (rectangle-live-p b)))
+           (tuatara.display:window-row-start (current-window) (point)))
+          (t (tuatara.buffer:buffer-line-start b (point))))))
+
+(declaim (inline call-failing-play-at-edge))
+(defun call-failing-play-at-edge (count by-line motion)
+  "Call MOTION, a function moving the cursor COUNT characters, or lines with
+BY-LINE (back when COUNT is negative). While recorded keys play, a motion that
+leaves the cursor where it was, or on the same line, has met the buffer's start
+or end and fails the play (FAIL-PLAY-AT-EDGE)."
+  (if (or (zerop count) (not (keys-playing-p)))
+      (funcall motion)
+      (let ((before (motion-place by-line)))
+        (funcall motion)
+        (when (= before (motion-place by-line))
+          (fail-play-at-edge (plusp count))))))
+
 (define-command forward-char ()
   "Move point forward one character (or the prefix argument's worth); in the
 hex view, one octet. In a rectangle, the corner at point moves on past the end
-of the line rather than on to the next."
-  (if (rectangle-live-p (current-buffer))
-      (rectangle-char-motion (prefix))
-      (char-motion (prefix))))
+of the line rather than on to the next. While recorded keys play, moving at
+the end of the buffer fails the play."
+  (let ((n (prefix)))
+    (if (rectangle-live-p (current-buffer))
+        (rectangle-char-motion n)
+        (call-failing-play-at-edge n nil (lambda () (char-motion n))))))
 
 (define-command backward-char ()
   "Move point backward one character (or the prefix argument's worth); in the
 hex view, one octet. In a rectangle, the corner at point stops at the start of
-the line."
-  (if (rectangle-live-p (current-buffer))
-      (rectangle-char-motion (- (prefix)))
-      (char-motion (- (prefix)))))
+the line. While recorded keys play, moving at the start of the buffer fails
+the play."
+  (let ((n (- (prefix))))
+    (if (rectangle-live-p (current-buffer))
+        (rectangle-char-motion n)
+        (call-failing-play-at-edge n nil (lambda () (char-motion n))))))
 
 (defun move-to-line-start ()
   "Move point to the start of its line; in the hex view, of its row of octets."
@@ -327,13 +372,17 @@ motions one after another."
 
 (define-command next-line ()
   "Move point down one line (or the prefix argument's worth), keeping the column when possible;
-where long lines wrap at a word's edge (\\[soft-wrap-mode]), one row."
-  (vertical-motion (prefix)))
+where long lines wrap at a word's edge (\\[soft-wrap-mode]), one row. While
+recorded keys play, moving down on the last line fails the play."
+  (let ((n (prefix)))
+    (call-failing-play-at-edge n t (lambda () (vertical-motion n)))))
 
 (define-command previous-line ()
   "Move point up one line (or the prefix argument's worth), keeping the column when possible;
-where long lines wrap at a word's edge (\\[soft-wrap-mode]), one row."
-  (vertical-motion (- (prefix))))
+where long lines wrap at a word's edge (\\[soft-wrap-mode]), one row. While
+recorded keys play, moving up on the first line fails the play."
+  (let ((n (- (prefix))))
+    (call-failing-play-at-edge n t (lambda () (vertical-motion n)))))
 
 (define-command forward-word ()
   "Move point to the end of the next word (or the prefix argument's worth,

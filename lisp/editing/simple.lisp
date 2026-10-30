@@ -306,8 +306,8 @@ negative; past either end, an error: \"End of buffer\" or
 \"Beginning of buffer\"."
   (let ((p position))
     (dotimes (i (abs count) p)
-      (cond ((and (plusp count) (>= p (tuatara.buffer:buffer-size buffer))) (error "End of buffer"))
-            ((and (minusp count) (<= p 0)) (error "Beginning of buffer")))
+      (cond ((and (plusp count) (>= p (tuatara.buffer:buffer-size buffer))) (error (edge-words t nil)))
+            ((and (minusp count) (<= p 0)) (error (edge-words nil nil))))
       (setf p (tuatara.buffer:buffer-forward-char buffer p (if (plusp count) 1 -1))))))
 
 (defun word-mover (buffer position count)
@@ -494,8 +494,8 @@ narrowed buffer, the lines of the part shown."
          (size (tuatara.buffer:buffer-end b))
          (bol (tuatara.buffer:within-narrowing b (tuatara.buffer:buffer-line-start b p)))
          (eol (tuatara.buffer:within-narrowing b (tuatara.buffer:buffer-line-end b p))))
-    (when (and (plusp n) (= p size) (= bol size)) (error (if narrowed "End of the part shown" "End of buffer")))
-    (when (and (minusp n) (= p low) (= eol low)) (error (if narrowed "Beginning of the part shown" "Beginning of buffer")))
+    (when (and (plusp n) (= p size) (= bol size)) (error (edge-words t narrowed)))
+    (when (and (minusp n) (= p low) (= eol low)) (error (edge-words nil narrowed)))
     (let* ((other (cond ((zerop n) eol)
                         ((minusp n)
                          ;; the start of the line -N-1 back, then back over the line end before it
