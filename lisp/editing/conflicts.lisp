@@ -231,30 +231,40 @@ Complexity: O(edits × the lines' length)."
 BATCH, take out the conflicts it touched that no longer stand, take in the
 whole conflicts in the lines it touched (undo bringing one back), and when a
 marker line is left there that no conflict holds, look the buffer through
-again whole once its edits pause. Complexity: O(log conflicts + the lines
-touched + the conflicts among them)."
+again whole once its edits pause. A batch taking in a whole text at once
+(the file read again, or such a change undone) takes out the conflicts that
+no longer stand and has the buffer looked through again whole once its
+edits pause, up to *CONFLICT-MARKERS-MAX-BYTES*. Complexity: O(log conflicts + the lines
+touched + the conflicts among them); for a whole text, O(conflicts)."
   (let ((rope (tuatara.buffer:buffer-text buffer))
         (version (tuatara.buffer:buffer-version buffer))
         (left-over nil))
-    (dolist (span (conflict-touched-spans buffer batch))
-      (destructuring-bind (start . end) span
-        (multiple-value-bind (from below) (conflict-index-range buffer start end)
-          (let* ((conflicts (conflict-list buffer))
-                 (broken (loop for i from from below below
-                               unless (conflict-places buffer (svref conflicts i)) collect (svref conflicts i))))
-            (when broken
-              (setf (tuatara.buffer:buffer-local buffer 'conflict-list)
-                    (remove-if (lambda (c) (member c broken)) conflicts)))))
-        (let ((markers '()))
-          (conflict-map-markers rope (lambda (kind at) (declare (ignore kind)) (push at markers)) :start start :end end)
-          (when markers
-            (conflict-put buffer version (conflict-find-all rope :start start :end end))
+    (if (tuatara.text:batch-swap batch)
+        ;; a whole text: those still standing kept, the rest found by a look through it all
+        (progn
+          (setf (tuatara.buffer:buffer-local buffer 'conflict-list)
+                (remove-if-not (lambda (conflict) (conflict-places buffer conflict))
+                               (conflict-list buffer)))
+          (setf left-over (<= (tuatara.buffer:buffer-size buffer) *conflict-markers-max-bytes*)))
+        (dolist (span (conflict-touched-spans buffer batch))
+          (destructuring-bind (start . end) span
             (multiple-value-bind (from below) (conflict-index-range buffer start end)
-              (let ((held (loop for i from from below below
-                                nconc (multiple-value-bind (a b c d) (conflict-places buffer (svref (conflict-list buffer) i))
-                                        (remove nil (list a b c d))))))
-                (when (set-difference markers held)
-                  (setf left-over t))))))))
+              (let* ((conflicts (conflict-list buffer))
+                     (broken (loop for i from from below below
+                                   unless (conflict-places buffer (svref conflicts i)) collect (svref conflicts i))))
+                (when broken
+                  (setf (tuatara.buffer:buffer-local buffer 'conflict-list)
+                        (remove-if (lambda (c) (member c broken)) conflicts)))))
+            (let ((markers '()))
+              (conflict-map-markers rope (lambda (kind at) (declare (ignore kind)) (push at markers)) :start start :end end)
+              (when markers
+                (conflict-put buffer version (conflict-find-all rope :start start :end end))
+                (multiple-value-bind (from below) (conflict-index-range buffer start end)
+                  (let ((held (loop for i from from below below
+                                    nconc (multiple-value-bind (a b c d) (conflict-places buffer (svref (conflict-list buffer) i))
+                                            (remove nil (list a b c d))))))
+                    (when (set-difference markers held)
+                      (setf left-over t)))))))))
     (when left-over (pushnew buffer *conflict-rescans*))
     (when (member buffer *conflict-rescans*)
       (setf (tuatara.buffer:buffer-local buffer 'conflict-edited-at) (get-internal-real-time)))

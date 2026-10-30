@@ -288,6 +288,38 @@ the frontend and the editor."
                               (list :until (lambda () (conflicts-of "a.txt")))))
       (true (conflicts-of "a.txt")))))
 
+(define-test (conflicts put-right-then-back-on-disk)
+  ;; a file whose conflicts were put right and saved, put back in conflict on disk (git
+  ;; checkout -m): read again, its conflicts are shown and C-c ^ n goes to them; undoing the
+  ;; reading takes them away; read again as a file changed on disk is, shown again
+  (with-test-directory (dir)
+    (let ((path (merge-pathnames "a.txt" dir))
+          (resolved nil) (back nil) (gone nil) (again nil) (first-at nil))
+      (flet ((buffer () (tuatara.buffer:find-buffer "a.txt")))
+        (conflict-session dir *two-conflicts*
+                          (list (list :until (lambda () (conflicts-of "a.txt")))
+                                "M-< C-c ^ n C-c ^ u" "C-c ^ u"
+                                (list :until (lambda () (setf resolved (not (conflicts-of "a.txt")))))
+                                "C-x C-s"
+                                (lambda () (put-file path *two-conflicts*))
+                                "M-x r e v e r t - b u f f e r RET"
+                                (list :until (lambda () (setf back (conflicts-of "a.txt"))))
+                                "M-< C-c ^ n"
+                                (lambda () (setf first-at (tuatara.buffer:buffer-point (buffer))))
+                                "C-/"
+                                (list :until (lambda () (setf gone (not (conflicts-of "a.txt")))))
+                                "C-x C-s"
+                                (lambda ()
+                                  (put-file path *two-conflicts*)
+                                  (tuatara.defaults::reload-buffer (buffer)))
+                                (list :until (lambda () (setf again (conflicts-of "a.txt"))))))
+        (true resolved)
+        (true back)
+        (is eql (search "<<<<<<<" *two-conflicts*) first-at)
+        (true gone)
+        (true again)
+        (is = 2 (conflict-count-of "a.txt"))))))
+
 (define-test (conflicts keys-over-other-keys)
   ;; a buffer with keys of its own keeps them under the conflicts' keys, and gets them back as
   ;; they were once its conflicts are put right
