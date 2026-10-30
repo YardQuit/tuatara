@@ -25,7 +25,7 @@ available unqualified, and the public API of TUATARA is used.")
            ;; working on buffers and their text; positions are characters counted from 1
            #:message #:current-buffer #:point #:point-min #:point-max #:goto-char #:insert
            #:delete-region #:erase-buffer #:buffer-substring #:buffer-string #:buffer-size
-           #:buffer-name #:buffer-file-name #:set-buffer #:with-current-buffer #:save-excursion
+           #:buffer-name #:buffer-file-name #:set-buffer #:with-current-buffer #:save-excursion #:save-restriction #:widen #:narrow-to-region
            #:get-buffer #:get-buffer-create #:buffer-list #:switch-to-buffer #:find-file
            #:bobp #:eobp #:bolp #:eolp #:char-after #:char-before
            #:line-beginning-position #:line-end-position #:forward-line #:forward-char #:backward-char

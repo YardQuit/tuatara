@@ -227,7 +227,8 @@ at the start of a line."
     nil))
 
 (defun tuatara-user:delete-region (start end)
-  "Delete the text between positions START and END."
+  "Delete the text between positions START and END. While the buffer is
+narrowed, both must be within the part shown, or an error is signalled."
   (let ((b (current-buffer)))
     (multiple-value-bind (low high) (range-at b start end)
       (tuatara.buffer:buffer-delete b low high)
@@ -241,7 +242,9 @@ at the start of a line."
     nil))
 
 (defun tuatara-user:buffer-substring (start end)
-  "Return the text between positions START and END as a string."
+  "Return the text between positions START and END as a string. While the
+buffer is narrowed, both must be within the part shown, or an error is
+signalled."
   (let ((b (current-buffer)))
     (multiple-value-bind (low high) (range-at b start end)
       (tuatara.buffer:buffer-string b :start low :end high))))
@@ -262,6 +265,42 @@ is narrowed (\\[narrow-to-region]) the part shown."
   (push-kill string)
   (send-to-clipboard string)
   string)
+
+;;; Narrowing
+
+(defun tuatara-user:narrow-to-region (start end)
+  "Show only the text between positions START and END of the current buffer,
+and keep Lisp and commands to it until the buffer is widened. While it is
+narrowed already, both must be within the part shown, or an error is
+signalled."
+  (let ((b (current-buffer)))
+    (multiple-value-bind (low high) (range-at b start end)
+      (tuatara.buffer:narrow-buffer b low high)
+      nil)))
+
+(defun tuatara-user:widen ()
+  "Make all the text of the current buffer reachable and shown again after it
+was narrowed, point staying where it is."
+  (tuatara.buffer:widen-buffer (current-buffer))
+  nil)
+
+(defun call-saving-restriction (function)
+  "Call FUNCTION, then give the buffer that was current before it the
+narrowing it had, followed through the edits made meanwhile, whether FUNCTION
+returned or left by an error."
+  (let* ((buffer (current-buffer))
+         (narrowing (tuatara.buffer:buffer-narrowing buffer)))
+    (unwind-protect (let ((*current-buffer* buffer)) (funcall function))
+      (when (live-buffer-p buffer)
+        (setf (tuatara.buffer:buffer-narrowing buffer) narrowing)
+        (tuatara.buffer:keep-within-narrowing buffer)))))
+
+(defmacro tuatara-user:save-restriction (&body body)
+  "Evaluate BODY, then narrow the buffer that was current before it as it was
+(or widen it, if it was not narrowed), however BODY ends, even by an error. The
+part it was narrowed to moves along with the text inserted or deleted in
+meanwhile. Return the value of BODY's last form."
+  `(call-saving-restriction (lambda () ,@body)))
 
 ;;; Buffers
 

@@ -165,7 +165,9 @@ it reads being the text as it was when it was taken."
   (tuatara.text:rope-bytes (buffer-text buffer)))
 
 (defun buffer-string (buffer &key (start 0) (end (buffer-size buffer)))
-  "BUFFER's text from byte START below END as a string."
+  "BUFFER's text from byte START below END as a string. The whole text by
+default, whether or not BUFFER is narrowed (BUFFER-START and BUFFER-END give
+the part shown)."
   (tuatara.text:rope-string (buffer-text buffer) :start start :end end))
 
 (defun buffer-slice (buffer start end)
@@ -600,7 +602,10 @@ copies none of them.")
   "Insert TEXT (a string, an octet vector or a rope) at byte offset BYTE of
 BUFFER and return the byte offset just after it. GROUP is passed to
 BUFFER-EDIT. A rope of more than *LARGE-EDIT-OCTETS* goes in as one splice
-(BUFFER-SPLICE), sharing its leaves."
+(BUFFER-SPLICE), sharing its leaves. Offsets are of the whole text, narrowed
+or not;
+while a command runs in a narrowed BUFFER an edit reaching outside the part shown
+(BUFFER-START, BUFFER-END) is refused, unless inside WITH-NARROWING-LIFTED."
   (check-position buffer byte)
   (if (and (tuatara.text:rope-p text) (> (tuatara.text:rope-bytes text) *large-edit-octets*))
       (buffer-splice buffer byte byte text)
@@ -699,7 +704,10 @@ offset just after ROPE; NIL, nothing done, for no SPANS."
 (defun buffer-delete (buffer start end &key group)
   "Delete the octets from START below END of BUFFER. Returns START. More than
 *LARGE-EDIT-OCTETS* go as one splice (BUFFER-SPLICE). With GROUP true, the
-deletion joins the newest undo group, as BUFFER-EDIT says."
+deletion joins the newest undo group, as BUFFER-EDIT says. Offsets are of the
+whole text, narrowed or not;
+while a command runs in a narrowed BUFFER an edit reaching outside the part shown
+(BUFFER-START, BUFFER-END) is refused, unless inside WITH-NARROWING-LIFTED."
   (check-position buffer start) (check-position buffer end)
   (when (< end start) (rotatef start end))
   (cond ((> (- end start) *large-edit-octets*) (buffer-splice buffer start end nil))
@@ -710,7 +718,9 @@ deletion joins the newest undo group, as BUFFER-EDIT says."
   "Replace the octets from START below END of BUFFER with TEXT (a string, an
 octet vector or a rope) and return the byte offset just after the new text.
 More than *LARGE-EDIT-OCTETS* going or coming as a rope make one splice
-(BUFFER-SPLICE)."
+(BUFFER-SPLICE). Offsets are of the whole text, narrowed or not;
+while a command runs in a narrowed BUFFER an edit reaching outside the part shown
+(BUFFER-START, BUFFER-END) is refused, unless inside WITH-NARROWING-LIFTED."
   (check-position buffer start) (check-position buffer end)
   (when (< end start) (rotatef start end))
   (if (or (> (- end start) *large-edit-octets*)

@@ -96,6 +96,126 @@ at its start, killed afterwards."
              (fail (tuatara-user:buffer-name "*no such buffer*")))
         (tuatara.buffer:kill-buffer other)))))
 
+(define-test (user-lisp narrowed-lisp-sees-the-part)
+  ;; "one two three four" on four lines: narrow to the second and third
+  (with-lisp-buffer ((format nil "one~%two~%three~%four~%"))
+    (tuatara-user:narrow-to-region 5 15)
+    (is = 5 (tuatara-user:point-min))
+    (is = 15 (tuatara-user:point-max))
+    (is string= (format nil "two~%three~%") (tuatara-user:buffer-string))
+    (is = 19 (tuatara-user:buffer-size) "size is of the whole text")
+    ;; moving: goto-char is taken to the part's edges
+    (tuatara-user:goto-char 1)
+    (is = 5 (tuatara-user:point))
+    (tuatara-user:goto-char 99)
+    (is = 15 (tuatara-user:point))
+    (true (tuatara-user:eobp))
+    (false (tuatara-user:char-after))
+    (tuatara-user:goto-char 5)
+    (true (tuatara-user:bobp))
+    (fail (tuatara-user:forward-char -1))
+    (is = 5 (tuatara-user:point))
+    (is = -1 (tuatara-user:forward-line -1))
+    (is = 5 (tuatara-user:line-beginning-position))
+    ;; reading outside is refused, inside is not
+    (is string= "two" (tuatara-user:buffer-substring 5 8))
+    (fail (tuatara-user:buffer-substring 1 8))
+    (fail (tuatara-user:buffer-substring 5 20))
+    (fail (tuatara-user:count-words 1 8))
+    (fail (tuatara-user:count-lines 1 8))
+    (fail (tuatara-user:line-number-at-pos 2))
+    ;; deleting outside is refused and changes nothing
+    (fail (tuatara-user:delete-region 1 8))
+    (fail (tuatara-user:delete-region 10 20))
+    (is string= (format nil "two~%three~%") (tuatara-user:buffer-string))
+    ;; inserting: point can not be outside, an insertion at the part's edge stays in it
+    (tuatara-user:goto-char 5)
+    (tuatara-user:insert "X")
+    (is string= (format nil "Xtwo~%three~%") (tuatara-user:buffer-string))
+    (is string= (format nil "one~%Xtwo~%three~%four~%")
+        (tuatara.buffer:buffer-string (tuatara-user:current-buffer)))
+    ;; widen shows it all
+    (is eq nil (tuatara-user:widen))
+    (is = 1 (tuatara-user:point-min))
+    (is = 21 (tuatara-user:point-max))))
+
+(define-test (user-lisp save-restriction)
+  (with-lisp-buffer ((format nil "one~%two~%three~%four~%"))
+    (tuatara-user:narrow-to-region 5 15)
+    ;; the body can widen and read outside; the narrowing is back after
+    (is string= "one"
+        (tuatara-user:save-restriction
+          (tuatara-user:widen)
+          (tuatara-user:buffer-substring 1 4)))
+    (is = 5 (tuatara-user:point-min))
+    (is = 15 (tuatara-user:point-max))
+    ;; and after an error inside
+    (fail (tuatara-user:save-restriction
+            (tuatara-user:widen)
+            (error "stop")))
+    (is = 5 (tuatara-user:point-min))
+    (is = 15 (tuatara-user:point-max))
+    ;; and after a non-local exit
+    (block out
+      (tuatara-user:save-restriction
+        (tuatara-user:widen)
+        (return-from out nil)))
+    (is = 15 (tuatara-user:point-max))
+    ;; text put in meanwhile before the part moves it along; in it, grows it
+    (tuatara-user:save-restriction
+      (tuatara-user:widen)
+      (tuatara-user:goto-char 1)
+      (tuatara-user:insert "AA")
+      (tuatara-user:goto-char 7)
+      (tuatara-user:insert "-"))
+    (is = 7 (tuatara-user:point-min))
+    (is = 18 (tuatara-user:point-max))
+    (is string= (format nil "-two~%three~%") (tuatara-user:buffer-string))
+    ;; a buffer that was not narrowed is widened again
+    (tuatara-user:widen)
+    (tuatara-user:save-restriction
+      (tuatara-user:narrow-to-region 1 4))
+    (is = 1 (tuatara-user:point-min))
+    (is = 23 (tuatara-user:point-max))
+    ;; nested: each puts back its own
+    (tuatara-user:narrow-to-region 3 10)
+    (tuatara-user:save-restriction
+      (tuatara-user:narrow-to-region 4 6)
+      (tuatara-user:save-restriction (tuatara-user:widen))
+      (is = 4 (tuatara-user:point-min)))
+    (is = 3 (tuatara-user:point-min))
+    (is = 10 (tuatara-user:point-max))
+    ;; narrowing inside a narrowing can not reach outside it
+    (fail (tuatara-user:narrow-to-region 1 6))))
+
+(define-test (user-lisp package-api-keeps-the-whole-buffer)
+  ;; the package API works on octet offsets of the whole text, narrowed or not
+  (with-lisp-buffer ((format nil "one~%two~%three~%"))
+    (tuatara-user:narrow-to-region 5 8)
+    (let ((b (tuatara-user:current-buffer)))
+      (tuatara.buffer:buffer-insert b 0 "API ")
+      (is string= (format nil "API one~%two~%three~%") (tuatara.buffer:buffer-string b))
+      (is string= "two" (tuatara-user:buffer-string)))))
+
+(define-test (user-lisp narrowed-lisp-at-the-keyboard)
+  (flet ((run (lisp)
+           (multiple-value-bind (f editor)
+               (narrowing-keys (format nil "C-n C-SPC C-n C-n C-x x n M-: ~a RET" (key-string lisp))
+                         :text (format nil "one~%two~%three~%four~%five~%"))
+             (declare (ignore f))
+             (session-text editor))))
+    ;; M-: (goto-char 1) lands at the part's start
+    (is string= (format nil "one~%Xtwo~%three~%four~%five~%")
+        (run "(progn (goto-char 1) (insert \"X\"))"))
+    ;; outside the part is refused and nothing changes
+    (is string= (format nil "one~%two~%three~%four~%five~%")
+        (run "(delete-region 1 3)"))
+    ;; save-restriction and widen reach outside, and the narrowing is back after
+    (is string= (format nil "ABC~%two~%three~%four~%five~%")
+        (run "(progn (save-restriction (widen) (goto-char 1) (delete-region 1 4) (insert \"ABC\")) (goto-char (point-min)))"))
+    (is string= (format nil "one~%Ztwo~%three~%four~%five~%")
+        (run "(progn (save-restriction (widen) (buffer-substring 1 4)) (goto-char 1) (insert \"Z\"))"))))
+
 (define-test (user-lisp at-the-keyboard)
   ;; M-: sees the same functions: (insert "x") goes in the buffer M-: was typed in
   (multiple-value-bind (f editor) (run-keys (format nil "M-: ~a RET" (key-string "(insert \"x\")")) :text "abc")
