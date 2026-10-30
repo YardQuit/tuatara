@@ -90,6 +90,10 @@ TEXTS with the mode line's sign of work, P, lit in :mode-line-sign."
   "Point of the editor's current buffer."
   (tuatara.buffer:buffer-point (tuatara.display:window-buffer (tuatara.command:editor-window editor))))
 
+(defun session-buffer (editor)
+  "The buffer of the editor's selected window."
+  (tuatara.display:window-buffer (tuatara.command:editor-window editor)))
+
 (define-test (command insert-and-normal)
   (multiple-value-bind (f editor) (run-keys "i h i SPC t h e r e C-g h h d")
     (is string= "hi thee" (session-text editor))

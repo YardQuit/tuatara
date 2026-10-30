@@ -637,10 +637,6 @@ second value."
   "Replace the current buffer's file on disk as another program would, for the tests."
   (replace-by-rename (tuatara.buffer:buffer-file (tuatara.command:current-buffer)) "theirs"))
 
-(defun session-buffer (editor)
-  "The buffer shown by EDITOR."
-  (tuatara.display:window-buffer (tuatara.command:editor-window editor)))
-
 (define-test (visiting-and-saving written-name-as-shown)
   ;; a file whose name holds a line break is named in "Wrote" as the mode line and lists name it
   (with-test-directory (dir)

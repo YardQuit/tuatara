@@ -21,10 +21,6 @@
   "True when a row of FRONTEND's last frame holds TEXT."
   (some (lambda (row) (search text row)) (last-screen-rows frontend)))
 
-(defun session-buffer (editor)
-  "The buffer of the editor's selected window."
-  (tuatara.display:window-buffer (tuatara.command:editor-window editor)))
-
 (defparameter *narrowing-session-seconds* 20
   "How long a session of the narrowing tests may take before it is taken to
 have hung: it is stopped then, and the test fails.")
