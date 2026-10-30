@@ -148,13 +148,16 @@ the file is in its project; the list of them shown again."
          (version (tuatara.text:json-integer params "version")))
     (when (and uri (null doc) (lsp-feature-allowed-p server "diagnostics"))
       (keep-file-diagnostics server uri (tuatara.text:json-items params "diagnostics")))
-    ;; found in a text older than the one last sent: the newer is on its way
-    (when (and doc (member server (lsp-doc-servers doc)) (lsp-feature-allowed-p server "diagnostics")
-               (or (null version) (= version (lsp-doc-version doc))))
-      (keep-diagnostics buffer (cons doc server) (diagnostic-entries doc server (tuatara.text:json-items params "diagnostics")))
-      ;; the server has looked at the text: its hints too, when none came before
-      (unless (tuatara.buffer:buffer-local buffer 'lsp-hints)
-        (lsp-ask-hints doc)))))
+    ;; in place of all it said of the file before, found in the text of VERSION (that last sent
+    ;; when it names none), and moved on with what was typed since it was sent
+    (when (and doc (member server (lsp-doc-servers doc)) (lsp-feature-allowed-p server "diagnostics"))
+      (let ((found-in (doc-as-sent doc version)))
+        (when found-in
+          (keep-diagnostics buffer (cons doc server) (diagnostic-entries found-in server (tuatara.text:json-items params "diagnostics")))
+          (note-heard doc server version)
+          ;; the server has looked at the text: its hints too, when none came before
+          (unless (tuatara.buffer:buffer-local buffer 'lsp-hints)
+            (lsp-ask-hints doc)))))))
 
 (defun diagnostic-entries (doc server items)
   "ITEMS, a vector of the Diagnostics SERVER gave for DOC, as DIAGNOSTICs;

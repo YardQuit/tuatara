@@ -32,11 +32,21 @@ and logs the answer's error code ("answered unknown CODE"); a text holding
 "editme" has it ask to change files in its project, outside it, on another
 machine and not there, logging whether that was done ("applied true"); a
 text holding "stall" has it stop reading what it is sent; asked to describe
-"die" it ends without answering, and "huge" it describes in 200,000 words."""
-import json, re, sys, time
+"die" it ends without answering, and "huge" it describes in 200,000 words.
+
+As a build run on each save does, it checks the file as saved for "oops", an
+error: a second after each save it says what that check found, with what it
+finds in the text it had when told of the save, under that text's number,
+and logs "checked"; it says them again with what it finds after each change,
+until the next check. What it says always carries the number of its text."""
+import json, re, sys, threading, time
+from urllib.parse import unquote, urlparse
 
 LOG = open(sys.argv[1], 'a') if len(sys.argv) > 1 else None
 TEXTS = {}
+VERSIONS = {}
+CHECKED = {}
+WRITING = threading.Lock()
 
 def read():
     length = None
@@ -53,19 +63,41 @@ def read():
 
 def send(message):
     body = json.dumps(message).encode()
-    sys.stdout.buffer.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
-    sys.stdout.buffer.flush()
+    with WRITING:
+        sys.stdout.buffer.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
+        sys.stdout.buffer.flush()
 
-def diagnostics(uri):
+def found_in(text, words):
     found = []
-    for n, line in enumerate(TEXTS[uri].encode().split(b'\n')):
-        for word, severity in ((b'bad', 1), (b'meh', 2)):
+    for n, line in enumerate(text.encode().split(b'\n')):
+        for word, severity in words:
             at = line.find(word)
             while at >= 0:
                 found.append({'range': {'start': {'line': n, 'character': at}, 'end': {'line': n, 'character': at + len(word)}},
                               'severity': severity, 'source': 'stand-in', 'message': f'{word.decode()} found'})
                 at = line.find(word, at + 1)
-    send({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {'uri': uri, 'diagnostics': found}})
+    return found
+
+def diagnostics(uri):
+    found = found_in(TEXTS[uri], ((b'bad', 1), (b'meh', 2))) + CHECKED.get(uri, [])
+    send({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics',
+          'params': {'uri': uri, 'version': VERSIONS.get(uri), 'diagnostics': found}})
+
+def check_saved(uri):
+    """What a check of the file as saved finds, said a second later of the text then."""
+    try:
+        saved = open(unquote(urlparse(uri).path), encoding='utf-8', errors='replace').read()
+    except OSError:
+        return
+    text, version = TEXTS.get(uri, ''), VERSIONS.get(uri)
+    def said():
+        CHECKED[uri] = found_in(saved, ((b'oops', 1),))
+        send({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics',
+              'params': {'uri': uri, 'version': version, 'diagnostics': found_in(text, ((b'bad', 1), (b'meh', 2))) + CHECKED[uri]}})
+        if LOG: LOG.write('checked\n'); LOG.flush()
+    timer = threading.Timer(1.0, said)
+    timer.daemon = True
+    timer.start()
 
 def lines(uri):
     return TEXTS[uri].encode().split(b'\n')
@@ -374,6 +406,7 @@ while True:
             LOG.write(f"applied {str(message.get('result', {}).get('applied')).lower()}\n"); LOG.flush()
     elif method == 'textDocument/didOpen':
         TEXTS[params['textDocument']['uri']] = params['textDocument']['text']
+        VERSIONS[params['textDocument']['uri']] = params['textDocument'].get('version')
         diagnostics(params['textDocument']['uri'])
         if 'editme' in TEXTS[params['textDocument']['uri']]:
             ask_to_edit(params['textDocument']['uri'])
@@ -400,7 +433,10 @@ while True:
             INDEXING.clear()
             progress('end')
         change(params['textDocument']['uri'], params['contentChanges'])
+        VERSIONS[params['textDocument']['uri']] = params['textDocument'].get('version')
         diagnostics(params['textDocument']['uri'])
+    elif method == 'textDocument/didSave':
+        check_saved(params['textDocument']['uri'])
     elif method in ANSWERS:
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': ANSWERS[method](params)})
     elif method == 'shutdown':

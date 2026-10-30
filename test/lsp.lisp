@@ -657,6 +657,141 @@ what marks a project; check-health saying which are installed.")
         (is equal '(1 3) kinds)
         (true (member "textDocument/diagnostic" (told log) :test #'string=))))))
 
+(defun found-on-save (buffer)
+  "What BUFFER's servers found in it, each (MESSAGE START), in order of place."
+  (mapcar (lambda (d) (list (tuatara.defaults::diagnostic-message d) (tuatara.defaults::diagnostic-start d)))
+          (tuatara.defaults::buffer-diagnostics buffer)))
+
+(define-test (lsp saved-at-once-checked-in-its-text)
+  ;; saved before the change was due to be sent: it is sent before the save is told, so what the
+  ;; check of the file saved finds is where the text has it, not a line below
+  (with-test-directory (dir)
+    (ensure-directories-exist (merge-pathnames ".git/" dir))
+    (let* ((log (merge-pathnames "told.log" dir))
+           (file (namestring (merge-pathnames "saved.py" dir)))
+           (tuatara.defaults::*modal-editing* nil)
+           (tuatara-user:*language-servers* (stand-in-server-setting log))
+           (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+           (tuatara-user:*lsp-sync-delay* 4)
+           (seen nil) (text nil))
+      (alexandria:write-string-into-file (format nil "a = 1~%b = oops~%") file)
+      (flet ((buffer () (tuatara.buffer:find-buffer "saved.py")))
+        (unwind-protect
+             (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
+                                      (list :until (lambda () (member "textDocument/didOpen" (told log) :test #'string=)))
+                                      "M-< n e w SPC = SPC 0 RET C-x C-s"
+                                      (list :until (lambda () (assoc "oops found" (found-on-save (buffer)) :test #'string=)))
+                                      (list :until (lambda () (setf seen (found-on-save (buffer))
+                                                                    text (tuatara.buffer:buffer-string (buffer))))))
+                                :width 100)
+          (tuatara.defaults::lsp-stop-all)
+          (when (buffer) (tuatara.buffer:kill-buffer (buffer))))
+        (is equal (list (list "oops found" (search "oops" text))) seen)
+        (let ((told (told log)))
+          (true (< (position "textDocument/didChange" told :test #'string=)
+                   (position "textDocument/didSave" told :test #'string=))
+                "~a" told))))))
+
+(define-test (lsp diagnostics-of-an-older-text-taken)
+  ;; what a server found in a text older than the one last sent is taken all the same, put
+  ;; where that text had it and moved on: the error of a line deleted and saved goes, though
+  ;; more was typed before the check of the save was said
+  (with-test-directory (dir)
+    (ensure-directories-exist (merge-pathnames ".git/" dir))
+    (let* ((log (merge-pathnames "told.log" dir))
+           (file (namestring (merge-pathnames "older.py" dir)))
+           (tuatara.defaults::*modal-editing* nil)
+           (tuatara-user:*language-servers* (stand-in-server-setting log))
+           (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+           (tuatara-user:*lsp-sync-delay* 0.1)
+           (first-seen nil) (seen :none))
+      (alexandria:write-string-into-file (format nil "a = 1~%b = oops~%") file)
+      (flet ((buffer () (tuatara.buffer:find-buffer "older.py"))
+             (checks () (count "checked" (told log) :test #'string=)))
+        (unwind-protect
+             (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
+                                      (list :until (lambda () (member "textDocument/didOpen" (told log) :test #'string=)))
+                                      "M-> c SPC = SPC 2 C-x C-s"
+                                      (list :until (lambda () (setf first-seen (found-on-save (buffer)))))
+                                      ;; the line deleted and saved at once, then more typed and sent
+                                      "M-< C-n C-a C-k C-k C-x C-s M-> z"
+                                      (list :until (lambda () (= 2 (checks))))
+                                      (list :wait 0.5)
+                                      (list :until (lambda () (setf seen (found-on-save (buffer))) t)))
+                                :width 100)
+          (tuatara.defaults::lsp-stop-all)
+          (when (buffer) (tuatara.buffer:kill-buffer (buffer))))
+        (is equal '("oops found") (mapcar #'first first-seen))
+        (is equal '() seen)))))
+
+(defun stand-in-server (name status &rest capabilities)
+  "A language server named NAME of STATUS offering CAPABILITIES, for tests that need none running."
+  (let ((server (tuatara.defaults::make-lsp-server name '("true") "/tmp/" 'python nil nil)))
+    (setf (tuatara.defaults::lsp-server-status server) status
+          (tuatara.defaults::lsp-server-capabilities server)
+          (apply #'tuatara.text:json-object (loop for c in capabilities append (list c t))))
+    server))
+
+(define-test (lsp texts-kept-until-spoken-of)
+  ;; the texts sent are kept, eight at most, until every server has said what it found in a
+  ;; newer one, but for that of the last save; none once the document is forgotten
+  (let* ((buffer (tuatara.buffer:make-buffer "kept.py"))
+         (kea (stand-in-server "kea" :ready)) (tui (stand-in-server "tui" :ready))
+         (doc (tuatara.defaults::make-lsp-doc buffer nil "file:///tmp/kept.py")))
+    (unwind-protect
+         (flet ((kept () (mapcar #'first (tuatara.defaults::lsp-doc-kept doc))))
+           (setf (tuatara.defaults::lsp-doc-servers doc) (list kea tui)
+                 (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc))
+           (dotimes (i 10)
+             (incf (tuatara.defaults::lsp-doc-version doc))
+             (tuatara.defaults::note-sent doc))
+           (is equal '(10 9 8 7 6 5 4 3) (kept))
+           ;; the text of the last save stays for a check of the file saved
+           (setf (tuatara.defaults::lsp-doc-saved doc) (find 4 (tuatara.defaults::lsp-doc-kept doc) :key #'first))
+           (tuatara.defaults::note-heard doc kea 9)
+           (is equal '(10 9 8 7 6 5 4 3) (kept) "one server has not spoken")
+           (is eql 9 (cdr (assoc kea (tuatara.defaults::lsp-doc-heard doc))))
+           (tuatara.defaults::note-heard doc tui 6)
+           (is equal '(10 9 8 7 6 4) (kept))
+           (true (tuatara.defaults::doc-as-sent doc 6))
+           (false (tuatara.defaults::doc-as-sent doc 5))
+           (true (tuatara.defaults::doc-as-sent doc 4))
+           ;; that of the last save too once eight newer have been sent
+           (dotimes (i 8)
+             (incf (tuatara.defaults::lsp-doc-version doc))
+             (tuatara.defaults::note-sent doc))
+           (is equal '(18 17 16 15 14 13 12 11) (kept))
+           (false (tuatara.defaults::lsp-doc-saved doc))
+           (tuatara.defaults::lsp-forget-document kea doc)
+           (tuatara.defaults::lsp-forget-document tui doc)
+           (is equal '() (kept)))
+      (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (lsp texts-let-go-where-none-will-speak)
+  ;; a server that gives what it finds only when asked keeps no texts; one that says it with
+  ;; no number has spoken of the text last sent
+  (let* ((buffer (tuatara.buffer:make-buffer "unspoken.py"))
+         (asked (stand-in-server "kea" :ready "diagnosticProvider"))
+         (tells (stand-in-server "tui" :ready))
+         (doc (tuatara.defaults::make-lsp-doc buffer nil "file:///tmp/unspoken.py")))
+    (unwind-protect
+         (flet ((kept () (mapcar #'first (tuatara.defaults::lsp-doc-kept doc)))
+                (send (n) (dotimes (i n)
+                            (incf (tuatara.defaults::lsp-doc-version doc))
+                            (tuatara.defaults::note-sent doc))))
+           (setf (tuatara.defaults::lsp-doc-servers doc) (list asked)
+                 (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc))
+           (send 5)
+           (is equal '(5) (kept) "asked only: none spoken of")
+           (setf (tuatara.defaults::lsp-doc-servers doc) (list asked tells))
+           (send 3)
+           (is equal '(8 7 6 5) (kept) "one that tells has not spoken")
+           (tuatara.defaults::note-heard doc tells nil)
+           (is eql 8 (cdr (assoc tells (tuatara.defaults::lsp-doc-heard doc))))
+           (is equal '(8) (kept)))
+      (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+      (tuatara.buffer:kill-buffer buffer))))
+
 (define-test (lsp completion-documentation-asked-for)
   ;; a server that leaves a completion's documentation until it is chosen: asked then, shown beside the list
   (with-test-directory (dir)

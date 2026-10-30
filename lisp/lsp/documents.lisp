@@ -48,8 +48,14 @@ with the buffer (the lines of no such code empty), and for each of the
 buffer's lines the octets left out at its start, NIL for a line not of it.
 ROPE and SKIPPED keep those as last sent, positions being reckoned with them;
 SENT, the buffer's text as last sent (a TUATARA.TEXT:VERSION). SERVERS, the
-servers it is open in; VERSION, the number of the text last sent."
-  buffer language uri shadow rope skipped sent (servers '()) (version 0))
+servers it is open in; VERSION, the number of the text last sent; KEPT, the
+texts last sent that a server may yet speak of, the newest first, each
+\(VERSION SENT ROPE SKIPPED) as they were then (DOC-AS-SENT); HEARD, the
+number of the newest text each server has said what it found in, each
+\(SERVER . VERSION); SAVED, the one of KEPT that was last sent when the
+file was last saved, kept while KEPT has room for what a check of the file
+saved says of it."
+  buffer language uri shadow rope skipped sent (servers '()) (version 0) (kept '()) (heard '()) (saved nil))
 
 (setf (documentation 'lsp-doc-p 'function) "True when OBJECT is an LSP-DOC.")
 
@@ -109,6 +115,67 @@ start of the text when POSITION is none; NIL when there is no such buffer."
   "DOC's buffer's text as it was last sent, which what its servers say is of."
   (let ((sent (lsp-doc-sent doc)))
     (if sent (tuatara.text:version-rope sent) (tuatara.buffer:buffer-text (lsp-doc-buffer doc)))))
+
+(defconstant +lsp-texts-kept+ 8
+  "The most texts sent to a language server that are kept for what it says
+of them (NOTE-SENT).")
+
+(defun note-sent (doc)
+  "Keep DOC's text as just sent, under its number, with those sent before it
+that a server may yet speak of, +LSP-TEXTS-KEPT+ at most: what a server says
+of one of them is put where it belongs."
+  (push (list (lsp-doc-version doc) (lsp-doc-sent doc) (lsp-doc-rope doc) (lsp-doc-skipped doc)) (lsp-doc-kept doc))
+  (let ((last (nthcdr (1- +lsp-texts-kept+) (lsp-doc-kept doc))))
+    (when last (setf (cdr last) nil)))
+  (unless (member (lsp-doc-saved doc) (lsp-doc-kept doc) :test #'eq)
+    (setf (lsp-doc-saved doc) nil))
+  (forget-unspoken doc))
+
+(defun note-heard (doc server version)
+  "Note that SERVER has said what it found in DOC's text numbered VERSION,
+the text last sent when it names none, and let go of the texts no server
+will speak of any more (FORGET-UNSPOKEN)."
+  (let ((version (or version (lsp-doc-version doc)))
+        (entry (assoc server (lsp-doc-heard doc))))
+    (if entry
+        (setf (cdr entry) (max (cdr entry) version))
+        (push (cons server version) (lsp-doc-heard doc))))
+  (forget-unspoken doc))
+
+(defun forget-unspoken (doc)
+  "Let go of DOC's texts sent before the oldest each of its servers may still
+speak of: for one that has said what it found, the newest it spoke of
+\(NOTE-HEARD); one whose findings are not shown, or that gives them only
+when asked (diagnosticProvider) and has said none unasked, speaks of none;
+all but the last sent go when none may. The text of the last save (SAVED)
+stays, which a check of the file saved may speak of later."
+  (let ((oldest (loop with oldest = (lsp-doc-version doc)
+                      for s in (lsp-doc-servers doc)
+                      for heard = (cdr (assoc s (lsp-doc-heard doc)))
+                      do (cond (heard (setf oldest (min oldest heard)))
+                               ((not (eq (lsp-server-status s) :ready)))
+                               ((not (lsp-feature-allowed-p s "diagnostics")))
+                               ((server-offers-p s "diagnosticProvider"))
+                               (t (return nil)))
+                      finally (return oldest))))
+    (when oldest
+      (setf (lsp-doc-kept doc) (delete-if (lambda (then) (and (< (first then) oldest) (not (eq then (lsp-doc-saved doc)))))
+                                          (lsp-doc-kept doc))))))
+
+(defun doc-as-sent (doc version)
+  "DOC as it was when its text numbered VERSION was sent, for reading
+positions a server gave of that text: DOC itself for the text last sent or
+for no VERSION; else a copy holding that text, when it is one of those
+kept (NOTE-SENT); NIL when it is not."
+  (if (or (null version) (eql version (lsp-doc-version doc)))
+      doc
+      (let ((then (find version (lsp-doc-kept doc) :key #'first)))
+        (when then
+          (destructuring-bind (version sent rope skipped) then
+            (let ((copy (make-lsp-doc (lsp-doc-buffer doc) (lsp-doc-language doc) (lsp-doc-uri doc) (lsp-doc-shadow doc))))
+              (setf (lsp-doc-version copy) version (lsp-doc-sent copy) sent
+                    (lsp-doc-rope copy) rope (lsp-doc-skipped copy) skipped)
+              copy))))))
 
 (defun doc-skipped (doc line)
   "The octets left out at the start of the 0-based LINE of DOC's buffer in
@@ -337,6 +404,7 @@ VERSION, the number of the text sent: an answer asked of it then still holds."
                                                                   "languageId" (language-server-id (lsp-doc-language doc))
                                                                   "version" (incf (lsp-doc-version doc))
                                                                   "text" (lsp-doc-text doc))))
+  (note-sent doc)
   (lsp-ask-all doc))
 
 (defun lsp-ask-all (doc)
@@ -372,13 +440,15 @@ change of its buffer noted to be sent (LSP-NOTE-CHANGE)."
     (when (eq (lsp-server-status server) :ready)
       (lsp-notify server "textDocument/didClose" (tuatara.text:json-object "textDocument" (doc-identifier doc))))
     (setf (lsp-doc-servers doc) (remove server (lsp-doc-servers doc))
+          (lsp-doc-heard doc) (remove server (lsp-doc-heard doc) :key #'car)
           (lsp-server-documents server) (remove doc (lsp-server-documents server)))
     (let ((buffer (lsp-doc-buffer doc)))
       (lsp-forget-diagnostics buffer doc)
       (forget-hints buffer doc)
       (keep-placed buffer 'lsp-tokens doc nil)
       (unless (lsp-doc-servers doc)
-        (setf (tuatara.buffer:buffer-local buffer 'lsp-docs) (remove doc (buffer-docs buffer))))
+        (setf (lsp-doc-kept doc) '() (lsp-doc-saved doc) nil
+              (tuatara.buffer:buffer-local buffer 'lsp-docs) (remove doc (buffer-docs buffer))))
       (unless (buffer-docs buffer)
         (setf (tuatara.buffer:buffer-change-functions buffer)
               (remove 'lsp-note-change (tuatara.buffer:buffer-change-functions buffer)))))))
@@ -467,6 +537,7 @@ language's blocks added or gone opened or closed (LSP-CONNECT)."
                 do (lsp-notify server "textDocument/didChange"
                                (tuatara.text:json-object "textDocument" (tuatara.text:json-object "uri" (lsp-doc-uri doc) "version" version)
                                                          "contentChanges" (or changed (vector (tuatara.text:json-object "text" text))))))
+          (note-sent doc)
           (lsp-ask-all doc))))))
 
 (defun lsp-in-step (buffer)
@@ -477,9 +548,13 @@ question about it is asked of the text as it is."
     (lsp-send-text buffer)))
 
 (defun lsp-saved (buffer)
-  "Tell the servers of BUFFER's whole text it was saved."
+  "Tell the servers of BUFFER's whole text it was saved, its changes not yet
+sent sent first: what they find in the file saved is of the text they have,
+which is kept for what they say of it while there is room (SAVED)."
+  (lsp-in-step buffer)
   (dolist (doc (buffer-docs buffer))
     (unless (lsp-doc-shadow doc)
+      (setf (lsp-doc-saved doc) (first (lsp-doc-kept doc)))
       (dolist (server (lsp-doc-servers doc))
         (when (eq (lsp-server-status server) :ready)
           (lsp-notify server "textDocument/didSave" (tuatara.text:json-object "textDocument" (doc-identifier doc))))))))
