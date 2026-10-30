@@ -424,3 +424,21 @@ that keys played until one fails end in a test whatever the code does."
       (declare (ignore f))
       (is = 0 (session-point editor))
       (true (search "until: Beginning of buffer" (session-message editor)) "~a" (session-message editor)))))
+
+(define-test (recorded-keys counter-set-kept-for-the-next-recording)
+  ;; the number set while nothing is recorded begins the next recording, however far plays
+  ;; in between took the counter
+  (is string= (format nil "1~%5~%6~%5~%")
+      (session-text (nth-value 1 (recorded-keys-session
+                                  (list "C-x ( M-x i n s e r t - k e y s - c o u n t e r RET C-n C-x )"
+                                        "M-x s e t - k e y s - c o u n t e r RET 5 RET"
+                                        "C-u 2 C-x e"
+                                        "C-x ( M-x i n s e r t - k e y s - c o u n t e r RET C-x )")
+                                  :text (format nil "~%~%~%~%")))))
+  ;; plays still go on from where the counter is, and a recording with none set begins at 1
+  (is string= (format nil "1~%2~%3~%1~%")
+      (session-text (nth-value 1 (recorded-keys-session
+                                  (list "C-x ( M-x i n s e r t - k e y s - c o u n t e r RET C-n C-x )"
+                                        "C-u 2 C-x e"
+                                        "C-x ( M-x i n s e r t - k e y s - c o u n t e r RET C-x )")
+                                  :text (format nil "~%~%~%~%"))))))

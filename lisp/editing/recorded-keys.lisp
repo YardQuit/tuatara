@@ -22,8 +22,9 @@ what \\[play-recorded-keys] plays.")
 the rest as it is (\\[set-keys-counter-format]).")
 
 (defvar *keys-counter-set* nil
-  "True when \\[set-keys-counter] set the counter while no keys were recorded:
-the next recording begins with it as it is.")
+  "The number \\[set-keys-counter] set while no keys were recorded, which the
+next recording begins with, whatever plays have inserted since; NIL when it
+has not been set since the last recording began.")
 
 ;;; Recording and playing
 
@@ -47,14 +48,14 @@ The quit key, \\`C-g' as standard, gives the recording up (in INSERT state
 the first \\`C-g' only leaves INSERT), the keys recorded before kept as they
 were. Text pasted is recorded too, and pasted again as it was; the mouse is
 not recorded. The counter \\[insert-keys-counter]
-inserts starts again at 1, unless \\[set-keys-counter] set it since the last
-recording began."
+inserts starts again at 1, or at the number \\[set-keys-counter] set since
+the last recording began, however far plays took it meanwhile."
   (cond ((keys-playing-p) (error "Keys are not recorded while recorded keys play"))
         ((keys-recording-p)
          (drop-command-keys)
          (message "Keys are being recorded already: \\[stop-recording-keys] ends the recording"))
-        (t (unless *keys-counter-set* (setf *keys-counter* 1))
-           (setf *keys-counter-set* nil)
+        (t (setf *keys-counter* (or *keys-counter-set* 1)
+                 *keys-counter-set* nil)
            (start-keys-recording)
            (message "Recording keys: \\[stop-recording-keys] ends the recording, ~a gives it up" (quit-key-text)))))
 
@@ -144,11 +145,12 @@ it."
 (define-command set-keys-counter ()
   "Set the number \\[insert-keys-counter] inserts next, asked for, or the
 prefix argument when one is given. Set while no keys are recorded, the next
-recording begins with it."
+recording begins with it, even when plays insert the counter before that
+recording begins."
   (setf *keys-counter* (or (prefix-argument)
                            (read-whole-number "Counter (~d): " *keys-counter*
                                               :valid (constantly t) :refusal "Not a whole number."))
-        *keys-counter-set* (not (keys-recording-p)))
+        *keys-counter-set* (and (not (keys-recording-p)) *keys-counter*))
   (message "The counter is ~d" *keys-counter*))
 
 (define-command set-keys-counter-format ()
