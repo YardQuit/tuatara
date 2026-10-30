@@ -220,3 +220,39 @@ over *NUMBER-WIDTH-MOST*."
                                (write-string (make-string pad :initial-element #\0) out)
                                (write-string digits out))
                         (t (write-string (make-string pad :initial-element #\Space) out) (write-string digits out)))))))))))
+
+(defun natural-string-lessp (a b)
+  "True when the string A comes before B in the order people sort names in:
+letters alphabetically whatever their case, and a run of digits by the number
+it writes: file2 before file10, Notes before notes.txt; two
+names alike but for case, or for zeros before a number, in the order their
+characters' codes give. Complexity: O(length of the shorter), nothing made."
+  (declare (type string a b) (optimize speed))
+  (let ((la (length a)) (lb (length b)) (i 0) (j 0))
+    (declare (type fixnum la lb i j))
+    (flet ((digit-p (c) (char<= #\0 c #\9)))
+      (declare (inline digit-p))
+      (loop
+        (cond ((>= i la) (return (if (< j lb) t (and (string< a b) t))))
+              ((>= j lb) (return nil)))
+        (let ((x (char a i)) (y (char b j)))
+          (if (and (digit-p x) (digit-p y))
+              ;; a number each: the one with fewer digits, its leading zeros left out, the smaller
+              (let ((sa i) (sb j) (ea i) (eb j))
+                (declare (type fixnum sa sb ea eb))
+                (loop while (and (< sa la) (char= #\0 (char a sa))) do (incf sa))
+                (loop while (and (< sb lb) (char= #\0 (char b sb))) do (incf sb))
+                (setf ea sa eb sb)
+                (loop while (and (< ea la) (digit-p (char a ea))) do (incf ea))
+                (loop while (and (< eb lb) (digit-p (char b eb))) do (incf eb))
+                (unless (= (- ea sa) (- eb sb))
+                  (return (< (- ea sa) (- eb sb))))
+                (loop for p of-type fixnum from sa below ea
+                      for q of-type fixnum from sb
+                      do (let ((d (char a p)) (e (char b q)))
+                           (unless (char= d e) (return-from natural-string-lessp (char< d e)))))
+                (setf i ea j eb))
+              (let ((fx (char-downcase x)) (fy (char-downcase y)))
+                (cond ((char< fx fy) (return t))
+                      ((char> fx fy) (return nil))
+                      (t (incf i) (incf j))))))))))

@@ -18,7 +18,7 @@
            #:editor-message #:editor-kill-ring #:editor-running #:editor-last-command #:editor-this-command
            #:editor-prefix-argument #:prefix-argument #:editor-mode-line-function #:editor-cursor-shape-function
            #:editor-post-command-functions #:buffer-directory #:editor-minibuffer-active #:editor-pending
-           #:editor-this-key #:editor-self-insert-command #:minibuffer-insert #:*minibuffer-question-keymap* #:editor-collecting-prefix #:universal-argument
+           #:editor-this-key #:editor-self-insert-command #:minibuffer-insert #:replace-minibuffer-text #:*minibuffer-question-keymap* #:editor-collecting-prefix #:universal-argument
            #:editor-fallback-keymap #:*mode-line-functions* #:*mode-line-lead-functions* #:*mode-line-name-functions* #:*startup-buffer-function* #:*line-highlight-functions*
            #:resize #:run-command #:handle-key #:default-mode-line
            #:candidate #:make-candidate #:candidate-string #:candidate-annotation #:candidate-value #:candidate-result

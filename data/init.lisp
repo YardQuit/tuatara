@@ -441,9 +441,11 @@
   ;; lists every key. Not set: nil: as many as the frame has room for.
   ;; (setf *key-hint-rows* 20)
 
-  ;; Files and folders asked for, the last used first. Not set: nil: in plain
-  ;; order.
-  ;; (setf *last-used-first* t)
+  ;; Path questions (C-x C-f and the rest) start in the folder of the path
+  ;; chosen last and list the entry chosen there last first, the others by
+  ;; name; nil: they start in the current buffer's folder, listed by name
+  ;; alone. Not set: t.
+  ;; (setf *last-used-first* nil)
 
   ;; Typing a slash in a path in the text (/etc/, ~/notes/, ./src/) lists
   ;; what that folder holds beside the cursor; TAB puts one in. Not set: t;

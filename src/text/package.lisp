@@ -46,4 +46,4 @@
    ;; strict UTF-8
    #:octets-decode #:octets-char-start-p #:octets-pending #:octets-string #:string-octets #:put-string-octets #:string-octet-length #:char-octet-length #:lenient-string #:raw-byte-code-p #:control-code-p #:crlf-octets-p #:line-text-end #:rope-line-text-end #:rope-crlf-p #:*openers* #:*closers* #:*opening-octets* #:*closing-octets* #:*bracket-octets* #:rope-invalid
    ;; octets and lines of plain strings
-   #:octets-latin-1 #:word-char-p #:name-char-p #:charset-text #:octets-hex #:*hex-pairs* #:string-line-start #:string-line-end #:one-line))
+   #:octets-latin-1 #:word-char-p #:name-char-p #:charset-text #:octets-hex #:*hex-pairs* #:string-line-start #:string-line-end #:one-line #:natural-string-lessp))

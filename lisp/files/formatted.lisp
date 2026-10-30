@@ -730,7 +730,7 @@ It begins with the header for its kind (*FORMATTED-FILE-TYPES*). A name is
 an identifier from the time, -- and the title in lower case with hyphens, __
 and the keywords joined by _. Nothing
 is written until the file is saved."
-  (multiple-value-bind (path new) (read-file-path "Find or create file: " :new-file t)
+  (multiple-value-bind (path new) (read-file-path "Find or create file: " :new-file t :note nil)
     (cond
       (new
        ;; the directory typed: a new file there, all of its name asked
@@ -742,7 +742,7 @@ is written until the file is saved."
        (let ((full (tuatara.io:native (tuatara.io:expand-path path))))
          (if (or (tuatara.io:path-stamp full)
                  (buffer-visiting full))
-             (visit-path full)
+             (note-visited-path full (visit-path full))
              (multiple-value-bind (directory name) (tuatara.io:path-folder-and-name full)
                (if (unencryptable-name-p name)
                    (message "~a is not made: only .gpg files can be encrypted" name)
@@ -752,6 +752,7 @@ is written until the file is saved."
                                          (name-extension name)
                                          (read-formatted-extension)))
                           (keywords (read-keywords "New file KEYWORDS: ")))
+                     (note-chosen-path full)
                      (make-formatted-file directory title keywords extension))))))))))
 
 (defvar *formatted-file-subdirectory-history* '()

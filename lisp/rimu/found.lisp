@@ -258,8 +258,8 @@ looks at each file again, keeping the order. Returns the list."
     buffer))
 
 (defun rimu-search-directory (prompt)
-  "A directory asked for with PROMPT, from the one the current buffer stands
-in, as a native name ending in /; NIL when none."
+  "A directory asked for with PROMPT, from where a question for a path starts
+\(PATH-QUESTION-START), as a native name ending in /; NIL when none."
   (let ((chosen (read-native-path prompt)))
     (and chosen (directory-name chosen :clean t))))
 

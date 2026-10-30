@@ -1208,15 +1208,16 @@ stays in its project."
   (rimu-update buffer :reread t :point-on point-on :fresh t))
 
 (define-command rimu ()
-  "List a directory with rimu, asked for with completion from the current
-buffer's: its name, then its entries a line each,
-directories first. \\<rimu-mode>\\[rimu-open] opens the entry on the line, a directory
-in the same list, \\[rimu-up] goes up; \\[rimu-toggle-details] shows the details
+  "List a folder with rimu, asked for with completion from the folder of the
+path chosen last in a question for a path, else the current buffer's: its
+name, then its entries a line each, folders first.
+\\<rimu-mode>\\[rimu-open] opens the entry on the line, a folder in the same
+list, \\[rimu-up] goes up; \\[rimu-toggle-details] shows the details
 (permissions, links, owner, group, size, time), \\[rimu-toggle-dotfiles] the names
 starting with a dot, \\[list-toggle-preview] the preview beside the list. See
 rimu-mode for its keys."
-  (let ((chosen (read-directory-path "Rimu (directory): ")))
-    (when chosen (rimu-show-directory chosen))))
+  (let ((chosen (read-directory-path "Rimu (directory): " :note nil)))
+    (when chosen (note-visited-path chosen (rimu-show-directory chosen) :directory t))))
 
 (define-command rimu-jump ()
   "List the directory of the current buffer's file with rimu, point on the

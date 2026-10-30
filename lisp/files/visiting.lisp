@@ -18,10 +18,16 @@ as \\[find-file] finds one, other than EXCEPT; NIL when there is none."
                   tuatara.buffer:*buffers*))))
 
 (defvar *last-used-first* t
-  "True for the questions that choose a file or a directory (\\[find-file], \\[rimu]
-and the rest) to list first, in each directory, what was chosen there lately
-(or something in it), the latest first, so that TAB goes the way last gone;
-NIL for the lists in their plain order, directories first and by name.")
+  "True for the questions that choose a file or a folder (\\[find-file], \\[rimu]
+and the rest) to start in the folder of the path chosen last in any of them,
+and to list first, in each folder, what was chosen there last (or something
+in it), TAB then going the way last gone; the others follow in order of
+name. As you type, what was chosen there lately comes first among the names
+matching as closely. NIL for questions starting in the folder of the current
+buffer, their lists in order of name alone; either way the folders come
+first, then the files, each in order of name, numbers by their value (file2
+before file10), case not counted. A path opened safely, or in one of
+*SAFE-DIRECTORIES*, is never remembered so.")
 
 (defvar *chosen-paths-kept* 1000
   "How many files and directories chosen in the questions for them are kept,
@@ -43,29 +49,107 @@ to offer again first.")
 sessions chose (STATE-LIST-ENTRIES)."
   (state-list-entries *chosen-paths*))
 
-(defun note-chosen-path (path)
-  "Remember PATH, a file or directory just chosen in a question for one, as the
-latest, so that its directory's list offers it first next time; kept in the
-state directory, with what other sessions chose (STATE-LIST-PUT)."
+(defun shown-safely-p (native)
+  "True when a buffer shows the file or folder NATIVE (a native name) opened
+safely: visiting it, or listing it with \\[rimu]."
+  (let ((folder (tuatara.io:slash-ended native)))
+    (some (lambda (buffer)
+            (and (tuatara.io:safe-visit-p buffer)
+                 (let ((file (tuatara.buffer:buffer-file buffer))
+                       (listed (tuatara.buffer:buffer-local buffer :directory)))
+                   (or (and file (equal (tuatara.io:native file) native))
+                       (and listed (equal (tuatara.io:slash-ended (tuatara.io:native listed)) folder))))))
+          tuatara.buffer:*buffers*)))
+
+(defun note-chosen-path (path &key directory safe)
+  "Remember PATH, a file or a folder (with DIRECTORY, a folder whatever its
+name ends in) just chosen in a question for one, as the latest: the next
+question starts in its folder and that folder's list offers it first; kept
+in the state folder, with what other sessions chose (STATE-LIST-PUT).
+Nothing is remembered of a path opened safely (SAFE, or a buffer showing it
+so: SHOWN-SAFELY-P) or in one of *SAFE-DIRECTORIES*: a later question
+neither starts there nor offers it."
   (let ((native (ignore-errors (tuatara.io:native (tuatara.io:expand-path path)))))
-    (when (and native (plusp (length native)))
-      (state-list-put *chosen-paths* (list native)))))
+    (when (and native (plusp (length native)) (not safe)
+               (not (safe-directory-of native)) (not (shown-safely-p native)))
+      (state-list-put *chosen-paths*
+                      (list (if directory (tuatara.io:slash-ended native) native))))))
+
+(defun note-visited-path (path buffer &key directory)
+  "Remember PATH, just chosen and shown in BUFFER (NIL when it could not be
+shown), as NOTE-CHOSEN-PATH does, unless BUFFER shows it opened safely."
+  (when buffer
+    (note-chosen-path path :directory directory :safe (tuatara.io:safe-visit-p buffer))))
+
+(defun named-safe-p (native)
+  "True when NATIVE, a path remembered, is in one of *SAFE-DIRECTORIES* by the
+names as written (PATH-WITHIN-P), or a buffer shows it opened safely; true
+for every path when *SAFE-DIRECTORIES* cannot be read. The disk is not asked."
+  (or (shown-safely-p native)
+      (handler-case (some (lambda (directory)
+                            (tuatara.io:path-within-p native (tuatara.io:native (tuatara.io:expand-path directory))))
+                          (safe-directories))
+        (error () t))))
+
+(defun last-chosen-native-folder ()
+  "The folder, a native name ending in /, of the latest path chosen in a
+question for a file or a folder (CHOSEN-PATHS) that is not of evidence
+\(NAMED-SAFE-P): the path itself when it is a folder (its name ends in /),
+else the folder it is in; NIL when there is none or *LAST-USED-FIRST* is NIL."
+  (let ((last (and *last-used-first* (find-if-not #'named-safe-p (chosen-paths)))))
+    (and last (if (directory-input-p last) last (tuatara.io:parent-path last)))))
+
+(defun last-chosen-folder ()
+  "The folder of the path chosen last in a question for a file or a folder
+\(LAST-CHOSEN-NATIVE-FOLDER) as the questions show it (~/notes/), or NIL.
+The disk is not asked: a folder no longer there is listed as empty, the
+question's listing finding it so."
+  (let ((folder (last-chosen-native-folder)))
+    (and folder (abbreviated-path folder))))
+
+(defvar *slow-listings* '()
+  "The folders whose listing in a question for a path had not ended within
+*FILE-LISTING-WAIT*, still going (a drive that does not answer): each
+\(FOLDER . GATHERING), FOLDER a native name ending in /. One is let go of
+once its listing ends.")
+
+(defun slow-listing-p (folder)
+  "True while the listing of FOLDER (a native name) begun in an earlier
+question has not ended (*SLOW-LISTINGS*); those ended are let go of."
+  (setf *slow-listings* (remove-if (lambda (entry)
+                                     (declare (notinline gathering-done))
+                                     (gathering-done (cdr entry)))
+                                   *slow-listings*))
+  (and (assoc (tuatara.io:slash-ended folder) *slow-listings* :test #'string=) t))
+
+(defun path-question-start ()
+  "The text a question for a path starts with when it is given none: the
+folder chosen last (LAST-CHOSEN-FOLDER), else, or while that folder's
+listing has not ended (SLOW-LISTING-P), that of the current buffer
+\(BUFFER-DIRECTORY)."
+  (let ((folder (last-chosen-native-folder)))
+    (if (and folder (not (slow-listing-p folder)))
+        (abbreviated-path folder)
+        (abbreviated-path (buffer-directory (current-buffer))))))
 
 (defun chosen-ranks (directory chosen)
   "How lately each entry of DIRECTORY (a native name ending in /) was chosen,
 or something in it, by CHOSEN, the paths chosen lately (CHOSEN-PATHS): a
-table from its name, a directory's with a slash after it, to its place among
-them, 0 the latest."
+table from its name, a folder's with a slash after it, to its place among
+them, 0 the latest; those in one of *SAFE-DIRECTORIES* left out
+\(SAFE-DIRECTORY-OF, which may ask the disk: called where the folder is read)."
   (let ((ranks (make-hash-table :test 'equal)) (length (length directory)))
     (loop for path in chosen
           for place from 0
           when (and (> (length path) length) (string= directory path :end2 length))
             do (let* ((slash (position #\/ path :start length))
                       (name (if slash (subseq path length (1+ slash)) (subseq path length))))
-                 (unless (gethash name ranks) (setf (gethash name ranks) place))
-                 ;; a directory chosen itself, its name ending in / or not
-                 (unless (or slash (gethash (concatenate 'string name "/") ranks))
-                   (setf (gethash (concatenate 'string name "/") ranks) place))))
+                 ;; what is in one of *safe-directories* is offered first never
+                 (unless (safe-directory-of path)
+                   (unless (gethash name ranks) (setf (gethash name ranks) place))
+                   ;; a directory chosen itself, its name ending in / or not
+                   (unless (or slash (gethash (concatenate 'string name "/") ranks))
+                     (setf (gethash (concatenate 'string name "/") ranks) place)))))
     ranks))
 
 (defvar *file-candidates-kept* nil
@@ -111,21 +195,35 @@ is one of its own (READ-PATH)."
           candidates))))
 
 (defun file-candidates-of (expanded chosen)
-  "The completion candidates of the entries of the directory EXPANDED, as
-FILE-CANDIDATES gives them, ranked by CHOSEN, the paths chosen lately."
-  (let* ((entries (tuatara.io:directory-entries expanded :stamps t))
+  "The completion candidates of the entries of the folder EXPANDED, as
+FILE-CANDIDATES gives them, ranked by CHOSEN, the paths chosen lately: the one
+chosen there last first, then the folders and then the files, each in order
+of name (NATURAL-STRING-LESSP)."
+  (let* ((entries (tuatara.io:directory-entries expanded :stamps t
+                                                         :order #'tuatara.text:natural-string-lessp))
          (ranks (chosen-ranks (tuatara.io:slash-ended (tuatara.io:native expanded)) chosen))
          (now (get-universal-time)))
     (flet ((fields (kind stamp)
              (if stamp (stamp-fields stamp now) (list (tuatara.io:kind-words kind)))))
-      (append
-       (loop for (name kind nil nil stamp) in entries
-             when (eq kind :directory)
-               collect (let ((shown (concatenate 'string name "/")))
-                         (make-candidate shown :annotation (fields kind stamp) :rank (gethash shown ranks))))
-       (loop for (name kind nil nil stamp) in entries
-             unless (eq kind :directory)
-               collect (make-candidate name :annotation (fields kind stamp) :rank (gethash name ranks)))))))
+      (last-chosen-first
+       (append
+        (loop for (name kind nil nil stamp) in entries
+              when (eq kind :directory)
+                collect (let ((shown (concatenate 'string name "/")))
+                          (make-candidate shown :annotation (fields kind stamp) :rank (gethash shown ranks))))
+        (loop for (name kind nil nil stamp) in entries
+              unless (eq kind :directory)
+                collect (make-candidate name :annotation (fields kind stamp) :rank (gethash name ranks))))))))
+
+(defun last-chosen-first (candidates)
+  "CANDIDATES, a fresh list, with the one chosen last (the lowest rank)
+moved to the front, the others in their order."
+  (let ((latest nil))
+    (dolist (c candidates)
+      (let ((rank (candidate-rank c)))
+        (when (and rank (or (null latest) (< rank (candidate-rank latest))))
+          (setf latest c))))
+    (if latest (cons latest (delete latest candidates :count 1 :test #'eq)) candidates)))
 
 (defun input-directory (input)
   "The directory part of INPUT, a path being typed: up to its last slash."
@@ -163,15 +261,41 @@ directory; else the first of CANDIDATES."
   "True when PATH, a path typed or chosen, names a directory: it ends in /."
   (and (plusp (length path)) (char= #\/ (char path (1- (length path))))))
 
-(defun read-path (prompt &key (initial (abbreviated-path (buffer-directory (current-buffer)))) directories preview)
+(defvar *path-question-keymap* (make-keymap :name "path-question")
+  "The keys of a question for a path (READ-PATH), beside the minibuffer's:
+\\<path-question>\\[minibuffer-home-directory] starts the path again from your
+home folder.")
+
+(defvar *asking-for-path* nil
+  "True while a question for a path asks (READ-PATH).")
+
+(defun asking-for-path-p (buffer)
+  "True while a question for a file or a folder asks, whatever BUFFER is."
+  (declare (ignore buffer))
+  (and *asking-for-path* *editor* (editor-minibuffer-active *editor*) t))
+
+(define-command minibuffer-home-directory ()
+  "In a question for a file or a folder, put ~/, your home folder, in place
+of the path typed, listing what is in it."
+  (replace-minibuffer-text 0 (length (editor-minibuffer-text *editor*)) "~/"))
+
+(commands-for-buffers 'asking-for-path-p "a question for a file or a folder" 'minibuffer-home-directory)
+
+(define-keys *path-question-keymap* '(("S-TAB" minibuffer-home-directory)))
+
+(defun read-path (prompt &key (initial (path-question-start)) directories preview)
   "Ask with PROMPT for a path, as READ-FILE-PATH and READ-DIRECTORY-PATH do:
-from INITIAL (the directory the current buffer stands in, as standard), its
-name completed against the entries of the directory being
-typed (FILE-CANDIDATES; with DIRECTORIES, its directories only), matched by
-any part of the name, those chosen lately first. A / or ~/ typed after it
-starts the path again (SUBSTITUTE-FILE-INPUT). The line typed is selected
-while it names a directory (ends in /), else the first entry matching; a
-directory chosen is gone into, its entries offered in turn. With PREVIEW, a
+from INITIAL (as standard the folder of the path chosen last in such a
+question, else the folder the current buffer stands in:
+PATH-QUESTION-START), its name completed against the entries of the folder
+being typed (FILE-CANDIDATES; with DIRECTORIES, its folders only), matched
+by any part of the name. While nothing is typed after the folder, the entry
+chosen there last comes first, the others in order of name; as you type,
+the best matches first, those chosen lately before others. A / or ~/ typed
+after it starts the path again (SUBSTITUTE-FILE-INPUT), and
+\\<path-question>\\[minibuffer-home-directory] starts it from ~/. The line
+typed is selected while it names a folder (ends in /), else the first entry
+matching; a folder chosen is gone into, its entries offered in turn. With PREVIEW, a
 function as CALL-WITH-WINDOW-PREVIEW gives, the file selected is shown
 meanwhile. Returns the path, and as a second value true when it is the line
 typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
@@ -200,39 +324,48 @@ typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
                                      (when found (setf listed (first found)))
                                      (and found t)))
                                  (list-directory (path)
-                                   (let ((expanded (input-directory-path path))
-                                         (chosen (and *last-used-first* (chosen-paths))))
-                                     (setf listed '()
-                                           listing (start-gathering "tuatara file names"
-                                                                    (lambda (give cancel)
-                                                                      (declare (ignore cancel))
-                                                                      (let ((all (directory-candidates expanded chosen)))
-                                                                        (funcall give (if directories
-                                                                                          (remove-if-not (lambda (c) (directory-input-p (candidate-string c))) all)
-                                                                                          all))))))
-                                     ;; a directory read quickly is shown at once, as though read here
-                                     (wait-for-gathering listing *file-listing-wait*)
-                                     (take-listed))))
+                                   (let* ((expanded (input-directory-path path))
+                                          (folder (tuatara.io:slash-ended (tuatara.io:native expanded)))
+                                          (chosen (and *last-used-first* (chosen-paths))))
+                                     (setf listed '() listing nil)
+                                     ;; a folder whose listing has not ended yet is not listed again
+                                     (unless (slow-listing-p folder)
+                                       (setf listing (start-gathering
+                                                      "tuatara file names"
+                                                      (lambda (give cancel)
+                                                        (declare (ignore cancel))
+                                                        (let ((all (directory-candidates expanded chosen)))
+                                                          (funcall give (if directories
+                                                                            (remove-if-not (lambda (c) (directory-input-p (candidate-string c)))
+                                                                                           all)
+                                                                            all))))))
+                                       ;; a folder read quickly is shown at once, as though read here
+                                       (unless (wait-for-gathering listing *file-listing-wait*)
+                                         (push (cons folder listing) *slow-listings*))
+                                       (take-listed)))))
                           (unwind-protect
-                               (completing-read prompt
-                                                (lambda (typed)
-                                                  ;; the directory is listed again only when its part of the input changes
-                                                  (setf input typed)
-                                                  (let* ((path (substitute-file-input typed))
-                                                         (directory (input-directory path)))
-                                                    (unless (equal directory listed-for)
-                                                      (when listing (stop-gathering listing))
-                                                      (setf listed-for directory)
-                                                      (list-directory path))
-                                                    listed))
-                                                :initial dir
-                                                :select #'input-when-directory
-                                                :reselect t
-                                                :preview (and preview show)
-                                                :source (lambda ()
-                                                          (if listing
-                                                              (values (take-listed) (and listing t) (length listed))
-                                                              (values nil nil (length listed)))))
+                               (let ((*asking-for-path* t))
+                                (completing-read prompt
+                                                 (lambda (typed)
+                                                   ;; the directory is listed again only when its part of the input changes
+                                                   (setf input typed)
+                                                   (let* ((path (substitute-file-input typed))
+                                                          (directory (input-directory path)))
+                                                     (unless (equal directory listed-for)
+                                                       (when listing (stop-gathering listing))
+                                                       (setf listed-for directory)
+                                                       (list-directory path))
+                                                     listed))
+                                                 :initial dir
+                                                 :keymap *path-question-keymap*
+                                                 :keep-order :until-typed
+                                                 :select #'input-when-directory
+                                                 :reselect t
+                                                 :preview (and preview show)
+                                                 :source (lambda ()
+                                                           (if listing
+                                                               (values (take-listed) (and listing t) (length listed))
+                                                               (values nil nil (length listed))))))
                             (when listing (stop-gathering listing)))))
                 ;; the line typed taken (RET on it, or C-j), not a candidate
                 (typed (and (stringp chosen) (string= chosen input)))
@@ -241,11 +374,13 @@ typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
                (setf dir path)
                (return (values path typed)))))))))
 
-(defun read-file-path (prompt &key new-file preview)
-  "Ask for a file with PROMPT, completing its name against the directory being
-typed, from the directory the current buffer stands in (BUFFER-DIRECTORY):
-that of its file, the one it lists, or *DEFAULT-DIRECTORY*, your home
-directory written ~ (READ-PATH). A / or ~/ typed after it starts the path
+(defun read-file-path (prompt &key new-file preview (note t))
+  "Ask for a file with PROMPT, completing its name against the folder being
+typed, from the folder of the path chosen last in such a question, else the
+folder the current buffer stands in (BUFFER-DIRECTORY): that of its file,
+the one it lists, or *DEFAULT-DIRECTORY*, your home folder written ~
+\(READ-PATH, PATH-QUESTION-START). The file chosen is remembered as the
+latest (NOTE-CHOSEN-PATH) unless NOTE is NIL. A / or ~/ typed after it starts the path
 again (SUBSTITUTE-FILE-INPUT). The first file selected, or the line typed when
 it names a directory or nothing matches; a directory candidate descends into
 it. Returns the path typed or chosen, or NIL (said) when nothing was named; a
@@ -258,12 +393,13 @@ shown meanwhile (CALL-WITH-WINDOW-PREVIEW)."
                (values "./" :new)
                (progn (message "No file name") nil)))
           ((directory-input-p path) (values path (if new-file :new :directory)))
-          (t (note-chosen-path path) path))))
+          (t (when note (note-chosen-path path)) path))))
 
-(defun read-directory-path (prompt &key (initial (abbreviated-path (buffer-directory (current-buffer)))))
-  "Ask for a directory with PROMPT, from INITIAL (the directory the current
-buffer stands in, as standard), as READ-FILE-PATH asks for a file: the
-directories in the one being typed offered, matched by any part of the name,
+(defun read-directory-path (prompt &key (initial (path-question-start)) (note t))
+  "Ask for a folder with PROMPT, from INITIAL (as standard the folder of the
+path chosen last in such a question, else the folder the current buffer
+stands in: PATH-QUESTION-START), as READ-FILE-PATH asks for a file: the
+folders in the one being typed offered, matched by any part of the name,
 those chosen lately first; a / or ~/ typed after it starts the path again.
 The line typed is selected while it names a directory (ends in /), else the
 first directory matching. \\<minibuffer>\\[minibuffer-done] or
@@ -271,20 +407,25 @@ first directory matching. \\<minibuffer>\\[minibuffer-done] or
 line typed, one step above the first (\\[minibuffer-previous-candidate]), takes
 it, as \\[minibuffer-submit-input] does at any time: a directory, or a new
 name. Returns what was taken, ./ when nothing was typed, remembered as
-chosen lately."
+chosen lately (NOTE-CHOSEN-PATH) unless NOTE is NIL: a caller that shows the
+folder then remembers it itself, once shown (NOTE-VISITED-PATH)."
   (let* ((path (read-path prompt :initial initial :directories t))
          (path (if (zerop (length path)) "./" path)))
-    (note-chosen-path path)
+    (when note (note-chosen-path path :directory t))
     path))
 
-(defun read-native-path (prompt &key initial (kind :directory))
+(defun read-native-path (prompt &key initial (kind :directory) (note t))
   "Ask with PROMPT for a path of KIND, :DIRECTORY (or a new name) as
 READ-DIRECTORY-PATH asks, :FILE as READ-FILE-PATH asks, or :ANY as READ-PATH
 asks, from INITIAL where it takes one, and return what was taken as a whole
-native name, ~ and the like expanded; NIL when nothing was typed."
+native name, ~ and the like expanded; NIL when nothing was typed. A folder
+or file taken is remembered as chosen lately unless NOTE is NIL, for a
+caller that opens it and remembers it once opened (NOTE-VISITED-PATH)."
   (let ((typed (ecase kind
-                 (:directory (if initial (read-directory-path prompt :initial initial) (read-directory-path prompt)))
-                 (:file (read-file-path prompt))
+                 (:directory (if initial
+                                 (read-directory-path prompt :initial initial :note note)
+                                 (read-directory-path prompt :note note)))
+                 (:file (read-file-path prompt :note note))
                  (:any (if initial (read-path prompt :initial initial) (read-path prompt))))))
     (and typed (plusp (length typed)) (tuatara.io:native (tuatara.io:expand-path typed)))))
 
@@ -632,20 +773,27 @@ or one another program renamed."
   "Ask for a file with PROMPT (READ-FILE-PATH) and show it with SHOW, a
 function of the buffer (in the selected window by default): visited as usual,
 or with SAFE safely (VISIT-PATH), a folder listed so. A name that does not
-exist becomes a new file, except for a safe visit."
-  (multiple-value-bind (path kind) (read-file-path prompt :preview *preview-files*)
+exist becomes a new file, except for a safe visit. The path is remembered
+as the latest chosen (NOTE-CHOSEN-PATH) unless it opened safely."
+  (multiple-value-bind (path kind) (read-file-path prompt :preview *preview-files* :note nil)
     (cond ((null path))
           ;; a directory taken as typed: listed in rimu
           ((and (eq kind :directory) (fboundp 'rimu-show-directory))
-           (note-chosen-path path)
-           (funcall 'rimu-show-directory (tuatara.io:native (tuatara.io:expand-path path)) :safe safe))
-          (t (visit-path path :safe safe :show show)))))
+           (note-visited-path path (funcall 'rimu-show-directory (tuatara.io:native (tuatara.io:expand-path path))
+                                            :safe safe)
+                              :directory t))
+          ;; noted once shown: what opened safely, asked or not, leaves no trace
+          (t (note-visited-path path (visit-path path :safe safe :show show))))))
 
 (define-command find-file ()
-  "Visit a file, completing its name against the directory being typed. A
-directory candidate descends into it; a name that does not exist becomes a new
-file. With a prefix argument (\\[universal-argument] \\[find-file]), open it
-safely, as find-file-safely does."
+  "Visit a file, completing its name against the folder being typed.
+The question starts in the folder of the path chosen last in a
+question for a file or a folder (*LAST-USED-FIRST*), the entry chosen
+there last listed first, the others by name;
+\\<path-question>\\[minibuffer-home-directory] starts again from ~/. A
+folder candidate descends into it; a name that does not exist becomes
+a new file. With a prefix argument (\\[universal-argument]
+\\[find-file]), open it safely, as find-file-safely does."
   (find-file-reading (and (prefix-argument) t)))
 
 (define-command find-file-safely ()
@@ -698,8 +846,9 @@ itself once ready (SAVE-BUFFER-WITH-CARE).")
 (define-command save-buffer ()
   "Save the current buffer to its file, asking for one if it has none, as
 \\[find-file] asks: completing the names of the folder being typed, from the
-buffer's own folder (your home folder for the scratch buffers); a name that
-does not exist is the new file. The file is written safely (a new copy
+folder of the path chosen last in a question for a path (else the buffer's
+own folder, your home folder for the scratch buffers); a name that does not
+exist is the new file. The file is written safely (a new copy
 renamed over the old, keeping its owner, permissions and labels); a file
 changed on disk since it was read is not overwritten without asking; a large
 buffer is saved in the background while you carry on."
@@ -712,9 +861,11 @@ buffer is saved in the background while you carry on."
                 (t (save-buffer-with-care b :path path)))))))
 
 (define-command write-file ()
-  "Write the current buffer to another file, asked for as \\[find-file] asks,
-from the buffer's own folder (\\`C-x C-w'). The buffer then visits that file, named after it, in the major mode its name calls for;
-the file it visited before is left as it was. A folder alone is the file's
+  "Write the current buffer to another file, asked for as \\[find-file] asks
+\(\\`C-x C-w'), from the folder of the path chosen last in a question for a
+path, else the buffer's own folder. The buffer then visits that file, named
+after it, in the major mode its name calls for; the file it visited before is
+left as it was. A folder alone is the file's
 own name in that folder. A file there already is overwritten only when you
 say so."
   (let ((b (current-buffer)))

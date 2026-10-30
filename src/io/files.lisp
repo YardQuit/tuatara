@@ -793,8 +793,9 @@ cannot be read."
         (nreverse entries))
     (file-system-error (e) (values nil (file-system-error-reason e)))))
 
-(defun directory-entries (directory &key stamps)
-  "The entries of DIRECTORY, hidden ones included, sorted by name: lists of the
+(defun directory-entries (directory &key stamps (order #'string<))
+  "The entries of DIRECTORY, hidden ones included, sorted by name with ORDER
+\(a predicate of two names, STRING< as standard): lists of the
 name (an octet that is no UTF-8 as its raw byte's character), the kind (as
 STAMP-KIND gives it, following symbolic links; :SYMLINK for one that leads
 nowhere), the size in octets and the entry's own kind (:SYMLINK for a link,
@@ -813,7 +814,7 @@ cannot be read."
                                (fields (list (listed-name entry) (if stamp (stamp-kind stamp) :other)
                                              (and stamp (stamp-size stamp)) (if own (stamp-kind own) :other))))
                           (if stamps (append fields (list stamp)) fields)))
-        #'string< :key #'first))
+        order :key #'first))
 
 (defun call-with-entry (directory octets function)
   "Call FUNCTION with a descriptor open on the file whose name is OCTETS in

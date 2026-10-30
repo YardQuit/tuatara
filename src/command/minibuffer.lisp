@@ -378,7 +378,8 @@ before anything can be chosen, more coming, chooses once it has come.
 DEFAULT, when given, is what \\[minibuffer-done] takes while nothing is
 typed: its candidate comes first then, selected, and the prompt names it,
 Describe function (default car): . With KEEP-ORDER, the candidates that
-match stay in the order TABLE gives them, not sorted best first.
+match stay in the order TABLE gives them, not sorted best first; with
+KEEP-ORDER :UNTIL-TYPED, only while nothing is typed to match them.
 KEYMAP holds the question's own keys, as READ-STRING takes it.
 Signals QUIT on abort."
   (let* ((editor *editor*)

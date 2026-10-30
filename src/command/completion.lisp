@@ -200,10 +200,11 @@ first) and candidates with a RANK before others, in that order; then those
 matching better (CANDIDATE-SCORE: most of the name in one piece, near its
 start), then shorter strings, then alphabetical order. With
 KEEP-ORDER, those matching in the order of CANDIDATES instead, the exact one
-still first. With an empty INPUT every candidate matches. The second value
-lists those matching in the order of CANDIDATES."
+still first; with KEEP-ORDER :UNTIL-TYPED, only while INPUT has nothing to
+match. With an empty INPUT every candidate matches. The second value lists
+those matching in the order of CANDIDATES."
   (let ((components (input-components input)))
-    (when keep-order
+    (when (if (eq keep-order :until-typed) (null components) keep-order)
       (let ((matching (remove-if-not (lambda (c) (components-score components (candidate-string c))) candidates)))
         (return-from filter-candidates (values (coerce (exact-first input matching) 'simple-vector) matching))))
     (let ((scored '()) (matching '()) (exact (plusp (length input)))
