@@ -207,7 +207,7 @@ DEFAULT, when given, taken when nothing is typed; its symbol in tuatara-user,
 or NIL, said why, for a name that cannot be one: one that reads back as a
 number or another thing than that symbol (-5, 1e3), or a name of Lisp's own
 \(t, nil, pi)."
-  (let ((name (string-trim " " (read-string (if default (format nil "~a(~(~a~)): " prompt default) (format nil "~a: " prompt))))))
+  (let ((name (string-trim " " (read-string (if default (format nil "~a (default ~(~a~)): " prompt default) (format nil "~a: " prompt))))))
     (cond ((and (zerop (length name)) default) default)
           ((not (recorded-keys-name-p name))
            (message "A name is letters, digits and - _ + * / < > = ! ? %, not digits alone") nil)

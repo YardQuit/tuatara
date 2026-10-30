@@ -343,3 +343,17 @@ queued: keys typed meanwhile."
         (declare (ignore f))
         (is string= "Recording keys: C-x ) ends the recording, C-g gives it up" (session-message editor)
             "modal editing ~:[off~;on~]" modal)))))
+
+(define-test (recorded-keys name-prompt-offers-the-default)
+  ;; the name given before is offered as other questions offer theirs
+  (let ((asked nil))
+    (unwind-protect
+         (progn
+           (recorded-keys-session
+            (list "C-x ( C-d C-x ) M-x n a m e - r e c o r d e d - k e y s RET t e s t - p r o m p t e d RET M-x i n s e r t - r e c o r d e d - k e y s - d e f i n i t i o n RET"
+                  (lambda () (setf asked (tuatara.command:editor-minibuffer-prompt tuatara.command:*editor*)))
+                  "RET RET")
+            :text "abc")
+           (is equal "Name of the command (default test-prompted): " asked))
+      (tuatara.command:forget-command 'tuatara-user::test-prompted)
+      (fmakunbound 'tuatara-user::test-prompted))))
