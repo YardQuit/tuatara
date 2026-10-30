@@ -100,6 +100,13 @@ terminal library) is read most closely, since the editor opens files that
 are not trusted. A pull request that adds a dependency or moves a pin says
 why, and what the review found.
 
+A Lisp library is added with `tools/lisp-archives.sh add LIBRARY`, which
+downloads it over HTTPS and adds its line, with the archive's SHA-256, to
+`tools/lisp-archives.sha256`. That line is the hash the review accepts: the
+pull request shows it, and says where the library comes from and what was read
+of it. Quicklisp downloads nothing else (`tools/lisp-archives.sh lock`), so a
+library not on the list stops the build.
+
 ## Sign-off
 
 The `Signed-off-by:` line `git commit -s` adds is your statement, under the

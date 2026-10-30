@@ -5,8 +5,17 @@
 - SBCL 2.6 or later, with threads (the Fedora and Debian packages are). The core
   uses SBCL's threads, foreign calls and compiler, so other Lisps will not build it.
 - Quicklisp, in =~/quicklisp/= (its default), =~/.local/share/quicklisp/=, or
-  where =QUICKLISP_SETUP= names its =setup.lisp=. The Lisp libraries (CFFI,
-  cl-ppcre, Parachute and the rest) are fetched by it on the first build.
+  where =QUICKLISP_SETUP= names its =setup.lisp=. The Lisp libraries the
+  program is built with are listed, each archive by its SHA-256, in
+  =tools/lisp-archives.sha256=. After installing Quicklisp, run
+  =tools/lisp-archives.sh index=, =fetch= and =lock=: they download that
+  Quicklisp set's index and the listed archives over HTTPS, checked against
+  their hashes, and tell Quicklisp to download nothing more. Every build
+  (=tools/build-image.sh=, =tools/release.sh=) checks the archives first and
+  stops on one that is missing or changed; a release is compiled from a copy
+  of your Quicklisp holding only the listed libraries, unpacked from those
+  archives. Libraries only the tests use (Parachute and the rest) are not
+  listed: install them once, before =lock=, or add them as below.
 - A C and C++ compiler, git and make, for the tree-sitter grammars.
 - Zig 0.17.0, the version =lisp/terminal/library.pin= names, for the terminal
   library: =https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz=,
@@ -73,9 +82,17 @@ and checked), installs and runs each package, and makes a draft release with
 =SHA256SUMS= and the notes of =.github/release-notes.md=; "What changed" is
 written there before it is published. Run by hand from the Actions tab, it
 builds the files of a branch without releasing them. The Lisp libraries are
-checked against =tools/lisp-archives.sha256=: when your Quicklisp's set
-changes, make it again from your own archives, as its first lines say, and
-the Quicklisp set =tools/ci-setup.sh= names with it.
+checked against =tools/lisp-archives.sha256= by =tools/lisp-archives.sh=,
+the same check every local build makes. To use a library new to Tuatara, run
+=tools/lisp-archives.sh add LIBRARY= (a Quicklisp project name): it downloads
+the archive over HTTPS from the Quicklisp set =tools/lisp-archives.sh= names,
+checks it against the size and MD5 of the index, and appends its line to
+=tools/lisp-archives.sha256=. That line is then reviewed with the library
+(licence, owner, what it loads; CONTRIBUTING.md, Dependencies) and committed
+with the change that uses it. Its own dependencies are added the same way, one
+at a time, as the build reports each missing. To move to another Quicklisp
+set, change =dist_url= in =tools/lisp-archives.sh= and each line of the list
+together.
 
 * Testing
 
