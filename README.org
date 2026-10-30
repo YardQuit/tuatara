@@ -348,6 +348,16 @@ Tuatara says where its ideas come from:
 - Ghostty, by Mitchell Hashimoto and its contributors :: the terminal library
   (libghostty-vt, MIT) that =M-x terminal= keeps its screen with, built from the
   commit =lisp/terminal/library.pin= names; its licence goes with it.
+- simdutf, Highway, Wuffs and uucode :: the libraries the terminal library is
+  built with: Unicode text checked and converted (simdutf, by Daniel Lemire and
+  its contributors), many characters worked on at once (Highway, by Google),
+  pictures' pixels (Wuffs, by Google) and the Unicode character properties
+  (uucode, by Jacob Sandlund); each one's licence goes with every release.
+- Zig and LLVM's libc++ :: the compiler the terminal library is built with,
+  whose standard library and C++ library are compiled into it; their licences
+  go with every release.
+- The Unicode Character Database :: the characters' properties the terminal
+  library knows them by, through uucode; its licence goes with every release.
 - kitty, by Kovid Goyal :: the graphics and keyboard protocols, and the table of
   marks for pictures in text.
 - Ao :: the colour theme, by the same author (github.com/YardQuit/ao).

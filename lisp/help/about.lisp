@@ -221,6 +221,16 @@ version)."
     ("NO_COLOR (no-color.org)" "no colours in the terminal where NO_COLOR is set")
     ("Ghostty, by Mitchell Hashimoto and its contributors" "the terminal library M-x terminal keeps its screen with"
                                                            "(libghostty-vt)")
+    ("simdutf, Highway, Wuffs and uucode" "the libraries the terminal library is built with: Unicode"
+                                          "text checked and converted (simdutf), many characters worked"
+                                          "on at once (Highway), pictures' pixels (Wuffs) and the Unicode"
+                                          "character properties (uucode); each one's licence goes with"
+                                          "every release")
+    ("Zig and LLVM's libc++" "the compiler the terminal library is built with, whose standard"
+                             "library and C++ library are compiled into it; their licences go"
+                             "with every release")
+    ("The Unicode Character Database" "the characters' properties the terminal library knows them by,"
+                                      "through uucode; its licence goes with every release")
     ("kitty, by Kovid Goyal" "the graphics and keyboard protocols")
     ("Ao" "the colour theme, by the same author (github.com/YardQuit/ao)")
     ("SBCL" "the Common Lisp Tuatara is written in and runs on")

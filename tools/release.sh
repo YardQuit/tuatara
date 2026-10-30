@@ -4,7 +4,8 @@
 # Put together build/release/tuatara/, Tuatara as it is given to others: the
 # program and what it reads beside it, so that the directory runs wherever it
 # is copied, nothing compiled there: grammars/ (tree-sitter and the grammars),
-# terminal/ (the terminal library, its layout and Ghostty's license), syntax/
+# terminal/ (the terminal library, its layout, Ghostty's license and in
+# terminal/licenses/ those of what the library compiles in), syntax/
 # (the grammars' rules), icons/, the license and the README; grammars/licenses/
 # holds each grammar's licence (tools/grammars.sh), licenses/ those of SBCL and
 # of the Lisp libraries the program carries. Beside it,
@@ -126,6 +127,7 @@ cp build/grammars/*.so "$out/grammars/"
 cp -r build/grammars/licenses "$out/grammars/licenses"
 cp build/terminal/libghostty-vt.so build/terminal/libtuatara-terminal.so build/terminal/layout.sexp \
    build/terminal/LICENSE-ghostty "$out/terminal/"
+cp -r build/terminal/licenses "$out/terminal/licenses"
 # their debugging information names the folders they were built in
 strip --strip-debug "$out/terminal/libghostty-vt.so" "$out/terminal/libtuatara-terminal.so"
 for kind in rules indents textobjects injections locals tags; do
@@ -159,7 +161,9 @@ cat > "$top/README" <<EOF
 The sources of Tuatara $(sed -n 's/^ *:version "\(.*\)"$/\1/p' tuatara.asd) ($(git rev-parse --short=7 HEAD)) and of what its
 release is built with: tuatara/ (GPL-3.0-or-later), lisp/ (the Lisp libraries
 compiled into the program, each under the licence in its folder), ghostty/
-(the terminal library, MIT), and grammars/, tree-sitter and each grammar at the commit
+(the terminal library, MIT, with simdutf in its pkg/; Highway, Wuffs and
+uucode, which it compiles in too, are fetched by its build.zig.zon and are
+not in it, their licences in the release's terminal/licenses/), and grammars/, tree-sitter and each grammar at the commit
 tuatara/syntax/grammars.tsv names, under the licence it names there, patched
 as tuatara/syntax/patches/ says. tuatara/HACKING.org says how to build it.
 EOF

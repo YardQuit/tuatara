@@ -65,11 +65,12 @@ description="Tuatara edits text in the terminal and in a window of its own: Org
 files, code with tree-sitter colours and language servers, CSV files of many
 gigabytes, mail folders and folders of files, with DONKEY's modal keys or
 plain ones."
-# Tuatara's licence, Ghostty's (the terminal library) and each grammar's
+# Tuatara's licence, Ghostty's (the terminal library), those of what the
+# terminal library compiles in and each grammar's
 licences="GPL-3.0-or-later AND MIT"
 while IFS= read -r licence; do
   case " AND $licences AND " in *" AND $licence AND "*) ;; *) licences="$licences AND $licence" ;; esac
-done < <(grep -v '^#' syntax/grammars.tsv | cut -f4 | sort -u)
+done < <({ cut -f2 build/terminal/licenses/licenses.tsv; grep -v '^#' syntax/grammars.tsv | cut -f4; } | sort -u)
 # the libraries the program loads, by the names it asks for
 libraries="libgtk-4.so.1 libcairo.so.2 libncursesw.so.6 libcrypto.so.3 libzstd.so.1 libstdc++.so.6"
 
@@ -83,6 +84,7 @@ sed "s|@EXEC@|tuatara|" data/tuatara.desktop.in > "$stage/usr/share/applications
 cp -r data/icons "$stage/usr/share/icons"
 cp LICENSE "$stage/usr/share/licenses/tuatara/LICENSE"
 cp build/release/tuatara/terminal/LICENSE-ghostty "$stage/usr/share/licenses/tuatara/LICENSE-ghostty"
+cp -r build/release/tuatara/terminal/licenses "$stage/usr/share/licenses/tuatara/terminal"
 cp syntax/grammars.tsv "$stage/usr/share/licenses/tuatara/grammars.tsv"
 cp -r build/release/tuatara/grammars/licenses "$stage/usr/share/licenses/tuatara/grammars"
 cp -r build/release/tuatara/licenses/lisp build/release/tuatara/licenses/sbcl "$stage/usr/share/licenses/tuatara/"
@@ -142,7 +144,7 @@ ubuntu() {
   pinned_container "$container" "$ubuntu_image" 'true'
   put_stage "$container" /tmp/package
   podman exec "$container" sh -c "mkdir -p $deb/DEBIAN $deb/usr/share/doc/tuatara &&
-    { cat $deb/usr/share/licenses/tuatara/LICENSE; printf '\n%s\n' 'The licences of SBCL (sbcl/), of the Lisp libraries compiled into the program (lisp/NAME/), of the terminal library (LICENSE-ghostty) and of each grammar (grammars/NAME/, grammars.tsv) are in /usr/share/licenses/tuatara/.'; } > $deb/usr/share/doc/tuatara/copyright"
+    { cat $deb/usr/share/licenses/tuatara/LICENSE; printf '\n%s\n' 'The licences of SBCL (sbcl/), of the Lisp libraries compiled into the program (lisp/NAME/), of the terminal library (LICENSE-ghostty) and of what it compiles in (terminal/NAME/, terminal/licenses.tsv) and of each grammar (grammars/NAME/, grammars.tsv) are in /usr/share/licenses/tuatara/.'; } > $deb/usr/share/doc/tuatara/copyright"
   podman exec -i "$container" sh -c "cat > $deb/DEBIAN/control" <<EOF
 Package: tuatara
 Version: $deb_version
