@@ -146,6 +146,37 @@ force; *compile* killed afterwards."
       (is equal '(:entering "/tmp/x/sub") (multiple-value-list (tuatara.defaults::make-directory-line in (length in))))
       (is equal '(:leaving "/tmp/x/sub") (multiple-value-list (tuatara.defaults::make-directory-line out (length out)))))))
 
+(define-test (compiling test-failures-name-places)
+  ;; a Rust test failing names where it panicked, as cargo test prints it now and before 1.73;
+  ;; tsc, C# and MSVC name a place as file(line,col): error
+  (flet ((place (line) (multiple-value-list (tuatara.defaults::output-line-place line :exists (constantly nil)))))
+    (is equal '(:error "src/tide.rs" 12 9) (place "thread 'tide::tests::rises' panicked at src/tide.rs:12:9:"))
+    (is equal '(:error "src/main.rs" 4 37)
+        (place "thread 'main' panicked at 'called `Option::unwrap()` on a `None` value', src/main.rs:4:37"))
+    (is equal '(:error "tests/it's.rs" 3 5) (place "thread 'it' panicked at tests/it's.rs:3:5:"))
+    (is equal '(:error "src/app.ts" 3 7) (place "src/app.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'."))
+    (is equal '(:error "Program.cs" 5 13)
+        (place "Program.cs(5,13): error CS0103: The name 'x' does not exist in the current context [/tmp/p/p.csproj]"))
+    (is equal '(:warning "a.cpp" 10 nil) (place "a.cpp(10): warning C4996: 'strcpy': This function or variable may be unsafe."))
+    (is equal '(:error "C:\\src\\b.cpp" 7 nil) (place "C:\\src\\b.cpp(7) : error C2065: 'x': undeclared identifier"))
+    ;; words of the same shape that name no place
+    (is equal '(nil) (place "thread 'main' has overflowed its stack"))
+    (is equal '(nil) (place "f(3): errors are words here"))
+    (is equal '(nil) (place "see (3,7): error"))
+    (is equal '(nil) (place "worker(42): error: the queue is full"))
+    (is equal '(:error "src/a.ts" 2 1) (place "src/a.ts(2,1):error TS1005: ';' expected."))
+    (is equal '(:warning "b.cpp" 4 nil) (place "b.cpp(4) :warning C4101: 'y': unreferenced local variable"))))
+
+(define-test (compiling panic-reached-by-next-place)
+  ;; M-g n goes to where a Rust test panicked
+  (with-compile-session (dir (format nil "printf 'running 1 test\\n'~%printf \"thread 'tide::tests::rises' panicked at sub/b.txt:2:6:\\n\"~%printf 'assertion failed\\n'~%exit 101~%"))
+    (auto-save-session (compile-steps dir
+                                      (list :until #'compile-ended-p)
+                                      "M-g n" (reached '("b.txt" 1 5))
+                                      "M-g n" (said "No more places in *compile*"))
+                       :width 100 :height 30)
+    (is equal '(("b.txt" 1 5) "No more places in *compile*") (reverse *places-reached*))))
+
 (define-test (compiling output-shown-and-places-visited)
   ;; the output in *compile*, how it ended; M-g n and M-g p go through its places, opening each
   ;; at its line and column; error and warning lines in their faces

@@ -73,6 +73,11 @@ the kind of line it is and the place it names.")
      (list :arrow (scanner "^\\s*--> ([^\\s:][^\\s:]*):(\\d{1,9})(?::(\\d{1,9}))?"))
      ;; Python's tracebacks: File "x", line n
      (list :traceback (scanner "^\\s*File \"([^\"<][^\"]*)\", line (\\d{1,9})"))
+     ;; Rust's panics, a test's failing among them: thread 'name' panicked at file:line:col
+     ;; (before Rust 1.73, the message in quotes and a comma before the place)
+     (list :panic (scanner "^thread '[^']*' panicked at (?:'.*', )?([^\\s:'][^\\s:]*):(\\d{1,9}):(\\d{1,9})"))
+     ;; TypeScript's tsc, C# and MSVC: file(line,col): error
+     (list :parenthesised (scanner "^((?=[^\\s(]*[./])[^\\s(\"'][^\\s(]*)\\((\\d{1,9})(?:,(\\d{1,9}))?\\)\\s*:\\s*(fatal error|error|warning)\\b"))
      ;; what is wrong, without a place: rustc's error[E0308]:, SBCL's ; caught WARNING:, make's ***
      (list :error (scanner "^(?:(?:fatal )?error(?:\\[[^\\]]*\\])?:|; caught ERROR:|(?:g?make|ninja)(?:\\[\\d+\\])?: \\*\\*\\*|FAILED:|Traceback \\(most recent call last\\):|[A-Za-z_][\\w.]*(?:Error|Exception): |.*\\*\\*\\* .*Stop\\.$)"))
      (list :warning (scanner "^(?:warning(?:\\[[^\\]]*\\])?:|; caught WARNING:)"))
@@ -82,8 +87,11 @@ the kind of line it is and the place it names.")
   "The patterns lines of a compile's output are matched against, in order,
 each (WHAT SCANNER): :KINDED for file:line:col: and error, warning or note;
 :ARROW for rustc's --> file:line:col; :TRACEBACK for Python's File \"x\",
-line n; :ERROR, :WARNING and :NOTE for a line saying one, naming no place;
-:PLAIN for file:line: (grep -n). Lines and columns have nine digits at most.")
+line n; :PANIC for Rust's thread 'x' panicked at file:line:col (a test
+failing); :PARENTHESISED for file(line,col): error or warning (tsc, C#,
+MSVC), the file's name holding a . or /; :ERROR, :WARNING and :NOTE for a
+line saying one, naming no place; :PLAIN for file:line: (grep -n). Lines
+and columns have nine digits at most.")
 
 (defparameter *make-directory-scanner*
   (cl-ppcre:create-scanner "^g?make(?:\\[\\d+\\])?: (Entering|Leaving) directory [`'‘](.+)['’]$")
@@ -123,6 +131,23 @@ with a letter, a . / or ~, or have a . or / in its name."
                                    (starts "note" second) (starts "remark" second))))
       (:arrow (starts "-->" first))
       (:traceback (starts "File \"" first))
+      (:panic (starts "thread '" first))
+      ;; file(line,col): error, file(line):error, or MSVC's file(line) : error; a . or / in the
+      ;; file's name, so that words such as worker(42): error: are none
+      (:parenthesised
+       (let ((open (position #\( line :start first :end token-end)))
+         (and open
+              (find-if (lambda (c) (or (char= c #\.) (char= c #\/))) line :start first :end open)
+              (let* ((close (position #\) line :start open :end token-end))
+                     (kind (cond ((null close) nil)
+                                 ((< (1+ close) token-end)
+                                  (and (char= #\: (schar line (1+ close)))
+                                       (if (< (+ 2 close) token-end) (+ 2 close) second)))
+                                 ((starts ":" second)
+                                  (or (position-if-not (lambda (c) (or (char= c #\Space) (char= c #\Tab))) line
+                                                       :start (1+ second) :end end)
+                                      end)))))
+                (and kind (or (starts "error" kind) (starts "fatal error" kind) (starts "warning" kind)))))))
       (:error (or (starts "error") (starts "fatal error") (starts "; caught ERROR") (starts "make") (starts "gmake")
                   (starts "ninja") (starts "FAILED:") (starts "Traceback") (ends "Error:") (ends "Exception:")
                   (ends "Stop." end)))
@@ -171,6 +196,9 @@ is. Python's File \"<string>\" and the like name no file."
                                                 (group 0) (number 1) (number 2)))))
                      (:arrow (return (values (or kind-before :error) (group 0) (number 1) (number 2))))
                      (:traceback (return (values :error (group 0) (number 1) nil)))
+                     (:panic (return (values :error (group 0) (number 1) (number 2))))
+                     (:parenthesised (return (values (if (search "error" (group 3)) :error :warning)
+                                                     (group 0) (number 1) (number 2))))
                      ((:error :warning :note) (return what))
                      (:plain (let ((file (group 0)))
                                (when (and exists (funcall exists file))
