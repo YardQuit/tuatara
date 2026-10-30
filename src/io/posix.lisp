@@ -203,6 +203,91 @@ C string, that zero left out. Complexity: O(LENGTH), one block copy."
       (sb-kernel:system-area-ub8-copy sap 0 to 0 length))
     octets))
 
+(defun sap-string (sap &optional length)
+  "The text of the LENGTH octets at the foreign pointer SAP, or of the C
+string there without LENGTH, read as the editor reads a file's text: UTF-8,
+an octet that is not UTF-8 kept as a raw byte."
+  (tuatara.text:octets-string (sap-octets sap length)))
+
+(defmacro with-c-string ((sap string &key (start 0) end length) &body body)
+  "Run BODY with SAP pointing at STRING from START below END as C is given
+text: UTF-8, a raw byte's character as the octet it stands for (as names are
+given to the system), a NUL after it; LENGTH, when given a name, is bound to
+the octets before the NUL. They are written on the stack, or for a long
+string into octets kept for reuse (TUATARA.TEXT:WITH-OCTET-BLOCK), so no
+garbage is made for them; BODY must not keep SAP."
+  (let ((s (gensym "STRING")) (from (gensym "START")) (to (gensym "END")) (room (gensym "ROOM"))
+        (block (gensym "BLOCK")) (used (gensym "LENGTH")) (call (gensym "CALL")))
+    `(let* ((,s ,string) (,from ,start) (,to (or ,end (length ,s)))
+            ;; the most octets the characters can take, which PUT-STRING-OCTETS asks room for
+            (,room (1+ (* 4 (- ,to ,from)))))
+       (flet ((,call (,block)
+                (multiple-value-bind (,block ,used) (tuatara.text:put-string-octets ,s ,block 0 :start ,from :end ,to)
+                  (setf (aref ,block ,used) 0)
+                  (with-octets-sap (,sap ,block)
+                    (let (,@(when length `((,length ,used))))
+                      ,@body)))))
+         (declare (dynamic-extent #',call))
+         (if (<= ,room 4096)
+             (let ((,block (make-array ,room :element-type '(unsigned-byte 8))))
+               (declare (dynamic-extent ,block))
+               (,call ,block))
+             (tuatara.text:with-octet-block (,block ,room) (,call ,block)))))))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun c-type (type)
+    "The alien type DEFINE-C-FUNCTION takes TYPE for: :pointer, :int, :uint,
+:short, :uint8, :uint32, :ulong, :size, :double, :float, :void, :boolean (a
+truth value as an int: GLib's gboolean), :bool (a truth value of one octet:
+C's bool) and :string (text, in UTF-8); any other TYPE is taken as an alien
+type itself."
+    (case type
+      (:pointer 'sb-sys:system-area-pointer)
+      (:int 'sb-alien:int)
+      (:uint 'sb-alien:unsigned-int)
+      (:short 'sb-alien:short)
+      (:uint8 '(sb-alien:unsigned 8))
+      (:uint32 '(sb-alien:unsigned 32))
+      ((:ulong :size) 'sb-alien:unsigned-long)
+      (:double 'sb-alien:double)
+      (:float 'sb-alien:single-float)
+      (:void 'sb-alien:void)
+      (:boolean '(sb-alien:boolean 32))
+      (:bool '(sb-alien:boolean 8))
+      (:string '(sb-alien:c-string :external-format :utf-8))
+      (t type))))
+
+(defmacro define-c-function ((c-name name) result &body arguments)
+  "Define NAME, a function calling the C function C-NAME, which returns
+RESULT: ARGUMENTS, after an optional docstring, are each (ARGUMENT TYPE), the
+types C-TYPE knows. The library holding C-NAME is not loaded by NAME: its
+callers load it first (FOREIGN-LIBRARY-P, as LOAD-GTK-LIBRARIES and
+LOAD-NCURSES do). A :string argument may be any string, given as
+WITH-C-STRING gives it; a :string result is read as SAP-STRING reads it, NIL
+for a null pointer."
+  (let* ((documentation (when (stringp (first arguments)) (list (pop arguments))))
+         (names (mapcar #'first arguments))
+         (saps (loop for (argument type) in arguments
+                     collect (if (eq type :string) (gensym (symbol-name argument)) argument)))
+         (call `(sb-alien:alien-funcall
+                 (sb-alien:extern-alien ,c-name (function ,(c-type (if (eq result :string) :pointer result))
+                                                          ,@(loop for (nil type) in arguments
+                                                                  collect (c-type (if (eq type :string) :pointer type)))))
+                 ,@saps))
+         (body (if (eq result :string)
+                   (let ((pointer (gensym "POINTER")))
+                     `(let ((,pointer ,call))
+                        (unless (null-pointer-p ,pointer) (sap-string ,pointer))))
+                   call)))
+    ;; each string written for C around the call, the result read before they go
+    (loop for (argument type) in (reverse arguments)
+          for sap in (reverse saps)
+          when (eq type :string)
+            do (setf body `(with-c-string (,sap ,argument) ,body)))
+    `(defun ,name ,names
+       ,@documentation
+       ,body)))
+
 ;;; statx: what a file is, exactly
 
 (defstruct (stamp (:constructor make-stamp (dev ino size mtime nlink mode uid gid)) (:copier nil))

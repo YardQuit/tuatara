@@ -219,3 +219,41 @@ every boundary, characters, conversions and the string both ways."
   (let ((written (tuatara.text:json-write (format nil "a~cb" (code-char #xDCFF)))))
     (is string= (format nil "\"a~cb\"" (code-char #xFFFD)) written)
     (is equalp #(34 97 239 191 189 98 34) (tuatara.text:string-octets written))))
+
+(define-test (raw-bytes given-to-c-as-they-were-read)
+  ;; text given to a C library: UTF-8, a raw byte as the octet it was, any other
+  ;; lone surrogate as U+FFFD rather than an error; read back as it was given
+  (let ((text (format nil "a~c~cb~c" (code-char #xDCFF) (code-char #xE9) (code-char #xD800))))
+    (tuatara.io:with-c-string (sap text :length length)
+      (is = 8 length)
+      (is equalp #(97 255 195 169 98 239 191 189 0) (tuatara.io:sap-octets sap 9))
+      (is string= (format nil "a~c~cb~c" (code-char #xDCFF) (code-char #xE9) (code-char #xFFFD))
+          (tuatara.io:sap-string sap)))
+    (tuatara.io:with-c-string (sap text :start 2 :end 4 :length length)
+      (is = 3 length)
+      (is equalp #(195 169 98 0) (tuatara.io:sap-octets sap 4)))
+    ;; nothing made for each string given, short or as long as a clipboard's
+    (flet ((consed (string)
+             (let ((before (tuatara.bench::bytes-consed)))
+               (dotimes (i 100) (tuatara.io:with-c-string (sap string) (sb-sys:sap-ref-8 sap 0)))
+               (/ (- (tuatara.bench::bytes-consed) before) 100))))
+      (consed text)
+      (true (< (consed text) 1) "~,1f octets of garbage for each short string" (consed text))
+      (let ((long (make-string 100000 :initial-element #\x)))
+        (consed long)
+        (true (< (consed long) 64) "~,1f octets of garbage for each long string" (consed long))))))
+
+(tuatara.io:define-c-function ("strchr" text-from-character) :string
+  "The text of TEXT from the first CHARACTER in it (a code), or NIL when there is none."
+  (text :string) (character :int))
+
+(define-test (raw-bytes c-functions-take-any-string)
+  ;; a C function's text argument may be any string: one with a fill pointer, one
+  ;; with a raw byte; its text result keeps a raw byte as it was
+  (let ((growing (make-array 0 :element-type 'character :adjustable t :fill-pointer 0)))
+    (loop for c across (format nil "caf~cs and more" (code-char #xE9)) do (vector-push-extend c growing))
+    (is string= "s and more" (text-from-character growing (char-code #\s))))
+  (let ((raw (format nil "x~cy" (code-char #xDCFF))))
+    (is string= (format nil "~cy" (code-char #xDCFF)) (text-from-character raw 255))
+    (is string= raw (text-from-character raw (char-code #\x))))
+  (false (text-from-character "abc" (char-code #\z))))

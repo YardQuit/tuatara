@@ -128,7 +128,7 @@
                               (tuatara.display:combine-faces (lambda (face base) (declare (ignore base)) face))
                               (tuatara.frontend.tui::%waddstr-octets
                                (lambda (window octets) (declare (ignore window))
-                                 (when recording (write-string (cffi:foreign-string-to-lisp octets :encoding :utf-8) written))
+                                 (when recording (write-string (tuatara.io:sap-string octets) written))
                                  0)))
       (let ((f (tuatara.frontend.tui:make-tui-frontend))
             (text (make-string 200 :initial-element #\x)))

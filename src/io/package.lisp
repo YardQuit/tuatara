@@ -34,6 +34,7 @@ running programs, shut in a sandbox when they read files from elsewhere.")
    #:*zip-largest-entry* #:*zip-largest-ratio*
    ;; memory outside Lisp
    #:with-octets-sap #:with-foreign-memory #:sap-octets #:null-pointer #:null-pointer-p
+   #:sap-string #:with-c-string #:c-type #:define-c-function
    ;; visiting, checking, saving, reverting
    #:*memory-read-limit* #:*lease-large-files* #:*clone-large-files* #:*snapshot-large-files* #:*snapshot-free-margin*
    #:open-for-reading #:open-file-text #:visit-file #:safe-visit-p #:end-safe-visit #:safe-visit-reason #:*visit-safely-function* #:binary-head-p #:+binary-sample+ #:file-head #:call-with-file-heads #:open-examined

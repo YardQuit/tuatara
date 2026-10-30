@@ -249,7 +249,7 @@ every editor session applies the startup theme, so tests about faces start clean
   (is equal '(16 "*tui-colours* 16") (multiple-value-list (tuatara.frontend.tui::colours-used 16 256 nil)))
   (is = 8 (tuatara.frontend.tui::colours-used 16 8 nil))
   ;; the colours of an installed terminal description, none for one not installed
-  (cffi:use-foreign-library tuatara.frontend.tui::ncursesw)
+  (tuatara.frontend.tui::load-ncurses)
   (is = 256 (tuatara.frontend.tui::terminfo-colours "xterm-256color"))
   (false (tuatara.frontend.tui::terminfo-colours "no-such-terminal"))
   (let ((tuatara.frontend.tui::*direct-colour* t) (tuatara.frontend.tui::*terminal-colours* #x1000000))
