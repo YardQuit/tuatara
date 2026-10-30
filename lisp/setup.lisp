@@ -182,7 +182,8 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (setf *global-keymap* global
           ;; help and messages name the keys bound now
           *key-keymaps-function* 'keymaps-for-keys
-          *keymap-named-function* 'keymap-for-keys)
+          *keymap-named-function* 'keymap-for-keys
+          tuatara.buffer:*widen-key-function* 'widen-key-text)
     (define-keys global *global-bindings*)
     (label-keys global *global-prefix-labels*)
     (setf (editor-self-insert-command editor) 'self-insert-command)

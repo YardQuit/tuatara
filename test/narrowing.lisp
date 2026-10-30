@@ -624,3 +624,10 @@ or :HUNG, so that each of several sessions in a test says how it ended."
         (when body
           (is string= "" (string-trim " " (nth (1+ body) rows))))
         (is = 1 (count-if (lambda (row) (search "◉" row)) rows))))))
+
+(define-test (narrowing refusal-names-the-widen-key)
+  ;; an edit refused at the edge names the key that widens, as narrowing does
+  (let ((f (narrowing-keys (list *narrow-to-two-and-three* "M-> C-d") :text *narrowing-text* :width 160)))
+    (true (tuatara.frontend.fake:fake-frame-showing f "Narrowed to lines 2 to 3: C-x x w shows all of it again"))
+    (true (tuatara.frontend.fake:fake-frame-showing
+           f "That would change text outside the part of *scratch* shown: C-x x w shows all of it again"))))

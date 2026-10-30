@@ -48,6 +48,11 @@ number from 1."
         (if (= first last) (format nil "line ~:d" (1+ first)) (format nil "lines ~:d to ~:d" (1+ first) (1+ last)))
         "a part of it")))
 
+(defun widen-key-text ()
+  "The key that shows all of a narrowed buffer again (\\[widen]) as messages
+name it."
+  (substitute-command-keys "\\[widen]"))
+
 (defun narrow-to (buffer start end)
   "Narrow BUFFER to its text from START below END, within the part it is
 narrowed to already, its selection let go, and say so; refused in the hex

@@ -381,10 +381,15 @@ what went in there. A jump BODY makes outside the part (to a subtree just
 refiled) leaves the buffer widened instead, point where the jump took it."
   `(call-with-narrowing-lifted ,buffer (lambda () ,@body)))
 
+(defvar *widen-key-function* nil
+  "A function of no arguments giving the key that widens a buffer as messages
+name it (C-x x w), for OUTSIDE-NARROWING-WORDS; NIL names the command, widen.")
+
 (defun outside-narrowing-words (buffer)
   "The words saying a change would reach outside the part of BUFFER shown,
-and that widening shows the rest."
-  (format nil "That would change text outside the part of ~a shown: widen shows all of it again" (buffer-name buffer)))
+and that widening (the key *WIDEN-KEY-FUNCTION* gives) shows the rest."
+  (format nil "That would change text outside the part of ~a shown: ~a shows all of it again"
+          (buffer-name buffer) (if *widen-key-function* (funcall *widen-key-function*) "widen")))
 
 (defun refuse-outside-narrowing (buffer)
   "Signal the error that says a change would reach outside the part of
