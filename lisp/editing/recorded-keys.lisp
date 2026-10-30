@@ -43,9 +43,10 @@ until \\[stop-recording-keys]; \\[play-recorded-keys] then plays them again,
 as if typed once more: \\[start-recording-keys] \\[regex-search-forward] date RET \\[kill-line] \\[stop-recording-keys]
 records a search for date and a kill there, and each play searches for date
 again and kills from where it found it. The mode line shows Rec meanwhile.
-\\[keyboard-quit] gives the recording up, the keys recorded before kept as
-they were. Text pasted is recorded too, and pasted again as it was; the
-mouse is not recorded. The counter \\[insert-keys-counter]
+The quit key, \\`C-g' as standard, gives the recording up (in INSERT state
+the first \\`C-g' only leaves INSERT), the keys recorded before kept as they
+were. Text pasted is recorded too, and pasted again as it was; the mouse is
+not recorded. The counter \\[insert-keys-counter]
 inserts starts again at 1, unless \\[set-keys-counter] set it since the last
 recording began."
   (cond ((keys-playing-p) (error "Keys are not recorded while recorded keys play"))
@@ -103,9 +104,9 @@ typed again, answers to questions too. With a prefix argument N, N times
 command among the keys that fails, a search that finds nothing or a key bound
 to nothing stops all the plays there, saying how many were done. Each play is
 one step to undo. Nothing is drawn till the plays end; plays going on for more
-than a second show in the mode line how many are done, and \\[keyboard-quit]
-stops them between two plays. Right after, e plays the keys once more, and
-again, till another key."
+than a second show in the mode line how many are done, and the quit key,
+\\`C-g', stops them between two plays. Right after, e plays the keys once
+more, and again, till another key."
   (cond ((keys-recording-p)
          (drop-command-keys)
          (message "Keys are being recorded: \\[stop-recording-keys] ends the recording first"))

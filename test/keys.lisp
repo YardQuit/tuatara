@@ -240,3 +240,13 @@ the editor TUATARA.COMMAND:*EDITOR* is bound to."
     (let ((table (tuatara.command::where-is-table (list map))))
       (tuatara.command:make-keymap :name "another")
       (is eq table (tuatara.command::where-is-table (list map))))))
+
+(define-test (keys-in-text recorded-keys-help-names-the-quit-key)
+  ;; the help of recording and playing keys names the key that really gives them up, never a
+  ;; command no key runs
+  (with-editor-session (editor)
+    (dolist (command '(tuatara.defaults::start-recording-keys tuatara.defaults::play-recorded-keys))
+      (let ((help (tuatara.command:substitute-command-keys (documentation command 'function))))
+        (false (search "M-x keyboard-quit" help) "~(~a~)" command)
+        (true (search "the quit key" help :test #'char-equal) "~(~a~)" command)
+        (true (search "C-g" help) "~(~a~)" command)))))
