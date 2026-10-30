@@ -8,21 +8,18 @@
 ;; cheaper collections on a machine with tens of GB of RAM.
 (setf (sb-ext:bytes-consed-between-gcs) (* 256 1024 1024))
 (load (merge-pathnames "../tools/quicklisp.lisp" *load-truename*))
-(ql:quickload :tuatara/tests :silent t)
-;; Recompile the project every run: ASDF does not track structure-layout
-;; dependencies between files, and a stale fasl would fail to load.
+;; Compile the project afresh every run: ASDF does not track structure-layout
+;; dependencies between files, and a stale fasl would fail to load. It is the
+;; first time the project is loaded in this Lisp, so that a variable used in a
+;; file before the one defining it is a warning here, as it is nowhere later.
 ;; Full compiler warnings (undefined variables, wrong argument counts) fail the
 ;; run even when ASDF would carry on; style warnings do not.
-(defvar *compiler-warnings* '())
-(handler-bind ((warning (lambda (w)
-                          ;; ASDF repeats style warnings as a plain "had style-warnings"
-                          ;; notice (compile-warned-warning); only the real ones count
-                          (unless (or (typep w 'style-warning) (typep w 'uiop:compile-warned-warning))
-                            (push (princ-to-string w) *compiler-warnings*)))))
-  (asdf:load-system :tuatara/tests :force '(:tuatara/core :tuatara/frontend-fake :tuatara/frontend-tui
-                                            :tuatara/defaults :tuatara/terminal :tuatara/tests)))
+(load (merge-pathnames "compile-gate.lisp" *load-truename*))
+(defvar *compiler-warnings*
+  (tuatara-compile-gate:compile-warnings "tuatara/tests"
+                                         :load-outside (lambda (names) (ql:quickload names :silent t))))
 (when *compiler-warnings*
-  (format t "~&~%Compiler warnings (~a):~%~{  ~a~%~}" (length *compiler-warnings*) (reverse *compiler-warnings*))
+  (format t "~&~%Compiler warnings (~a):~%~{  ~a~%~}" (length *compiler-warnings*) *compiler-warnings*)
   (sb-ext:exit :code 2))
 (defclass lean-report (parachute:plain) ()
   (:documentation "The plain report, keeping of each check that passed only what

@@ -234,6 +234,7 @@
                (:file "spellcheck")
                (:file "prose")
                (:file "ended-tests")
+               (:file "compile-warning-gate")
                (:file "bench-rope"))
   :perform (test-op (o c)
              (symbol-call :parachute :test :tuatara.tests :report :plain)))
