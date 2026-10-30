@@ -93,11 +93,14 @@ when given, is called when a frame is wanted after quiet. LAST-OUTPUT is when
 the program last printed (internal real time); TO-COMPRESS is set while its
 scrollback has not been compressed since. CELL-WIDTH and CELL-HEIGHT are a
 cell's pixels where known (0 else); PLACEMENTS the library's iterator over the
-pictures shown, when pictures are on, PICTURES the pictures made of them for
-the editor, by what they were made from, and PICTURES-SHOWN those of them a
-frame shows; PLACEHOLDERS, for each row of the screen, the cells standing
-for a part of a picture (ROW-PLACEHOLDERS), and PLACEHOLDER-ENDS the table a
-frame joins their runs with (PLACEHOLDER-AREAS).
+pictures shown, when pictures are on, PICTURE-MEMORY the most octets of
+pictures it keeps, GRAPHICS-GENERATION what the library said of its pictures
+when they were last counted (KEEP-PLACEMENTS-WITHIN-BOUNDS), PICTURES-DROPPED
+true once they were dropped, PICTURES the pictures made of them for the
+editor, by what they were made from, and PICTURES-SHOWN those of them a frame
+shows; PLACEHOLDERS, for each row of the screen, the cells standing for a
+part of a picture (ROW-PLACEHOLDERS), and PLACEHOLDER-ENDS the table a frame
+joins their runs with (PLACEHOLDER-AREAS).
 INPUT-LOCK guards the encoders and their events, which hold what the program
 last asked of keys and the mouse (SYNC-INPUT-STATE), so that typing never
 waits for the library; BRACKETED and SCROLLS-BY-KEYS say, as of the
@@ -107,6 +110,7 @@ library's answers to the program waiting in OUTBOX (*TERMINAL-REPLY-LIMIT*)."
   (id 0 :type fixnum) terminal render-state iterator cells encoder event mouse-encoder mouse-event process (fd -1 :type fixnum)
   (last-output 0 :type integer) to-compress
   (cell-width 0 :type fixnum) (cell-height 0 :type fixnum) placements placeholders
+  (picture-memory 0 :type (unsigned-byte 64)) (graphics-generation 0 :type (unsigned-byte 64)) pictures-dropped
   (pictures (make-hash-table :test 'equal)) (pictures-shown (make-hash-table :test 'equal))
   (placeholder-ends (make-hash-table))
   (lock (sb-thread:make-mutex :name "terminal"))
@@ -303,6 +307,7 @@ when the program's side of the pseudo-terminal is gone."
                        do (sb-thread:condition-wait (emulator-turn emulator) (emulator-lock emulator)))
                  (foreign-call "ghostty_terminal_vt_write" sb-alien:void (sb-sys:system-area-pointer (emulator-terminal emulator))
                                (sb-sys:system-area-pointer buffer) ((sb-alien:unsigned 64) got))
+                 (when (emulator-placements emulator) (keep-placements-within-bounds emulator))
                  (sync-input-state emulator))
                (setf (emulator-last-output emulator) (get-internal-real-time))
                (unless (emulator-to-compress emulator)
@@ -900,15 +905,53 @@ cannot make the terminal read other files."
       (foreign-call "ghostty_sys_set" sb-alien:int (sb-alien:int (vt :sys-decode-png))
                     (sb-sys:system-area-pointer (sb-alien:alien-sap (sb-alien:alien-callable-function 'tuatara-terminal-decode-png))))
       (setf *png-decoder-set* t))
-    (set-size-option terminal (vt :opt-kitty-storage-limit) tuatara-user:*terminal-picture-memory*)
+    (setf (emulator-picture-memory emulator) tuatara-user:*terminal-picture-memory*)
+    (set-size-option terminal (vt :opt-kitty-storage-limit) (emulator-picture-memory emulator))
     (sb-alien:with-alien ((off (sb-alien:unsigned 8) 0))
       (dolist (option (list (vt :opt-kitty-medium-file) (vt :opt-kitty-medium-shared-mem)))
         (foreign-call "ghostty_terminal_set" sb-alien:int (sb-sys:system-area-pointer terminal) (sb-alien:int option)
                       (sb-sys:system-area-pointer (sb-alien:alien-sap (sb-alien:addr off))))))
     (foreign-call "ghostty_terminal_set" sb-alien:int (sb-sys:system-area-pointer terminal) (sb-alien:int (vt :opt-kitty-medium-temp-file))
                   (sb-sys:system-area-pointer (tuatara.io:null-pointer)))
-    (when (plusp tuatara-user:*terminal-picture-memory*)
+    (when (plusp (emulator-picture-memory emulator))
       (setf (emulator-placements emulator) (vt-new "ghostty_kitty_graphics_placement_iterator_new")))))
+
+(defparameter *terminal-placement-limit* 1024
+  "The most places a terminal's program may show its pictures at; past it
+the terminal drops every picture the program sent
+\(KEEP-PLACEMENTS-WITHIN-BOUNDS), and the program may send more.")
+
+(defun keep-placements-within-bounds (emulator)
+  "Drop every picture EMULATOR's program sent when it has placed them more
+than *TERMINAL-PLACEMENT-LIMIT* times, counted only when its pictures
+changed since they were last counted: the library's room for pictures is
+made none, which deletes them and their places, then what it was, and the
+debug log says so the first time. To be called holding the library,
+pictures on."
+  (sb-alien:with-alien ((graphics sb-sys:system-area-pointer (tuatara.io:null-pointer))
+                        (generation (sb-alien:unsigned 64) 0)
+                        (iterator sb-sys:system-area-pointer (emulator-placements emulator)))
+    (let ((terminal (emulator-terminal emulator)))
+      (flet ((graphics-get (what place)
+               (eql (vt :success) (foreign-call "ghostty_kitty_graphics_get" sb-alien:int (sb-sys:system-area-pointer graphics)
+                                                (sb-alien:int what) (sb-sys:system-area-pointer place)))))
+        (when (and (eql (vt :success) (foreign-call "ghostty_terminal_get" sb-alien:int (sb-sys:system-area-pointer terminal)
+                                                    (sb-alien:int (vt :data-kitty-graphics))
+                                                    (sb-sys:system-area-pointer (sb-alien:alien-sap (sb-alien:addr graphics)))))
+                   (not (tuatara.io:null-pointer-p graphics))
+                   (graphics-get (vt :graphics-generation) (sb-alien:alien-sap (sb-alien:addr generation)))
+                   (/= generation (emulator-graphics-generation emulator)))
+          (setf (emulator-graphics-generation emulator) generation)
+          (when (and (graphics-get (vt :graphics-placement-iterator) (sb-alien:alien-sap (sb-alien:addr iterator)))
+                     (loop for placements from 0
+                           while (foreign-call "ghostty_kitty_graphics_placement_next" (sb-alien:boolean 8) (sb-sys:system-area-pointer iterator))
+                           thereis (>= placements *terminal-placement-limit*)))
+            (set-size-option terminal (vt :opt-kitty-storage-limit) 0)
+            (set-size-option terminal (vt :opt-kitty-storage-limit) (emulator-picture-memory emulator))
+            (unless (shiftf (emulator-pictures-dropped emulator) t)
+              (tuatara.runtime:queue-debug-report
+               :terminal (format nil "terminal ~d: pictures dropped, placed more than ~:d times"
+                                 (emulator-id emulator) *terminal-placement-limit*)))))))))
 
 (defun image-value (image-handle what &optional (bits 32))
   "What WHAT (an :image- value of the library's layout) is of the picture the

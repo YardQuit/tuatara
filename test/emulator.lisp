@@ -319,3 +319,97 @@ before each by its program."
              (each (/ (* 1e6 (/ (- b a) internal-time-units-per-second)) 3700)))
         (true (< each 20) "~,1f µs a run more (~,3f s and ~,3f s a frame)" each
               (/ a internal-time-units-per-second) (/ b internal-time-units-per-second))))))
+
+(define-test (emulator many-placements-dropped)
+  ;; one picture placed 20,000 times beside a place in text, the screen full of cells
+  ;; standing for two pictures: the pictures dropped once placed more than the limit, a
+  ;; frame quick
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "placements.txt" dir))))
+      (picture-screen-file file 2450 :placements 20000)
+      (let ((each (picture-frame-time file)))
+        (true (< each (/ internal-time-units-per-second 20)) "~,3f s a frame" (/ each internal-time-units-per-second))))))
+
+;;; Output the terminal library must survive
+
+(defparameter *survival-seconds* 120
+  "The longest a process of SURVIVES-IN-CHILD may take before it is ended and its
+test fails.")
+
+(defun survives-in-child (case)
+  "Show the output CASE names (test/emulator/survives.lisp) in a terminal in
+a process of its own, so that output ending that process fails a test
+rather than ending the tests: what the terminal showed after, a property
+list; the process's exit code, or :TIMEOUT when it was ended after
+*SURVIVAL-SECONDS*; and what it printed, its errors among it."
+  (with-test-directory (dir)
+    (let* ((out (merge-pathnames "shown" dir))
+           (printed (merge-pathnames "printed" dir))
+           (process (sb-ext:run-program sb-ext:*runtime-pathname*
+                                        (list "--dynamic-space-size" "2GB" "--noinform" "--disable-ldb" "--end-runtime-options" "--script"
+                                              (namestring (asdf:system-relative-pathname :tuatara "test/emulator/survives.lisp"))
+                                              case (namestring out) (namestring dir))
+                                        :wait nil :output (namestring printed) :if-output-exists :supersede :error :output))
+           (deadline (tuatara.runtime:deadline-in *survival-seconds*)))
+      (loop while (and (sb-ext:process-alive-p process) (plusp (tuatara.runtime:seconds-left deadline)))
+            do (sleep 1/10))
+      (let ((code (if (sb-ext:process-alive-p process)
+                      (progn (sb-ext:process-kill process 9) (sb-ext:process-wait process) :timeout)
+                      (sb-ext:process-exit-code process))))
+        (sb-ext:process-close process)
+        (values (ignore-errors (with-open-file (in out) (with-standard-io-syntax (let ((*read-eval* nil)) (read in)))))
+                code
+                (or (ignore-errors (uiop:read-file-string printed)) ""))))))
+
+(defmacro surviving ((shown case) &body body)
+  "Run BODY with SHOWN what the terminal showed of the output CASE names, in a
+process of its own (SURVIVES-IN-CHILD), once that process ended well; the
+tests skipped when they run in Tuatara's own program, which runs no
+scripts as SBCL does."
+  (let ((code (gensym "CODE")) (printed (gensym "PRINTED")))
+    `(if (string-equal "sbcl" (pathname-name sb-ext:*runtime-pathname*))
+         (multiple-value-bind (,shown ,code ,printed) (survives-in-child ,case)
+           (is eql 0 ,code "the process ended with ~a; it printed:~%~a" ,code ,printed)
+           ,@body)
+         (skip "these tests run in Tuatara's own program, not SBCL, which they start a process of" (true t)))))
+
+(define-test (emulator clearing-keeps-the-cursor-look)
+  ;; screens cleared into a scrollback of no lines (CSI 22 J) while the cursor is bold and
+  ;; in a link on the oldest page: the process lives on, the next character bold and linked
+  (surviving (shown "clear")
+    (is string= "y" (string-right-trim " " (or (getf shown :text) "")))
+    (true (getf shown :bold))
+    (is equal "http://example.com" (getf shown :link))))
+
+(define-test (emulator line-limit-keeps-the-cursor-page)
+  ;; a terminal of one row and no scrollback, a bold link reflowed wider, then line feeds
+  ;; letting go of the page the cursor is on: the process lives on, the next character
+  ;; bold and linked
+  (surviving (shown "line-limit")
+    (true (search "b" (or (getf shown :text) "")))
+    (true (getf shown :bold))
+    (is equal "http://example.com" (getf shown :link))))
+
+(define-test (emulator wide-page-narrowed)
+  ;; a screen 65,535 columns wide holding "hello" made 2 wide and 1 high: the process
+  ;; lives on, the screen 2 wide, its text all there, its rows read in turn
+  (surviving (shown "narrowed")
+    (is eql 2 (getf shown :columns))
+    (is string= "hello" (remove-if (lambda (c) (member c '(#\Newline #\Space))) (or (getf shown :history) "")))))
+
+(define-test (emulator pictures-out-of-bounds-harmless)
+  ;; a picture placed at the largest sizes and offsets the protocol can write, then deleted
+  ;; by them: nothing shown of it, the text after it drawn
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "pictures.txt" dir)))
+          (big "4294967295"))
+      (write-octets-file file
+                         (format nil "~c_Ga=t,f=24,s=1,v=1,i=1,q=2;AAAA~c\\" #\Escape #\Escape)
+                         (format nil "~c_Ga=p,i=1,q=2,c=~a,r=~:*~a,X=~:*~a,Y=~:*~a,x=~:*~a,y=~:*~a,w=~:*~a,h=~:*~a,H=-2147483648,V=-2147483648,z=-2147483648~c\\"
+                                 #\Escape big #\Escape)
+                         (format nil "~c_Ga=p,i=1,p=2,q=2,c=65535,r=65535~c\\after" #\Escape #\Escape)
+                         (format nil "~c_Ga=d,d=r,x=1,y=~a~c\\ shown" #\Escape big #\Escape))
+      (with-emulator (e "sh" (list "-c" (format nil "cat '~a'; sleep 30" file)) :columns 80 :rows 24
+                     :pictures t :cell-width 10 :cell-height 20)
+        (true (find-if (lambda (r) (search "shown" r)) (emulator-screen e :until (screen-has "shown"))))
+        (true (tuatara.defaults::emulator-alive-p e))))))

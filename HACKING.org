@@ -8,8 +8,12 @@
   where =QUICKLISP_SETUP= names its =setup.lisp=. The Lisp libraries (CFFI,
   cl-ppcre, Parachute and the rest) are fetched by it on the first build.
 - A C and C++ compiler, git and make, for the tree-sitter grammars.
-- Zig, the version =lisp/terminal/library.pin= names, for the terminal library
-  (from ziglang.org; one directory, no installation).
+- Zig 0.17.0, the version =lisp/terminal/library.pin= names, for the terminal
+  library: =https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz=,
+  unpacked anywhere (one directory, no installation) and put first on =PATH=.
+  Its SHA-256 is in =tools/ci-setup.sh=, which checks it before using it for a
+  release; check yours the same way (=sha256sum=). A distribution's Zig of
+  another version is refused.
 - At run time: GTK 4 for the window, ncurses for the terminal; bubblewrap,
   ImageMagick and poppler's tools for pictures and PDFs; enchant and hunspell
   for spelling.

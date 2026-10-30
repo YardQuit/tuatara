@@ -1,5 +1,5 @@
 # The terminal library (libghostty-vt, from Ghostty, MIT): the repository and
 # the commit tools/terminal-library.sh builds, and the Zig it needs.
 repository	https://github.com/ghostty-org/ghostty
-commit	b699ea79f4b881421b4b3055abc16a0957d76beb
-zig	0.16.0
+commit	83fb95624b0439ee660c2679b43b38c8b63769cd
+zig	0.17.0

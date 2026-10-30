@@ -19,8 +19,8 @@ trap 'rm -rf "$work"' EXIT
 
 sbcl_url=https://downloads.sourceforge.net/project/sbcl/sbcl/2.6.8/sbcl-2.6.8-x86-64-linux-binary.tar.bz2
 sbcl_sha256=5391773774b94554a015db9f992370d06937fb6f0cdb0b2142281aebef9e96c1
-zig_url=https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-zig_sha256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+zig_url=https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+zig_sha256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
 # the Quicklisp client, as client-info.sexp of its version 2021-02-13 names it
 ql_client_url=https://beta.quicklisp.org/client/2021-02-13/quicklisp.tar
 ql_client_sha256=a8a3c8c91b51dd185175abad4d7c3999ebb4e2520be5a6cee2127035ac6c87be

@@ -25,7 +25,7 @@ stamp="$out/.built-from"
 wanted="$(cat "$pin" "$0" "$root/lisp/terminal/layout.c" "$root/lisp/terminal/shim.c" | sha256sum | cut -c1-16)-$target"
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$wanted" ] && [ -f "$out/libghostty-vt.so" ]; then exit 0; fi
 if ! command -v zig >/dev/null || [ "$(zig version)" != "$zig_wanted" ]; then
-  echo "tools/terminal-library.sh: Zig $zig_wanted is needed to build the terminal library (have: $(zig version 2>/dev/null || echo none))" >&2
+  echo "tools/terminal-library.sh: Zig $zig_wanted is needed to build the terminal library (have: $(zig version 2>/dev/null || echo none)); HACKING.org says where to get it" >&2
   exit 1
 fi
 if [ "$(git -C "$sources" rev-parse HEAD 2>/dev/null)" != "$commit" ]; then
