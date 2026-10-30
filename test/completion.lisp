@@ -539,3 +539,18 @@
     ;; all match at a word's start alike: shorter first, then by characters' codes
     (true (loop for (a b) on sorted while b
                 always (or (< (length a) (length b)) (and (= (length a) (length b)) (string<= a b)))))))
+
+(define-test (completion exact-buffer-name-wins-over-longer-names)
+  ;; a buffer's name typed whole and RET switches to that buffer, though other names hold it
+  (flet ((switched-to (current keys)
+           (let ((made (mapcar (lambda (name) (tuatara.buffer:make-buffer name :text name))
+                               '("a.txt" "*Conflict: a.txt*" "*Diff: a.txt*" "b.txt"))))
+             (unwind-protect
+                  (multiple-value-bind (f editor) (run-keys (format nil "C-x b ~a RET ~a" (key-string current) keys) :text "")
+                    (declare (ignore f))
+                    (tuatara.buffer:buffer-name (session-buffer editor)))
+               (mapc #'tuatara.buffer:kill-buffer made)))))
+    (is string= "a.txt" (switched-to "*Diff: a.txt*" "C-x b a . t x t RET"))
+    (is string= "a.txt" (switched-to "b.txt" "C-x b a . t x t RET"))
+    ;; the buffer shown already is no candidate: the name typed is taken as typed
+    (is string= "a.txt" (switched-to "a.txt" "C-x b a . t x t RET"))))

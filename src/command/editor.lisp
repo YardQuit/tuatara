@@ -202,7 +202,7 @@ lone minus; NIL for none, or with no editor."
   (and *editor* (editor-prefix-argument *editor*)))
 
 (defstruct (completion (:constructor make-completion (table &key annotate require-match history (separator #\/) (filter t)
-                                                             select reselect preview source default keep-order none
+                                                             select reselect preview source default keep-order none taken
                                                              (prompt "")))
                        (:copier nil))
   "State of a completing read. TABLE is a list of CANDIDATE or a function of
@@ -232,8 +232,9 @@ DEFAULT, when not NIL, is what \\[minibuffer-done] takes while nothing is
 typed, its candidate offered first then, and named in the prompt; KEEP-ORDER
 true keeps the candidates matching in the order TABLE gives them, not sorted
 best first; NONE, words the prompt says once all have come and there are
-none; PROMPT, the question as asked, before those words are added to it (or
-a function of no arguments giving it).
+none; TAKEN, a list of names the read takes when they are typed whole,
+though they are not among its candidates; PROMPT, the question as asked,
+before those words are added to it (or a function of no arguments giving it).
 DONE-PENDING is true when \\[minibuffer-done] came while nothing could be
 chosen yet and more was coming, to be done once it has come; MOVED
 is true once a candidate was selected by hand for the input typed, which
@@ -257,6 +258,7 @@ alone."
   (default nil :read-only t)
   (keep-order nil :read-only t)
   (none nil :read-only t)
+  (taken '() :read-only t)
   (prompt "" :type (or string function) :read-only t)
   (working nil)
   (listed nil)
@@ -285,6 +287,7 @@ alone."
       (documentation 'completion-source 'function) "The function a COMPLETION calls to take in candidates found in the background, or NIL."
       (documentation 'completion-default 'function) "What a COMPLETION takes while nothing is typed, or NIL."
       (documentation 'completion-keep-order 'function) "True when a COMPLETION keeps its candidates in the order given."
+      (documentation 'completion-taken 'function) "The names a COMPLETION takes when typed whole, though they are not among its candidates."
       (documentation 'completion-none 'function) "The words a COMPLETION's prompt says when all have come and there are none, or NIL."
       (documentation 'completion-prompt 'function) "The question a COMPLETION asks, as asked."
       (documentation 'completion-working 'function) "True while a COMPLETION's SOURCE said more candidates may come."

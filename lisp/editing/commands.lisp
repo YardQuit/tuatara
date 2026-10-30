@@ -1633,6 +1633,7 @@ current one (BUFFER-CANDIDATES), the ones used lately first, so that
 *PREVIEW-BUFFERS*, the buffer selected is shown meanwhile in the window you
 are in, what it showed coming back when the question ends. With
 REQUIRE-MATCH, one of them must be chosen; else a new name is taken as typed.
+The current buffer's name typed whole is taken, though it is not offered.
 Returns the name."
   (call-with-window-preview
    (lambda (candidate made)
@@ -1641,6 +1642,7 @@ Returns the name."
        (and buffer (live-buffer-p buffer) buffer)))
    (lambda (show)
      (completing-read prompt (buffer-candidates) :history (recent-buffer-names) :require-match require-match
+                                                 :taken (and (not require-match) (list (tuatara.buffer:buffer-name (current-buffer))))
                                                  :preview (and *preview-buffers* show)))))
 
 (define-command switch-to-buffer ()

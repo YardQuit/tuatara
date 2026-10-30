@@ -119,6 +119,10 @@ HISTORY, a list of earlier answers, newest first, is gone back through with
                              (update-candidates editor)
                              (let ((completion (editor-completion editor)))
                                (cond ((null completion) (return-from reading (editor-minibuffer-text editor)))
+                                     ;; a name taken though not offered, typed whole
+                                     ((and (not (completion-moved completion))
+                                           (member (editor-minibuffer-text editor) (completion-taken completion) :test #'string=))
+                                      (return-from reading (editor-minibuffer-text editor)))
                                      ;; nothing typed: the default, at once
                                      ((and (completion-default completion) (zerop (length (editor-minibuffer-text editor)))
                                            (not (completion-moved completion)))
@@ -352,7 +356,7 @@ when the frontend has nothing more to deliver."
             key)))))
 
 (defun completing-read (prompt table &key annotate require-match history (initial "") (separator #\/) (filter t)
-                                         select reselect preview source default keep-order none keymap)
+                                         select reselect preview source default keep-order none taken keymap)
   "Read with completion: PROMPT is shown (a string, or a function of no
 arguments giving it, for a question whose words change while it is open), TABLE is a list of candidates
 (CANDIDATE objects or strings) or a function of the input returning one, and
@@ -380,6 +384,8 @@ typed: its candidate comes first then, selected, and the prompt names it,
 Describe function (default car): . With KEEP-ORDER, the candidates that
 match stay in the order TABLE gives them, not sorted best first; with
 KEEP-ORDER :UNTIL-TYPED, only while nothing is typed to match them.
+TAKEN, a list of names not among the candidates, are taken when typed
+whole and \\[minibuffer-done] is pressed with no candidate chosen by hand.
 KEYMAP holds the question's own keys, as READ-STRING takes it.
 Signals QUIT on abort."
   (let* ((editor *editor*)
@@ -390,7 +396,7 @@ Signals QUIT on abort."
     (let ((completion (make-completion table :annotate annotate :require-match require-match :history history
                                              :separator separator :filter filter :select select :reselect reselect
                                              :preview preview :source source :default default :keep-order keep-order
-                                             :none none :prompt prompt)))
+                                             :none none :taken taken :prompt prompt)))
       (setf (editor-completion editor) completion)
       (if source
           (take-in-source editor)
