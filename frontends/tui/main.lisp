@@ -15,8 +15,10 @@
 (defparameter *usage*
   "Usage: tuatara [--gui] [-c INIT-FILE] [FILE...]
 Edit the FILEs in this terminal, or start in the scratch buffers without any.
+Written by Michael A Jones; free software under the GNU General Public
+License, version 3 or later.
   --gui       open a window of its own instead (as when started with no terminal)
-  -c INIT-FILE, --config INIT-FILE
+  -c INIT-FILE, --config INIT-FILE (or --config=INIT-FILE)
               read INIT-FILE as the init file instead of
               ~/.config/tuatara/init.lisp
   --generate-config
@@ -24,13 +26,20 @@ Edit the FILEs in this terminal, or start in the scratch buffers without any.
               setting in it commented out, as
               ~/.config/tuatara/generated-init.lisp, and exit; a file there
               already is left as it is
-  --help      show this and exit
-  --version   show the version and exit
+  --help, -h  show this and exit
+  --version, -V
+              show the version and exit
+  --          the arguments after it are all files, even when one starts with a
+              dash
   --install-desktop
               (the AppImage) copy it to ~/.local/bin/tuatara and put Tuatara
               in the desktop's applications, its icon too
   --remove-desktop
               (the AppImage) take them away again
+  --dark, --light
+              (the AppImage) show the window's title bar in the dark or the
+              light style; with --install-desktop, for the desktop's
+              applications
   --dynamic-space-size SIZE
               the most memory Tuatara's own data may take, such as 6GB; by
               default half the machine's memory, from 2GB to 16GB, or
