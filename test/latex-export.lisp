@@ -579,7 +579,7 @@ is not offered by M-x either; NIL when it runs there."
   (let ((text (format nil "#+begin_src emacs-lisp~%(defun hello () \"A string\")~%#+end_src~%~%#+begin_example~%path\\to{x}~%#+end_example~%")))
     ;; the enhanced export: lines that break at the margin, the code in its colours, the rest as written
     (let ((latex (tuatara.defaults::org-latex-document text :enhanced t)))
-      (true (search "\\begin{Verbatim}[breaklines,breakafter=/-.\\,;:=,commandchars=\\\\\\{\\}]" latex))
+      (true (search "\\begin{Verbatim}[breaklines,breakautoindent=false,breakindent=1em,breakafter=/-.\\,;:=,commandchars=\\\\\\{\\}]" latex))
       (true (search "\\usepackage{fvextra}" latex))
       (true (search "\\color[HTML]{" latex))
       (true (search "defun" latex))
@@ -2047,3 +2047,34 @@ Shut in.
       (false (search "image2" text))
       (is = 2 (length (cl-ppcre:all-matches-as-strings "<a:blip r:embed=" text)))
       (true (search "<wp:docPr id=\"2\" name=\"Picture 2\"/>" text)))))
+
+(defun latex-without-breaks (latex)
+  "LATEX with the places a line may break in code taken out, as copying from the PDF leaves them."
+  (cl-ppcre:regex-replace-all "\\\\codebreak\\{\\}|\\\\discretionary\\{\\}\\{\\}\\{\\}" latex ""))
+
+(defun latex-longest-between-breaks (latex)
+  "The most characters of LATEX between two places a line may break in code."
+  (loop for piece in (cl-ppcre:split "\\\\codebreak\\{\\}|\\\\discretionary\\{\\}\\{\\}\\{\\}|\\\\texttt\\{|\\}|[ \\n&]|\\\\\\\\" latex)
+        maximize (length piece)))
+
+(define-test (latex-export long-code-breaks)
+  (let ((enhanced (lambda (text) (tuatara.defaults::org-latex-document text :enhanced t)))
+        (digest "d41d8cd98f00b2040000e9800998ecf8427e0000da39a3ee5e6b4b0d3255bfef95601890"))
+    ;; a long span: places to break in a path and a message, and in a digest with none; with
+    ;; them taken out, the span is what was written
+    (dolist (span '("~/Projects/palimpsest-practice/hand.pdf"
+                    "Wrote ~/Projects/palimpsest-practice/hand.pdf: 434 octets"
+                    "tuatara-user:*org-latex-text-characters*"
+                    "d41d8cd98f00b2040000e9800998ecf8427e0000da39a3ee5e6b4b0d"))
+      (let ((latex (funcall enhanced (format nil "See =~a= here.~%" span))))
+        (true (search "\\codebreak{}" latex) "no place to break in ~a" span)
+        (true (search (format nil "\\texttt{~a}" (tuatara.defaults::latex-escape span :special-strings nil))
+                      (latex-without-breaks latex))
+              "the copied text differs for ~a" span)))
+    ;; a long line of a block: its digest may break, and the line is what was written
+    (let* ((line (format nil "SHA-256     ~a" digest))
+           (latex (funcall enhanced (format nil "#+begin_example~%~a~%#+end_example~%" line))))
+      (true (search "breakautoindent=false,breakindent=1em" latex))
+      (true (search "\\discretionary{}{}{}" latex))
+      (true (< (latex-longest-between-breaks (subseq latex (search "SHA-256" latex))) 17))
+      (true (search line (latex-without-breaks latex))))))

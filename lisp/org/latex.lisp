@@ -689,9 +689,12 @@ when its :EXPORT: drawer says contents: no."
 (defun latex-verbatim-escape (string &key (tab-width 8))
   "STRING for a Verbatim environment that reads commands (commandchars \\, {
 and }): those three as the characters they are, tabs as spaces to the next
-stop of TAB-WIDTH, the rest as it is."
+stop of TAB-WIDTH, and a place the line may break after every
+*LATEX-CODE-RUN-LIMIT* characters with no space or mark of punctuation
+\(a break the Verbatim environment makes of its own) among them, the rest as
+it is."
   (with-output-to-string (out)
-    (let ((column 0))
+    (let ((column 0) (run 0))
       (loop for c across string
             do (case c
                  (#\\ (write-string "\\char92{}" out) (incf column))
@@ -701,7 +704,12 @@ stop of TAB-WIDTH, the rest as it is."
                           (dotimes (i spaces) (write-char #\Space out))
                           (incf column spaces)))
                  (#\Newline (write-char c out) (setf column 0))
-                 (t (write-char c out) (incf column)))))))
+                 (t (write-char c out) (incf column)))
+               (if (or (find c '(#\Space #\Tab #\Newline)) (find c *latex-code-break-after*))
+                   (setf run 0)
+                   (when (>= (incf run) *latex-code-run-limit*)
+                     (write-string "\\discretionary{}{}{}" out)
+                     (setf run 0)))))))
 
 (defun org-latex-code-faces (code name)
   "The face of each character of CODE read as the language NAME is (as a
@@ -775,10 +783,11 @@ stays where its lines can be broken anywhere."
 (defun org-latex-verbatim (value out &key caption node plain)
   "Write VALUE as it is, in a verbatim environment, to OUT, in a figure with
 CAPTION when there is one; nothing when VALUE is blank. In the enhanced
-export its long lines are broken where they meet the margin (at a space, or
-after / - . , ; : =, a mark where they break that text copied from the PDF
-leaves out), the code of a
-source block NODE coloured as Tuatara colours its language
+export its long lines are broken where they meet the margin (at a space,
+or after / - . , ; : =, or in a run with none, as a long digest, after every
+*LATEX-CODE-RUN-LIMIT* characters; the rest of the line is indented one em,
+with a mark where it breaks that text copied from the PDF leaves out), the
+code of a source block NODE coloured as Tuatara colours its language
 \(ORG-LATEX-CODE-FACES), and NODE's #+ATTR_LATEX :columns N sets it in N
 columns, :font in that type (\\small); with PLAIN, those two are not read."
   (let* ((value (string-right-trim '(#\Newline) value))
@@ -792,7 +801,7 @@ columns, :font in that type (\\small); with PLAIN, those two are not read."
                 font (and columns (> columns 1)) columns inner font)
         (return-from org-latex-verbatim)))
     (let ((block (cond (enhanced
-                        (format nil "\\begin{Verbatim}[breaklines,breakafter=/-.\\,;:=,commandchars=\\\\\\{\\}]~%~a~%\\end{Verbatim}~%"
+                        (format nil "\\begin{Verbatim}[breaklines,breakautoindent=false,breakindent=1em,breakafter=/-.\\,;:=,commandchars=\\\\\\{\\}]~%~a~%\\end{Verbatim}~%"
                                 (org-latex-code-lines value (and node (eq (org-node-type node) 'src-block)
                                                                  (org-latex-code-faces value (org-property node :language))))))
                        (t (format nil "\\begin{verbatim}~%~a~%\\end{verbatim}~%" value)))))
