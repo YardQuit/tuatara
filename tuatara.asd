@@ -192,6 +192,7 @@
                (:file "git")
                (:file "compile")
                (:file "packages")
+               (:file "package-trust")
                (:file "stable-surface")
                (:file "state-and-files")
                (:file "job-endings")

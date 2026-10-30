@@ -18,6 +18,15 @@
 ;;;; cache once a version and loaded. A package has a Lisp package of its own
 ;;;; that uses TUATARA, the names lisp/api.lisp lists, and makes its settings
 ;;;; with DEFINE-PACKAGE-SETTING.
+;;;;
+;;;; A package says which Tuatara it needs in a line of its entry file's
+;;;; header, ;;;; Needs: Tuatara 0.91.0, read without running it: a version
+;;;; needing a newer one is never taken, an older one that fits taken in its
+;;;; place. Who signed the commit or tag fetched is checked by git, and the
+;;;; signer of a source's first version taken is remembered: a later version
+;;;; signed by another, or unsigned when it was signed, is refused until you
+;;;; trust the source again. The version taken and the one before it are
+;;;; kept, the one before loaded again when the new one fails to load.
 
 (in-package #:tuatara.defaults)
 
@@ -36,24 +45,35 @@ repository's address or a folder of your disk (PACKAGE-SOURCE sets them).")
   "How many fetched packages' versions are remembered.")
 
 (defun package-line (entry)
-  "The line of the packages file for ENTRY, (KEY COMMIT TAG ACCEPTED), COMMIT
-being a dash for a folder of your disk."
-  (destructuring-bind (key commit tag accepted) entry
-    (format nil "~a~c~a~c~a~c~:[no~;yes~]" (escape-path key) #\Tab commit #\Tab (escape-path (or tag "")) #\Tab accepted)))
+  "The line of the packages file for ENTRY, (KEY COMMIT TAG ACCEPTED PREVIOUS
+PREVIOUS-TAG SIGNER), COMMIT being a dash for a folder of your disk, PREVIOUS
+the commit taken before it and kept to fall back on, or NIL, and SIGNER who
+signed COMMIT as git checked it when it was taken, a key's fingerprint or
+\"unsigned\", or NIL when not known."
+  (destructuring-bind (key commit tag accepted &optional previous previous-tag signer) entry
+    (format nil "~a~c~a~c~a~c~:[no~;yes~]~@[~a~]" (escape-path key) #\Tab commit #\Tab (escape-path (or tag "")) #\Tab accepted
+            (and (or previous signer)
+                 (format nil "~c~a~c~a~@[~c~a~]" #\Tab (or previous "") #\Tab (escape-path (or previous-tag ""))
+                         (and signer #\Tab) signer)))))
 
 (defun parse-package-line (line)
-  "The entry LINE of the packages file writes, (KEY COMMIT TAG ACCEPTED), or
-NIL for a line that makes no sense."
+  "The entry LINE of the packages file writes, (KEY COMMIT TAG ACCEPTED
+PREVIOUS PREVIOUS-TAG SIGNER), or NIL for a line that makes no sense."
   (let ((fields (uiop:split-string line :separator '(#\Tab))))
-    (when (= 4 (length fields))
-      (destructuring-bind (key commit tag accepted) fields
-        (and (plusp (length key)) (cl-ppcre:scan "^(?:[0-9a-f]{7,64}|-)$" commit)
-             (list (unescape-path key) commit (let ((tag (unescape-path tag))) (and (plusp (length tag)) tag))
-                   (string= accepted "yes")))))))
+    (when (member (length fields) '(4 6 7))
+      (destructuring-bind (key commit tag accepted &optional previous previous-tag signer) fields
+        (flet ((tag (text) (let ((tag (unescape-path text))) (and (plusp (length tag)) tag)))
+               (commit-p (text) (cl-ppcre:scan "^(?:[0-9a-f]{7,64}|-)$" text)))
+          (let ((previous (and previous (plusp (length previous)) previous)))
+            (and (plusp (length key)) (commit-p commit) (or (null previous) (commit-p previous))
+                 (or (null signer) (string= signer "unsigned") (cl-ppcre:scan "^(?:SHA256:[A-Za-z0-9+/=]+|[0-9A-F]{40,64})$" signer))
+                 (list (unescape-path key) commit (tag tag) (string= accepted "yes")
+                       previous (and previous (tag previous-tag)) signer))))))))
 
 (define-state-list *fetched-packages* "packages" 'parse-package-line 'package-line '*packages-kept*
   :header (format nil "# The packages fetched, the latest first: the package, its source and the~%~
-                       # version asked for; the commit fetched; its tag; whether it was let load.~%")
+                       # version asked for; the commit fetched; its tag; whether it was let load;~%~
+                       # the commit taken before it and its tag, kept to fall back on.~%")
   :path-of #'first)
 
 (defun fetched-package (key)
@@ -61,15 +81,71 @@ NIL for a line that makes no sense."
 ACCEPTED), or NIL."
   (state-list-find *fetched-packages* key))
 
-(defun tuatara-user:package-source (name where)
+(defun tuatara-user:package-source (name where &key signers)
   "Name WHERE, a git repository's address or a folder of your disk (~/ for
 your home folder), as the source NAME, for load-package's :source:
-\(package-source \"mine\" \"https://example.org/my-packages.git\")."
+\(package-source \"mine\" \"https://example.org/my-packages.git\").
+
+SIGNERS, a list of the keys' fingerprints that sign its versions (an SSH
+key's SHA256:..., a GPG key's 40 hexadecimal digits), takes from it only
+versions signed by one of them, from the first; without it, whoever signed
+the first version taken is remembered and asked of every later one. An
+address of http:// or git:// is allowed only by :plain t on the
+load-package of each package fetched from it."
   (unless (and (stringp name) (plusp (length name)))
     (error "package-source takes a name and an address or a folder: ~s ~s" name where))
   (check-package-where where)
+  (note-package-source-terms where signers)
   (setf *package-sources* (acons name where (remove name *package-sources* :key #'car :test #'string=)))
   where)
+
+(defvar *package-signers* '()
+  "The signers the init file names for sources, each (WHERE . FINGERPRINTS):
+only versions signed by one of FINGERPRINTS are taken from WHERE.")
+
+(defvar *package-plain-allowed* '()
+  "The packages the init file allows to be fetched from an address of http://
+or git:// by :plain t on their load-package, each (NAME . WHERE).")
+
+(defun signer-fingerprint (text)
+  "The key's fingerprint TEXT writes, as it is compared: spaces taken out, and
+a GPG key's hexadecimal digits in capitals; an SSH key's (SHA256:...) as
+written."
+  (let ((bare (remove #\Space text)))
+    (if (every (lambda (c) (digit-char-p c 16)) bare) (string-upcase bare) bare)))
+
+(defun note-package-source-terms (where signers)
+  "Remember for the source WHERE the SIGNERS its versions must be signed by,
+as package-source and load-package give them; an error for SIGNERS that is no
+list of fingerprints."
+  (unless (listp signers)
+    (error "A source's :signers are a list of keys' fingerprints: ~s" signers))
+  (dolist (signer signers)
+    (let ((bare (and (stringp signer) (remove #\Space signer))))
+      (cond ((and bare (cl-ppcre:scan "^(?:SHA256:[A-Za-z0-9+/]{43}=?|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$" bare)))
+            ((and bare (cl-ppcre:scan "^(?:0x)?[0-9A-Fa-f]{8,16}$" bare))
+             (error "~s in :signers is a GPG key's ID: name its whole fingerprint, the 40 hexadecimal digits gpg --fingerprint shows for the key itself (pub), not a subkey's" signer))
+            (t (error "~s in :signers is no key's fingerprint: an SSH key's SHA256:... (ssh-keygen -lf KEY.pub) or a GPG key's 40 hexadecimal digits (gpg --fingerprint)" signer)))))
+  (when signers
+    (setf *package-signers* (acons where (mapcar #'signer-fingerprint signers)
+                                   (remove where *package-signers* :key #'car :test #'string=)))))
+
+(defun package-signers-named (where)
+  "The fingerprints the init file names for the source WHERE, or NIL."
+  (cdr (assoc where *package-signers* :test #'string=)))
+
+(defun plain-transport-p (where)
+  "True when WHERE is an address of http:// or git://, whose transport is not encrypted."
+  (and (cl-ppcre:scan "(?i)^(?:http|git)://" where) t))
+
+(defun plain-source-refusal (name where)
+  "Why the package NAME is not fetched from WHERE, an address over plain
+transport that no load-package allowed with :plain t, with how to allow it;
+NIL when WHERE needs no allowing or is allowed."
+  (when (and (plain-transport-p where) (not (member (cons name where) *package-plain-allowed* :test #'equal)))
+    (format nil "The package ~a is not fetched from ~a: over http:// or git:// anyone on the way can read and change it. ~
+                 Use https://, ssh or a folder of your disk, or allow this source by adding :plain t to its load-package"
+            name where)))
 
 (defun package-where (source)
   "Where SOURCE, a source's name (PACKAGE-SOURCE) or itself an address or a
@@ -92,7 +168,9 @@ git as an option."
   (when (char= (char where 0) #\.)
     (error "A package's folder is named whole, from / or ~~/: ~s" where))
   (when (cl-ppcre:scan "^[a-z][a-z0-9+.-]*://[^/@]*@" where)
-    (error "A package's address cannot hold a name or a password (@): ~s" where)))
+    (error "A package's address cannot hold a name or a password (@): ~s" where))
+  (when (cl-ppcre:scan "(?i)^ftps?://" where)
+    (error "A package is fetched over https://, ssh or from a folder of your disk, not over ftp: ~s" where)))
 
 (defun package-key (name where version)
   "What a package called NAME from WHERE, VERSION asked for, is remembered by."
@@ -166,7 +244,7 @@ each (NAME COMMAND . FUNCTION): FUNCTION runs COMMAND of the package NAME.")
   "While the init file is read, the packages loaded meanwhile, each (NAME .
 MILLISECONDS), after :START; NIL otherwise.")
 
-(defparameter *load-package-keywords* '(:source :version :file :folder :disabled :if :defer :after :commands :modes :init :config)
+(defparameter *load-package-keywords* '(:source :version :file :folder :signers :plain :disabled :if :defer :after :commands :modes :init :config)
   "What load-package takes after a package's name, each followed by its value
 or, for :commands, :modes, :init and :config, by any number of them.")
 
@@ -215,6 +293,10 @@ keyword with its value, or for the last four with any number of them:
          or when not given and it has no tag yet.
 :folder  its folder in the repository or source folder, when not NAME.
 :file    its first file, when not NAME.lisp or load.lisp.
+:signers the fingerprints of the keys its versions must be signed by, a
+         list (as package-source takes them): only those are taken.
+:plain   t to allow an address of http:// or git://, whose transport is not
+         encrypted: refused without it.
 :disabled t to leave the whole block out, as if it were not there.
 :if      a form: the block is left out when it gives NIL, as on another
          machine, (:if (string= (machine-instance) \"laptop\")).
@@ -253,7 +335,8 @@ later or nothing is."
       `(declare-package ,name :left-out ,(cond ((one :disabled) :disabled)
                                                ((getf parsed :if) `(and (not ,(one :if)) :if)))
                               :source ,(one :source) :version ,(one :version) :file ,(one :file)
-                              :folder ,(one :folder) :defer ,(one :defer) :after ,(one :after)
+                              :folder ,(one :folder) :signers ,(one :signers) :plain ,(one :plain)
+                              :defer ,(one :defer) :after ,(one :after)
                               :commands ',(getf parsed :commands) :modes ',(getf parsed :modes)
                               :init ',(getf parsed :init) :config ',(getf parsed :config)))))
 
@@ -391,7 +474,7 @@ of four letters or fewer, two for a longer one."
                                               (if (uiop:string-suffix-p text "-mode") (subseq text 0 (- (length text) 5)) text)))
                              (mode-names))))))
 
-(defun declare-package (name &key left-out source version file folder defer after commands modes init config)
+(defun declare-package (name &key left-out source version file folder signers plain defer after commands modes init config)
   "Load the package NAME as LOAD-PACKAGE says, each keyword as it takes it,
 INIT and CONFIG the forms after :init and :config; LEFT-OUT :disabled or :if
 when the block is left out, said in *Messages*. Returns the file loaded, or
@@ -423,6 +506,9 @@ NIL when it is loaded later or nothing is."
            (unless (and (stringp source) (plusp (length source)))
              (error "A package's :source is a source's name, an address or a folder: ~s" source))
            (check-package-where (package-where source))
+           (note-package-source-terms (package-where source) signers)
+           (setf *package-plain-allowed* (remove name *package-plain-allowed* :key #'car :test #'string=))
+           (when plain (push (cons name (package-where source)) *package-plain-allowed*))
            (when (and version (not (and (stringp version) (cl-ppcre:scan "^[^\\s~^:?*\\[\\\\]+$" version))))
              (error "A package's :version is a tag, a branch or a commit: ~s" version))
            (when (and file (not (and (stringp file) (cl-ppcre:scan "^[A-Za-z0-9._-]+\\.lisp$" file))))
@@ -853,28 +939,106 @@ else NAME.lisp, else load.lisp; NIL when there is none."
   (some (lambda (entry) (and entry (probe-file (merge-pathnames entry folder)) entry))
         (list file (concatenate 'string name ".lisp") "load.lisp")))
 
+;;; The version of Tuatara a package needs
+
+(defparameter *package-header-octets* 16384
+  "How much of a package's entry file is read for the version of Tuatara it
+needs: the comment lines at its top.")
+
+(defun needed-version-in (text)
+  "The version of Tuatara the start of a package's entry file, TEXT, says it
+needs, as a string: a line of the comments at its top that reads
+\";;;; Needs: Tuatara 0.91.0\" (any number of semicolons, \"or later\" after
+it allowed); NIL when there is none."
+  (loop for start = 0 then (1+ end)
+        for end = (or (position #\Newline text :start start) (length text))
+        for trimmed = (string-trim '(#\Space #\Tab #\Return) (subseq text start end))
+        while (or (zerop (length trimmed)) (char= (char trimmed 0) #\;))
+        do (let ((found (nth-value 1 (cl-ppcre:scan-to-strings
+                                      "(?i)^;+\\s*Needs:\\s*Tuatara\\s+([0-9]+(?:\\.[0-9]+){0,3})(?:\\s+or\\s+later)?\\s*\\.?$"
+                                      trimmed))))
+             (when found (return (aref found 0))))
+        until (= end (length text))))
+
+(defun package-needed-version (folder name file)
+  "The version of Tuatara the package NAME in FOLDER says it needs in its
+entry file's header (NEEDED-VERSION-IN), read and never run; NIL when it
+says none, or has no entry."
+  (let ((entry (package-entry folder name file)))
+    (when entry
+      (let ((octets (ignore-errors
+                     (tuatara.io:call-with-file (tuatara.io:native (merge-pathnames entry folder))
+                                                (lambda (fd path size) (tuatara.io:read-fd-start fd path size *package-header-octets*))))))
+        (and octets (needed-version-in (tuatara.text:lenient-string octets)))))))
+
+(defun version-numbers (text)
+  "The numbers of the version TEXT, as a list: 0.90.13 is (0 90 13)."
+  (mapcar #'parse-integer (cl-ppcre:all-matches-as-strings "[0-9]+" text)))
+
+(defun tuatara-fits-p (needed)
+  "True when this Tuatara is the version NEEDED or later, each number
+compared in turn, one left out counted 0; true too when this one's version
+is not known."
+  (let ((have (version-numbers (tuatara:version))) (need (version-numbers needed)))
+    (or (null have)
+        (loop for i below (max (length have) (length need))
+              for a = (or (nth i have) 0) and b = (or (nth i need) 0)
+              when (> a b) return t
+              when (< a b) return nil
+              finally (return t)))))
+
+(defun unfitting-version (folder name file)
+  "The version of Tuatara the package NAME in FOLDER needs when it is newer
+than this one, or NIL when it fits."
+  (let ((needed (package-needed-version folder name file)))
+    (and needed (not (tuatara-fits-p needed)) needed)))
+
+(define-condition package-needs-newer-tuatara (error)
+  ((name :initarg :name :reader package-needs-newer-tuatara-name)
+   (needed :initarg :needed :reader package-needs-newer-tuatara-needed))
+  (:report (lambda (condition stream)
+             (format stream "~a needs Tuatara ~a or later, and this is ~a"
+                     (package-needs-newer-tuatara-name condition) (package-needs-newer-tuatara-needed condition)
+                     (tuatara:version))))
+  (:documentation "Signalled when the package NAME says it needs Tuatara NEEDED or later, newer
+than this one: it is not loaded."))
+
+(setf (documentation 'package-needs-newer-tuatara-name 'function) "The name of the package not loaded."
+      (documentation 'package-needs-newer-tuatara-needed 'function) "The version of Tuatara it needs.")
+
+(defvar *loaded-package-folders* '()
+  "The folder each package loaded this session was loaded from, each (NAME .
+FOLDER): never deleted while the editor runs.")
+
 (defun load-package-folder (folder name file)
   "Load the package called NAME in FOLDER by its entry (PACKAGE-ENTRY), its
 files compiled, then what follows (LOADING-PACKAGE): its :config, the
-packages waiting for it, the time it took said. Returns its entry's file, or
+packages waiting for it, the time it took said. One that needs a newer
+Tuatara (PACKAGE-NEEDED-VERSION) is not loaded. Returns its entry's file, or
 NIL when it failed."
   (loading-package name (abbreviated-path (tuatara.io:native folder))
                    (lambda ()
                      (let ((entry (or (package-entry folder name file)
                                       (error "The package ~a has no ~:[~a.lisp or load.lisp~;~:*~a~] in ~a" name file name
-                                             (abbreviated-path (tuatara.io:native folder))))))
+                                             (abbreviated-path (tuatara.io:native folder)))))
+                           (needed (unfitting-version folder name file)))
+                       (when needed
+                         (error 'package-needs-newer-tuatara :name name :needed needed))
                        (let ((*package-folder* folder) (*loading-package-name* name) (*package-check* nil))
-                         (tuatara-user:load-package-file entry))))))
+                         (prog1 (tuatara-user:load-package-file entry)
+                           (setf *loaded-package-folders*
+                                 (acons name (tuatara.io:native folder) (remove name *loaded-package-folders* :key #'car :test #'string=)))))))))
 
-(defun package-question (name where folder then)
+(defun package-question (name where folder then &optional signer)
   "Ask whether to compile and load the package NAME from WHERE, kept in
-FOLDER: y calls THEN, v lists its folder, opened safely, n leaves it;
-THEN at once with *PACKAGE-ASK-BEFORE-LOADING* NIL."
+FOLDER, SIGNER saying who signed it when given: y calls THEN, v lists its
+folder, opened safely, n leaves it; THEN at once with
+*PACKAGE-ASK-BEFORE-LOADING* NIL."
   (if (not *package-ask-before-loading*)
       (funcall then)
       (loop
-        (let ((answer (string-trim " " (read-string (format nil "Compile and load the package ~a from ~a? (y, n, or v to view its source) "
-                                                            name (abbreviated-path where))))))
+        (let ((answer (string-trim " " (read-string (format nil "Compile and load the package ~a from ~a~@[, ~a~]? (y, n, or v to view its source) "
+                                                            name (abbreviated-path where) signer)))))
           (cond ((string-equal answer "y") (return (funcall then)))
                 ((string-equal answer "v")
                  (rimu-show-directory (tuatara.io:native folder) :safe t :root (tuatara.io:native folder) :back (current-buffer))
@@ -888,26 +1052,55 @@ THEN at once with *PACKAGE-ASK-BEFORE-LOADING* NIL."
   "The git program packages are fetched with, or an error saying it is missing."
   (or (tuatara.io:find-program "git") (tuatara.io:program-missing "git" :why (format nil "packages are fetched with it: ~a" (outside-program-install-words :git)))))
 
+(defvar *package-plain-transport* nil
+  "True while a package whose load-package allows http:// or git:// (:plain
+t) is fetched; else git is not let use them, even when a server sends it
+there.")
+
+(defparameter *package-git-seconds* 900
+  "The most seconds one git command fetching or checking a package may take
+before it is ended.")
+
 (defun package-git-environment ()
-  "What git is given when it fetches packages: what it is given to push and
-pull now (GIT-NETWORK-ENVIRONMENT), and besides, symbolic links in a package
-checked out as small files of their target's name, never leading outside it,
-and git-lfs's filters, which would ask other servers, left out."
-  (append (git-network-environment '("core.symlinks" "false") '("filter.lfs.smudge" "") '("filter.lfs.process" "")
-                                   '("filter.lfs.required" "false"))
-          (list "GIT_LFS_SKIP_SMUDGE=1")))
+  "What git is given when it fetches and checks packages: what it is given to
+push and pull now (GIT-NETWORK-ENVIRONMENT), and besides: no hooks, no
+submodules, no attributes file of yours, and none of the system's, so that
+none of your own git's programs runs on a package; symbolic links in a
+package checked out as small files of their target's name, never leading
+outside it; git-lfs's filters, which would ask other servers, left out; ftp
+never, and http:// and git:// not unless *PACKAGE-PLAIN-TRANSPORT*, however
+a server redirects."
+  (append (apply #'git-network-environment
+                 '("core.symlinks" "false") '("filter.lfs.smudge" "") '("filter.lfs.process" "")
+                 '("filter.lfs.required" "false") '("core.hooksPath" "/dev/null") '("submodule.recurse" "false")
+                 '("core.attributesFile" "/dev/null") '("protocol.ftp.allow" "never") '("protocol.ftps.allow" "never")
+                 (unless *package-plain-transport*
+                   '(("protocol.http.allow" "never") ("protocol.git.allow" "never"))))
+          (list "GIT_LFS_SKIP_SMUDGE=1" "GIT_ATTR_NOSYSTEM=1")))
+
+(defparameter *package-attributes*
+  (format nil "* -filter -text -eol -ident -working-tree-encoding~%")
+  "The attributes every file of a package is checked out with, before the
+repository's own: no filter program, no change of line ends, encoding or
+$Id$, so that its files are written as they are.")
 
 (defun package-git (directory &rest arguments)
   "Run git with ARGUMENTS in DIRECTORY for a package's fetching: what it
-printed, as text; an error with what it said when it fails. A package's own
-scratch repository may fetch the files a sparse checkout needs from its
-address as it goes."
+printed, as text; an error with what it said when it fails, or when it takes
+more than *PACKAGE-GIT-SECONDS*. A package's own scratch repository may fetch
+the files a sparse checkout needs from its address as it goes. A repository
+made by init is given *PACKAGE-ATTRIBUTES* as its own."
   (multiple-value-bind (octets ok too-large said)
       (let ((*git-safety* (remove "--no-lazy-fetch" *git-safety* :test #'string=)))
-        (run-git-program (git-for-packages) directory arguments :environment (package-git-environment) :errors t))
+        (run-git-program (git-for-packages) directory arguments :environment (package-git-environment) :errors t
+                                                                 :seconds *package-git-seconds*))
     (declare (ignore too-large))
     (unless ok
       (error "~a" (git-failure-words (first arguments) (or said ""))))
+    (when (equal (first arguments) "init")
+      (let ((info (format nil "~a.git/info/" (tuatara.io:native directory))))
+        (tuatara.io:ensure-private-directory info)
+        (tuatara.io:write-private-file (concatenate 'string info "attributes") *package-attributes*)))
     (if octets (tuatara.text:octets-string octets) "")))
 
 (defun package-commit-name (text where)
@@ -1006,13 +1199,86 @@ THUNK has ended by then."
             (sb-ext:unschedule-timer timer))
         (when (or too-large (funcall too-large-p)) (refuse))))))
 
-(defun fetch-package (name where version)
+(defparameter *package-versions-tried* 10
+  "How many older versions of a package are tried, the newest first, when the
+one asked for needs a newer Tuatara than this one: the first that fits is
+taken.")
+
+(defparameter *package-history-depth* 100
+  "How many commits of a repository's main branch are looked through for an
+older version of a package when its newest commit needs a newer Tuatara.")
+
+(defun package-entry-paths (name file)
+  "The paths in its repository the package NAME may be entered by: FILE,
+NAME.lisp or load.lisp, in its folder (PACKAGE-REPOSITORY-FOLDER) or at the
+top."
+  (let ((inside (package-repository-folder name)))
+    (loop for top in (list (format nil "~a/" inside) "")
+          append (loop for entry in (list file (format nil "~a.lisp" name) "load.lisp")
+                       when entry collect (concatenate 'string top entry)))))
+
+(defun package-older-versions (probe where version tag name file)
+  "The versions of the repository at WHERE older than the one VERSION found,
+the newest first, each (COMMIT . TAG), at most *PACKAGE-VERSIONS-TRIED*,
+asked from PROBE, the repository it was found in (PACKAGE-COMMIT). For TAG,
+the newest tag, the tags made before it; for the newest commit, the newest
+commit of each earlier state of the package NAME's entry file
+\(PACKAGE-ENTRY-PATHS) on the main branch, within *PACKAGE-HISTORY-DEPTH*
+commits; for a tag, branch or commit named, none."
+  (flet ((lines (text) (tuatara.text:split-words text '(#\Newline))))
+    (cond ((not (member version '(nil "release" "latest") :test #'equal)) '())
+          (tag
+           (loop for line in (lines (package-git probe "for-each-ref" "--sort=-creatordate"
+                                                 (format nil "--count=~d" (1+ *package-versions-tried*))
+                                                 "--format=%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end) %(refname:strip=2)"
+                                                 "refs/tags"))
+                 for space = (position #\Space line)
+                 when (and space (git-hash-p (subseq line 0 space) :short t) (string/= (subseq line (1+ space)) tag))
+                   collect (cons (subseq line 0 space) (subseq line (1+ space)))))
+          (t
+           (package-git probe "fetch" "--quiet" (format nil "--depth=~d" *package-history-depth*) "--filter=blob:none" where "HEAD")
+           (let ((commits (remove-if-not #'git-hash-p
+                                         (lines (package-git probe "rev-list" "--first-parent"
+                                                             (format nil "--max-count=~d" *package-history-depth*) "FETCH_HEAD"))))
+                 (found '()))
+             (dolist (change (lines (apply #'package-git probe "log" "--first-parent" "--format=%H"
+                                           (format nil "--max-count=~d" *package-history-depth*) "FETCH_HEAD" "--"
+                                           (package-entry-paths name file))))
+               (let ((older (second (member change commits :test #'string=))))
+                 (when (and older (< (length found) *package-versions-tried*))
+                   (pushnew (cons older nil) found :key #'car :test #'string=))))
+             (nreverse found))))))
+
+(defun built-on (probe where floor versions)
+  "Those of VERSIONS, each (COMMIT . TAG) of the repository at WHERE, that are
+FLOOR or built on it (git merge-base --is-ancestor), asked from PROBE, the
+repository they were found in, their history fetched without files first;
+none when FLOOR is not in that history."
+  (package-git probe "fetch" "--quiet" "--filter=tree:0" "--depth=2147483647" where "HEAD" "+refs/tags/*:refs/tags/*")
+  (remove-if-not (lambda (version)
+                   (or (string= (car version) floor)
+                       (handler-case (progn (package-git probe "merge-base" "--is-ancestor" floor (car version)) t)
+                         (error () nil))))
+                 versions))
+
+(defun fetch-package (name where version &key file floor walk-p signature-of)
   "Fetch the package called NAME, VERSION of the repository at WHERE: that
 commit alone, and its folder (PACKAGE-REPOSITORY-FOLDER) alone when it has
-one, else the whole of it; a repository that gives no file by itself after its folders, that commit
-whole; never more than *PACKAGE-MOST-OCTETS* (CALL-WITHIN-PACKAGE-SIZE), finding
-the commit as well as checking it out.
-Returns the folder it is kept in, its commit and its tag."
+one, else the whole of it; a repository that gives no file by itself after
+its folders, that commit whole; never more than *PACKAGE-MOST-OCTETS*
+\(CALL-WITHIN-PACKAGE-SIZE), finding the commit as well as checking it out.
+When that version needs a newer Tuatara than this one (UNFITTING-VERSION,
+FILE its entry when given), older ones are tried, the newest first
+\(PACKAGE-OLDER-VERSIONS), and the first that fits is kept; one that does not
+fit is not. None older than FLOOR, the commit taken now, is tried, nor any
+not built on it; and none at all when WALK-P, a function of the folder the
+version is in, its commit and its tag, says no (its signer not trusted).
+Returns the folder it is kept in, its commit, its tag, and, when the version
+asked for was passed over, (VERSION NEEDED UNTRUSTED): its tag or commit, the
+Tuatara it needs, and true when WALK-P said no; the folder NIL when no version
+tried fits. SIGNATURE-OF, a function of a repository holding the version
+taken, its commit and its tag (as fetched now: for a commit kept before, the
+tag is fetched apart, into a repository of its own), gives the fifth value."
   (let* ((scratch (format nil "~a.fetching-~a/" (packages-directory) (tuatara.io:random-name)))
          (probe (format nil "~aprobe/" scratch))
          (inside-name (package-repository-folder name)))
@@ -1029,28 +1295,64 @@ Returns the folder it is kept in, its commit and its tag."
                                           (package-git files "ls-tree" "-d" "--name-only" commit inside-name))))
                  (when (string= inside inside-name)
                    (package-git files "sparse-checkout" "set" "--no-cone" (format nil "/~a/" inside-name))))
-               (package-git files "checkout" "--quiet" commit)))
-      (unwind-protect
-           (progn
-             (multiple-value-bind (commit tag)
+               (package-git files "checkout" "--quiet" commit))
+             (tag-repository (commit tag)
+               ;; the tag as fetched now, apart from the folder kept, within the size watched
+               (let ((repository (format nil "~atag-~a/" scratch commit)))
                  (call-within-package-size scratch where
                                            (lambda ()
-                                             (package-git probe "init" "--quiet")
-                                             (package-commit probe where version)))
-               (let ((folder (package-folder-for where name commit))
-                     (files (format nil "~afiles/" scratch)))
-                 (unless (probe-file folder)
-                   (handler-case (check-out files commit tag t)
-                     (package-too-large (e) (error e))
-                     (error ()
-                       (delete-package-folder files)
-                       (setf files (format nil "~awhole/" scratch))
-                       (check-out files commit tag nil)))
-                   (tuatara.io:ensure-private-directory (directory-namestring (string-right-trim "/" folder)))
-                   ;; a fetch of the same commit beside this one may have kept it first
-                   (handler-case (sb-posix:rename (string-right-trim "/" files) (string-right-trim "/" folder))
-                     (sb-posix:syscall-error (e) (unless (probe-file folder) (error e)))))
-                 (values folder commit tag))))
+                                             (tuatara.io:ensure-private-directory repository)
+                                             (package-git repository "init" "--quiet")
+                                             (package-git repository "fetch" "--quiet" "--depth=1" "--filter=blob:none"
+                                                          where (format nil "refs/tags/~a" tag))))
+                 repository))
+             (kept (commit tag)
+               ;; the folder COMMIT is kept in, or NIL and the Tuatara it needs; and the repository to check it in
+               (let ((folder (package-folder-for where name commit)))
+                 (if (probe-file folder)
+                     (let ((needed (unfitting-version (package-folder-in folder name) name file))
+                           (looked (if tag (tag-repository commit tag) folder)))
+                       (if needed (values nil needed looked) (values folder nil looked)))
+                     (let ((files (format nil "~afiles-~a/" scratch commit)))
+                       (handler-case (check-out files commit tag t)
+                         (package-too-large (e) (error e))
+                         (error ()
+                           (delete-package-folder files)
+                           (setf files (format nil "~awhole-~a/" scratch commit))
+                           (check-out files commit tag nil)))
+                       (let ((needed (unfitting-version (package-folder-in files name) name file)))
+                         (cond (needed
+                                (values nil needed files))
+                               (t
+                                (tuatara.io:ensure-private-directory (directory-namestring (string-right-trim "/" folder)))
+                                ;; a fetch of the same commit beside this one may have kept it first
+                                (handler-case (sb-posix:rename (string-right-trim "/" files) (string-right-trim "/" folder))
+                                  (sb-posix:syscall-error (e) (unless (probe-file folder) (error e))))
+                                (values folder nil folder))))))))
+             (taken (folder commit tag looked passed)
+               (values folder commit tag passed (and signature-of (funcall signature-of looked commit tag)))))
+      (unwind-protect
+           (multiple-value-bind (commit tag)
+               (call-within-package-size scratch where
+                                         (lambda ()
+                                           (package-git probe "init" "--quiet")
+                                           (package-commit probe where version)))
+             (multiple-value-bind (folder needed looked) (kept commit tag)
+               (cond
+                 (folder (taken folder commit tag looked nil))
+                 ((and walk-p (not (funcall walk-p looked commit tag)))
+                  (values nil nil nil (list (or tag (subseq commit 0 7)) needed t)))
+                 (t
+                  (let ((passed (list (or tag (subseq commit 0 7)) needed nil)))
+                    (dolist (older (call-within-package-size scratch where
+                                                             (lambda ()
+                                                               (let ((older (package-older-versions probe where version tag name file)))
+                                                                 (if floor (built-on probe where floor older) older))))
+                                   (values nil nil nil passed))
+                      (multiple-value-bind (folder needed looked) (kept (car older) (cdr older))
+                        (declare (ignore needed))
+                        (when folder
+                          (return (taken folder (car older) (cdr older) looked passed))))))))))
         (when (probe-file scratch)
           (delete-package-folder scratch))))))
 
@@ -1075,12 +1377,359 @@ what is remembered of it, says was fetched; NIL when none was."
         ((and entry (string/= (second entry) "-"))
          (package-folder-in (package-folder-for where name (second entry)) name))))
 
+;;; Who signed a version fetched, and whom a source is trusted by
+
+(defun trust-line (entry)
+  "The line of the trust file for ENTRY, (WHERE SIGNER NAME KEY)."
+  (destructuring-bind (where signer name key) entry
+    (format nil "~a~c~a~c~a~c~a" (escape-path where) #\Tab signer #\Tab (escape-path (or name "")) #\Tab (or key ""))))
+
+(defun parse-trust-line (line)
+  "The entry LINE of the trust file writes, (WHERE SIGNER NAME KEY), or NIL
+for a line that makes no sense: SIGNER a key's fingerprint or \"unsigned\",
+NAME the signer's name or NIL, KEY an SSH signer's key or NIL; SIGNER is
+key: and a GPG key's fingerprint for a source whose first version was signed
+by a key your keyring lacks."
+  (let ((fields (uiop:split-string line :separator '(#\Tab))))
+    (when (= 4 (length fields))
+      (destructuring-bind (where signer name key) fields
+        (and (plusp (length where))
+             (or (string= signer "unsigned") (cl-ppcre:scan "^(?:SHA256:[A-Za-z0-9+/=]+|[0-9A-F]{40,64}|key:(?:[0-9A-F]{40}|[0-9A-F]{64}))$" signer))
+             (or (zerop (length key)) (cl-ppcre:scan "^[a-z0-9@.-]{1,64} [A-Za-z0-9+/]+={0,2}$" key))
+             (list (unescape-path where) signer (let ((name (unescape-path name))) (and (plusp (length name)) name))
+                   (and (plusp (length key)) key)))))))
+
+(define-state-list *package-trust* "package-trust" 'parse-trust-line 'trust-line '*packages-kept*
+  :header (format nil "# The sources of packages trusted, the latest first: the address; who signed~%~
+                       # the versions taken from it, a key's fingerprint, or unsigned; the signer's~%~
+                       # name; an SSH signer's key. M-x package-trust-again forgets a source's.~%")
+  :path-of #'first)
+
+(defun package-signers-file (where)
+  "The allowed signers file git checks the SSH signatures of the source WHERE
+against, kept beside its packages."
+  (format nil "~a~a/.allowed-signers" (packages-directory) (tuatara.io:path-file-name where)))
+
+(defun write-package-signers-file (where)
+  "Write the allowed signers file of the source WHERE (PACKAGE-SIGNERS-FILE)
+anew: the SSH key trusted for it (*PACKAGE-TRUST*), or nothing. Returns its
+name."
+  (let ((file (package-signers-file where))
+        (trusted (state-list-find *package-trust* where)))
+    (tuatara.io:ensure-private-directory (directory-namestring file))
+    (tuatara.io:write-private-file file (if (fourth trusted) (format nil "trusted namespaces=\"git\" ~a~%" (fourth trusted)) ""))
+    file))
+
+(defun signature-block (text kind)
+  "Where the signature of the git object TEXT, of KIND :commit or :tag, lies
+in it, as two values, its start and end: a commit's on its header's line
+gpgsig (or gpgsig-sha256) and those after it, before the blank line that
+ends the header, never another header's (mergetag); a tag's the last block of its
+text, where git appends it. NIL when it has none there."
+  (let ((header-end (or (search (format nil "~%~%") text) (length text))))
+    (multiple-value-bind (begin end)
+        (if (eq kind :commit)
+            (let* ((line (cl-ppcre:scan "(?m)^gpgsig(?:-sha256)? -----BEGIN " text :end header-end))
+                   (begin (and line (search "-----BEGIN " text :start2 line :end2 header-end))))
+              (values begin (and begin (search "-----END " text :start2 begin :end2 header-end))))
+            (let ((begin (search "-----BEGIN " text :from-end t)))
+              (values begin (and begin (search "-----END " text :start2 begin)))))
+      (when end
+        (values begin (or (position #\Newline text :start end) (length text)))))))
+
+(defun ssh-signature-key (text kind)
+  "The public key the SSH signature of the git object TEXT, of KIND :commit
+or :tag (SIGNATURE-BLOCK), was made with, as an allowed signers file writes
+it (TYPE BASE64), read from the signature's own octets; NIL when it has
+none."
+  (multiple-value-bind (begin end) (signature-block text kind)
+    (let ((mark "-----BEGIN SSH SIGNATURE-----"))
+      (when (and begin (string= mark text :start2 begin :end2 (min (length text) (+ begin (length mark)))))
+        (let* ((octets (tuatara.io:base64-octets (tuatara.text:string-octets (subseq text (+ begin (length mark)) (search "-----END" text :start2 begin :end2 end)))))
+               (size (tuatara.io:octets-be octets 10 4)))
+          (when (and size (tuatara.io:octets-at-p octets "SSHSIG") (<= (+ 14 size) (length octets)))
+            (let* ((blob (subseq octets 14 (+ 14 size)))
+                   (type-size (tuatara.io:octets-be blob 0 4))
+                   (type (and type-size (<= (+ 4 type-size) (length blob)) (tuatara.io:octets-ascii blob 4 (+ 4 type-size)))))
+              (and type (cl-ppcre:scan "^[a-z0-9@.-]{1,64}$" type)
+                   (format nil "~a ~a" type (tuatara.io:base64-string blob))))))))))
+
+(defun ssh-signature-p (text kind)
+  "True when the signature of the git object TEXT, of KIND :commit or :tag, is an SSH one."
+  (let ((begin (signature-block text kind)))
+    (and begin (string= "-----BEGIN SSH SIGNATURE-----" text :start2 begin :end2 (min (length text) (+ begin 29))))))
+
+(defun plain-name (text)
+  "TEXT, a signer's name as a key gives it, on one line and without the
+characters that change how text is laid out (right to left, hidden ones), so
+that it shows as it is; NIL for NIL or nothing left."
+  (let ((name (tuatara.text:one-line (and text (remove-if (lambda (c) (eq (ignore-errors (sb-unicode:general-category c)) :cf)) text)))))
+    (and name (plusp (length name)) (tuatara.display:shorten-string name 80))))
+
+(defun commit-signature (fields object)
+  "The signature of a commit, as PACKAGE-SIGNATURE gives it, from FIELDS,
+what git's log said of it (%G?, %GF, %GP, %GS and %GK), and OBJECT, the
+commit's object; :ERROR when it is signed but git could not say by whom. A
+GPG signature whose key your keyring lacks is :UNCHECKED, its key's
+fingerprint left to MISSING-KEY."
+  (destructuring-bind (&optional (grade "") subkey primary signer key-id &rest more) fields
+    (declare (ignore more))
+    (let ((ssh (ssh-signature-p object :commit))
+          (signed (signature-block object :commit)))
+      (cond ((member grade '("G" "U" "X" "Y") :test #'string=)
+             (list :status :good
+                   :fingerprint (signer-fingerprint (if (plusp (length primary)) primary subkey))
+                   :subkey (and (plusp (length subkey)) (signer-fingerprint subkey))
+                   :name (and (not ssh) (plain-name signer))
+                   :key (and ssh (ssh-signature-key object :commit))))
+            ((member grade '("B" "R") :test #'string=) (list :status :bad))
+            ((and (string= grade "E") (not ssh) (cl-ppcre:scan "^[0-9A-Fa-f]{16,64}$" key-id))
+             (list :status :unchecked))
+            ((and (string= grade "N") (not signed)) (list :status :none))
+            (t (list :status :error))))))
+
+(defun gnupg-status (said name)
+  "The fields of gpg's status line NAME in SAID, what it wrote, each at the start of a line; NIL when there is none."
+  (let ((found (nth-value 1 (cl-ppcre:scan-to-strings (format nil "(?m)^\\[GNUPG:\\] ~a(?: ([^\\n]*))?$" name) said))))
+    (and found (or (tuatara.text:split-words (aref found 0)) (list "")))))
+
+(defun tag-signature (said object)
+  "The signature of a tag, as PACKAGE-SIGNATURE gives it, from SAID, what git
+verify-tag --raw said of it, and OBJECT, the tag's object."
+  (if (ssh-signature-p object :tag)
+      (let ((good (nth-value 1 (cl-ppcre:scan-to-strings "(?m)^Good \"git\" signature (?:for \\S+ )?with \\S+ key (SHA256:[A-Za-z0-9+/=]+)$" said))))
+        (if good
+            (list :status :good :fingerprint (aref good 0) :key (ssh-signature-key object :tag))
+            (list :status :bad)))
+      (let ((valid (gnupg-status said "VALIDSIG"))
+            (good (or (gnupg-status said "GOODSIG") (gnupg-status said "EXPSIG") (gnupg-status said "EXPKEYSIG")))
+            (missing (or (gnupg-status said "ERRSIG") (gnupg-status said "NO_PUBKEY"))))
+        (cond ((or (gnupg-status said "BADSIG") (gnupg-status said "REVKEYSIG")) (list :status :bad))
+              ((and valid good)
+               (list :status :good :fingerprint (signer-fingerprint (or (nth 9 valid) (first valid)))
+                     :subkey (signer-fingerprint (first valid))
+                     :name (plain-name (format nil "~{~a~^ ~}" (rest good)))))
+              ((and missing (missing-key said)) (list :status :unchecked :key-id (missing-key said)))
+              (t (list :status :error))))))
+
+(defun missing-key (said)
+  "The fingerprint of the key that made a GPG signature your keyring lacks,
+from SAID, gpg's status lines (ERRSIG's seventh field, the issuer's
+fingerprint, 40 or 64 hexadecimal digits): the signing key itself, a
+subkey or the primary key; NIL when gpg did not give it, as for an old
+signature naming only a 64-bit ID, which is too short to hold to."
+  (let ((fingerprint (seventh (gnupg-status said "ERRSIG"))))
+    (and fingerprint (cl-ppcre:scan "^(?:[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$" fingerprint)
+         (signer-fingerprint fingerprint))))
+
+(defun tag-object-names-p (object tag)
+  "True when OBJECT, a tag's object, names itself TAG in its header (its tag
+line, before the blank line that ends the header), whatever its message says."
+  (and (cl-ppcre:scan (format nil "(?m)^tag ~a$" (cl-ppcre:quote-meta-chars tag)) object
+                      :end (or (search (format nil "~%~%") object) (length object)))
+       t))
+
+(defparameter *package-check-seconds* 120
+  "The most seconds checking who signed a package's version may take, git
+with gpg or ssh-keygen, before it is ended and the version not taken.")
+
+(defun package-signature (folder commit tag where)
+  "Who signed COMMIT of the repository at WHERE, kept in FOLDER: the tag TAG
+it was fetched by now when that is signed (its object, FETCH_HEAD, naming
+TAG and COMMIT), else the commit. Checked by git, with gpg and your keyring
+for a GPG signature, with ssh-keygen and the allowed signers file of the key
+trusted for WHERE for an SSH one (WRITE-PACKAGE-SIGNERS-FILE); nothing of
+the repository is run. A list: :STATUS, :GOOD, :BAD (it does not hold, or
+its key is revoked), :UNCHECKED (by a GPG key your keyring lacks, its
+fingerprint :KEY-ID), :NONE (unsigned) or :ERROR (signed, but git could not say by
+whom); :FINGERPRINT (the primary key's), :SUBKEY, :NAME and for an SSH key
+:KEY of a good one, the key seen to have made the signature."
+  (labels ((git (allowed &rest arguments)
+             (multiple-value-bind (octets ok too-large said)
+                 (run-git-program (git-for-packages) folder arguments
+                                  :environment (git-network-environment (list "gpg.ssh.allowedSignersFile" allowed))
+                                  :errors t :seconds *package-check-seconds*)
+               (declare (ignore ok too-large))
+               (values (if octets (tuatara.text:octets-string octets) "") (or said ""))))
+           (trimmed (text) (string-trim '(#\Newline #\Space) text))
+           (check (allowed tag-object)
+             (if tag-object
+                 (tag-signature (nth-value 1 (git allowed "verify-tag" "--raw" "FETCH_HEAD")) tag-object)
+                 (commit-signature (uiop:split-string (trimmed (git allowed "log" "-1" "--format=%G?%x00%GF%x00%GP%x00%GS%x00%GK" commit))
+                                                      :separator (list (code-char 0)))
+                                   (git allowed "cat-file" "commit" commit)))))
+    (let* ((allowed (write-package-signers-file where))
+           (object (and tag (string= "tag" (trimmed (git allowed "cat-file" "-t" "FETCH_HEAD")))
+                        (git allowed "cat-file" "tag" "FETCH_HEAD")))
+           (tag-object (and object (signature-block object :tag) object)))
+      (when (and tag-object
+                 (not (and (tag-object-names-p tag-object tag)
+                           (string= commit (trimmed (git allowed "rev-parse" "--verify" "--quiet" "FETCH_HEAD^{commit}"))))))
+        (return-from package-signature (list :status :error :why "its tag object names another tag or commit")))
+      (let ((signature (check allowed tag-object)))
+        (when (and (eq (getf signature :status) :unchecked) (not (getf signature :key-id)))
+          (let ((key (missing-key (nth-value 1 (git allowed "verify-commit" "--raw" commit)))))
+            (setf signature (if key (list :status :unchecked :key-id key) (list :status :error)))))
+        ;; the key read from the signature is kept only once git has seen it make the signature
+        (when (getf signature :key)
+          (let ((alone (format nil "~a-check-~a" (package-signers-file where) (tuatara.io:random-name))))
+            (unwind-protect
+                 (progn
+                   (tuatara.io:write-private-file alone (format nil "trusted namespaces=\"git\" ~a~%" (getf signature :key)))
+                   (let ((again (check alone tag-object)))
+                     (unless (and (eq (getf again :status) :good) (equal (getf again :fingerprint) (getf signature :fingerprint))
+                                  (if tag-object
+                                      (search "signature for trusted with" (nth-value 1 (git alone "verify-tag" "--raw" "FETCH_HEAD")))
+                                      (string= "G" (trimmed (git alone "log" "-1" "--format=%G?" commit)))))
+                       (setf (getf signature :key) nil))))
+              (ignore-errors (delete-file alone)))))
+        signature))))
+
+(defun signer-words (signature)
+  "Who signed a version, as SIGNATURE (PACKAGE-SIGNATURE) says, in words."
+  (let ((fingerprint (getf signature :fingerprint)))
+    (ecase (getf signature :status)
+      (:good (if (getf signature :name)
+                 (format nil "signed by ~a (key ~a)" (getf signature :name) fingerprint)
+                 (format nil "signed by the key ~a" fingerprint)))
+      (:unchecked (format nil "signed by the GPG key ~a, which your keyring lacks, so the signature cannot be checked: ~
+                               import that key (M-x import-keys), then fetch it again (M-x package-update)"
+                          (getf signature :key-id)))
+      (:bad "signed, but its signature does not hold: it was changed after it was signed, or its key is revoked")
+      (:error (format nil "signed, but who signed it could not be checked~@[ (~a)~]" (getf signature :why)))
+      (:none "unsigned"))))
+
+(defun trusted-signer-words (trusted)
+  "Who TRUSTED, an entry of *PACKAGE-TRUST*, says signed the versions taken, in words."
+  (cond ((string= (second trusted) "unsigned") "no one (unsigned)")
+        ((uiop:string-prefix-p "key:" (second trusted))
+         (format nil "the GPG key ~a, not yet in your keyring" (subseq (second trusted) 4)))
+        ((third trusted) (format nil "~a (key ~a)" (third trusted) (second trusted)))
+        (t (format nil "the key ~a" (second trusted)))))
+
+(defun package-trust-verdict (where signature)
+  "What becomes of a version of the source WHERE that SIGNATURE
+\(PACKAGE-SIGNATURE) says who signed, as three values: :TAKE, :ASK (its
+first version: whoever signed it is asked about, as the version is) or
+:REFUSE; who signed it in words, or why it is refused; and the entry of
+*PACKAGE-TRUST* to remember once it is taken (for one refused, to remember
+all the same), or NIL. With the signers the init file names (:signers),
+only a version one of them signed is taken. Else the signer of the first
+version taken is remembered: later ones signed by that key are taken, and
+others refused, unsigned ones too; a source whose first version was
+unsigned has its unsigned versions taken, and the first signed one taken
+makes its signer the one remembered. A GPG signature whose key your keyring
+lacks is refused until the key is imported, its fingerprint remembered for
+a source's first version so that only that key (or the key it is a subkey
+of) is taken then. A signature
+that does not hold, or one git could not check, is refused always."
+  (let* ((status (getf signature :status))
+         (fingerprint (getf signature :fingerprint))
+         (good (eq status :good))
+         (words (signer-words signature))
+         (remember (and good (list where fingerprint (getf signature :name) (getf signature :key))))
+         (named (package-signers-named where))
+         (trusted (state-list-find *package-trust* where))
+         (pinned-id (and trusted (uiop:string-prefix-p "key:" (second trusted)) (subseq (second trusted) 4))))
+    (cond ((member status '(:bad :error)) (values :refuse words nil))
+          (named (cond ((and good (member fingerprint named :test #'string=)) (values :take words remember))
+                       ((and good (member (getf signature :subkey) named :test #'equal))
+                        (values :refuse (format nil "~a; its :signers name the key's signing subkey, ~a: name the key's own fingerprint, ~a"
+                                                words (getf signature :subkey) fingerprint)
+                                nil))
+                       (t (values :refuse (format nil "~a, by none of the signers its :signers name" words) nil))))
+          ((eq status :unchecked)
+           (values :refuse words (and (null trusted) (list where (format nil "key:~a" (getf signature :key-id)) nil nil))))
+          (pinned-id (if (and good (or (string= fingerprint pinned-id) (equal (getf signature :subkey) pinned-id)))
+                         (values :take words remember)
+                         (values :refuse (format nil "~a, and its first version was signed by ~a" words (trusted-signer-words trusted)) nil)))
+          ((null trusted) (values :ask words (or remember (list where "unsigned" nil nil))))
+          ((string= (second trusted) "unsigned") (values :take words remember))
+          ((and good (string= fingerprint (second trusted))) (values :take words nil))
+          (t (values :refuse (format nil "~a, and the versions taken before were signed by ~a" words (trusted-signer-words trusted))
+                     nil)))))
+
+;;; Keeping the version taken and the one before it
+
+(defun prune-package-versions (name where)
+  "Delete what is kept and compiled of the versions of the package NAME from
+WHERE that are no longer wanted: all but the one taken and the one before it
+of each version asked for (*FETCHED-PACKAGES*), and the one loaded this
+session, never deleted under the editor. Another editor running beside this
+one may have loaded a version deleted here: it goes on running what it
+loaded, and fetches that version again when it next needs it."
+  (let* ((prefix (format nil "~a ~a " name where))
+         (keep (loop for entry in (state-list-entries *fetched-packages*)
+                     when (uiop:string-prefix-p prefix (first entry))
+                       collect (second entry)
+                       and when (fifth entry) collect (fifth entry)))
+         (loaded (cdr (assoc name *loaded-package-folders* :test #'string=))))
+    (dolist (folder (ignore-errors (uiop:subdirectories (package-kept-folder where name))))
+      (let ((native (tuatara.io:native folder))
+            (commit (car (last (pathname-directory folder)))))
+        (unless (or (not (git-hash-p commit :short t))
+                    (member commit keep :test #'string=)
+                    (and loaded (tuatara.io:path-within-p loaded native)))
+          (let ((compiled (directory-namestring (package-fasl (concatenate 'string native "x")))))
+            (when (probe-file compiled) (delete-package-folder compiled)))
+          (delete-package-folder native))))))
+
+(defvar *packages-in-hand* '()
+  "The packages being fetched or checked, or whose version waits to be
+decided on (asked about), each (NAME . JOB): no other fetch or check of one
+starts meanwhile.")
+
+(defvar *package-job-deciding* nil
+  "The fetch or check whose version is being decided on (PACKAGE-FETCHED), or NIL.")
+
+(defun load-version (name where folder file before)
+  "Load the package NAME from FOLDER, a version of WHERE; when it fails and
+BEFORE, what was remembered of the version taken before it (as
+*FETCHED-PACKAGES* has it), names one that is kept, that one is remembered
+again as the one taken, said, and loaded in its place once who signed it is
+checked against the trust in force now (START-PACKAGE-CHECK). Returns
+:TAKEN and the file loaded, :PREVIOUS when the version before it is being
+checked, or NIL."
+  (let ((loaded (load-package-folder folder name file)))
+    (if loaded
+        (values :taken loaded)
+        (let ((back (and before (package-folder-of name where before))))
+          (when (and back (probe-file back))
+            (state-list-put *fetched-packages* (list before))
+            (message "The package ~a could not be loaded (~a): the version before it, ~a, is loaded in its place once who signed it is checked"
+                     name (cdr (assoc name *package-failures* :test #'string=))
+                     (or (third before) (subseq (second before) 0 (min 7 (length (second before))))))
+            (when *package-job-deciding*
+              (let-package-go *package-job-deciding*))
+            (start-package-check name where nil file (first before) before)
+            :previous)))))
+
+(defun refuse-package-version (name where words &optional remember)
+  "Refuse the version of the package NAME fetched from WHERE, WORDS saying
+why: said, with how to take it all the same; the version loaded now kept,
+the one refused deleted; REMEMBER, an entry of *PACKAGE-TRUST*, remembered
+when given."
+  (when remember
+    (state-list-put *package-trust* (list remember)))
+  (let* ((loaded (package-loaded-p name))
+         (text (format nil "The package ~a from ~a is refused: ~a" name where words)))
+    (unless loaded (push (cons name text) *package-failures*))
+    (message "~a. ~:[It is not loaded~;The version loaded now is kept~]; ~a" text loaded
+             (if (package-signers-named where)
+                 "its :signers in the init file say whose versions are taken"
+                 (format nil "~a trusts its source anew, as the first time" (substitute-command-keys "\\[package-trust-again]"))))
+    (prune-package-versions name where)))
+
+;;; Fetching in the background
+
 (defstruct (package-fetch (:include tuatara.runtime:job) (:constructor make-package-fetch (name where version file key))
                           (:copier nil))
   "The package NAME being fetched from WHERE, VERSION asked for, FILE its
 entry when given, KEY what it is remembered by; once done, its FOLDER,
-COMMIT and TAG."
-  name where version file key folder commit tag)
+COMMIT and TAG, PASSED the version passed over for a newer Tuatara and the
+one it needs (FETCH-PACKAGE), and SIGNATURE who signed it
+\(PACKAGE-SIGNATURE)."
+  name where version file key folder commit tag passed signature)
 
 (setf (documentation 'package-fetch-p 'function) "True when OBJECT is a PACKAGE-FETCH.")
 
@@ -1095,48 +1744,184 @@ COMMIT and TAG."
   "NIL: the jobs of a buffer queued behind it need not wait for a package's fetching."
   nil)
 
+(defun take-package-in-hand (job)
+  "Hold the package of JOB in hand (*PACKAGES-IN-HAND*) and return true; NIL,
+said on the echo row, when a fetch or check of it runs already or its
+question waits for an answer."
+  (let ((name (package-fetch-name job)))
+    (if (assoc name *packages-in-hand* :test #'string=)
+        (progn (message "~a: a fetch or check of it is already running, or waits for an answer" name)
+               nil)
+        (progn (push (cons name job) *packages-in-hand*)
+               t))))
+
+(defun let-package-go (job)
+  "Let the package JOB holds in hand go (TAKE-PACKAGE-IN-HAND), when JOB still holds it."
+  (setf *packages-in-hand* (remove job *packages-in-hand* :key #'cdr)))
+
+(defun start-package-job (job work thread)
+  "Start JOB, a fetch or check of a package, in the background on a thread
+called THREAD, WORK its function: its package held in hand until its version
+is decided on, and counted as being fetched until the job ends. NIL, nothing
+started, when the package is in hand already; let go again when the job
+cannot be started."
+  (when (take-package-in-hand job)
+    (let ((name (package-fetch-name job)) (started nil))
+      (pushnew name *fetching-packages* :test #'string=)
+      (unwind-protect
+           (progn (tuatara.runtime:start-job-thread job work :name thread)
+                  (setf started t)
+                  job)
+        (unless started
+          (let-package-go job)
+          (setf *fetching-packages* (remove name *fetching-packages* :test #'string=)))))))
+
 (defun start-package-fetch (name where version file key)
-  "Fetch the package NAME (FETCH-PACKAGE) in the background, then ask and
-load it (PACKAGE-FETCHED)."
-  (log-message (format nil "Fetching the package ~a from ~a" name where))
-  (pushnew name *fetching-packages* :test #'string=)
-  (setf *package-failures* (remove name *package-failures* :key #'car :test #'string=))
-  (tuatara.runtime:start-job-thread
-   (make-package-fetch name where version file key)
-   (lambda (job)
-     (multiple-value-bind (folder commit tag) (fetch-package name where version)
-       (setf (package-fetch-folder job) folder (package-fetch-commit job) commit (package-fetch-tag job) tag)))
-   :name "tuatara package fetch"))
+  "Fetch the package NAME (FETCH-PACKAGE) in the background, and see who
+signed it (PACKAGE-SIGNATURE), then ask and load it (PACKAGE-FETCHED). An
+address of http:// or git:// not allowed (PLAIN-SOURCE-REFUSAL) is not
+fetched from, said; nor is a package in hand already (START-PACKAGE-JOB)."
+  (let ((refusal (plain-source-refusal name where)))
+    (when refusal
+      (setf *package-failures* (acons name refusal (remove name *package-failures* :key #'car :test #'string=)))
+      (message "~a" refusal)
+      (return-from start-package-fetch nil)))
+  (let ((plain (and (plain-transport-p where) t))
+        (floor (let ((had (fetched-package key))) (and had (fourth had) (git-hash-p (second had) :short t) (second had)))))
+    (when (start-package-job
+           (make-package-fetch name where version file key)
+           (lambda (job)
+             (let ((*package-plain-transport* plain))
+               (multiple-value-bind (folder commit tag passed signature)
+                   (fetch-package name where version
+                                  :file file :floor floor
+                                  :walk-p (lambda (looked commit tag)
+                                            (not (eq :refuse (package-trust-verdict where (package-signature looked commit tag where)))))
+                                  :signature-of (lambda (looked commit tag) (package-signature looked commit tag where)))
+                 (setf (package-fetch-folder job) folder (package-fetch-commit job) commit (package-fetch-tag job) tag
+                       (package-fetch-passed job) passed (package-fetch-signature job) signature))))
+           "tuatara package fetch")
+      (setf *package-failures* (remove name *package-failures* :key #'car :test #'string=))
+      (log-message (format nil "Fetching the package ~a from ~a" name where)))))
+
+(defun start-package-check (name where version file key entry)
+  "Check in the background who signed the version of the package NAME from
+WHERE kept as ENTRY remembers it (PACKAGE-SIGNATURE), then take it as one
+just fetched (PACKAGE-FETCHED): asked about with who signed it, loaded, or
+refused, as the trust in force says. Nothing is fetched; nothing is done
+while the package is in hand already (START-PACKAGE-JOB)."
+  (let ((job (make-package-fetch name where version file key)))
+    (setf (package-fetch-folder job) (package-folder-for where name (second entry))
+          (package-fetch-commit job) (second entry)
+          (package-fetch-tag job) (third entry))
+    (when (start-package-job
+           job
+           (lambda (job)
+             (setf (package-fetch-signature job)
+                   (package-signature (package-fetch-folder job) (package-fetch-commit job) (package-fetch-tag job) where)))
+           "tuatara package check")
+      (setf *package-failures* (remove name *package-failures* :key #'car :test #'string=)))))
+
+(defun signature-signer (signature)
+  "Who SIGNATURE (PACKAGE-SIGNATURE) says signed a version, as an entry of
+*FETCHED-PACKAGES* keeps it: the key's fingerprint, \"unsigned\", or NIL when
+it could not be told."
+  (case (getf signature :status)
+    (:good (getf signature :fingerprint))
+    (:none "unsigned")))
+
+(defun kept-version-check-needed-p (where entry)
+  "True when the version of the source WHERE that ENTRY of *FETCHED-PACKAGES*
+remembers is to be checked again before it loads at a start: who signed it,
+as git checked it when it was taken, is not known, or the trust in force
+now would not take it (PACKAGE-TRUST-VERDICT: the source trusted anew, its
+signer changed since, the init file's :signers naming others)."
+  (let ((signer (seventh entry)))
+    (or (null signer)
+        (not (eq :take (package-trust-verdict where (if (string= signer "unsigned")
+                                                        (list :status :none)
+                                                        (list :status :good :fingerprint signer))))))))
 
 (defmethod tuatara.runtime:job-take-in ((job package-fetch))
-  "Ask about and load the package fetched, or say why it was not."
+  "Ask about and load the package fetched, or say why it was not; its package
+held in hand until that is decided."
   (setf *fetching-packages* (remove (package-fetch-name job) *fetching-packages* :test #'string=))
   (case (package-fetch-status job)
     (:done (let ((job job))
-             (defer-action (lambda () (package-fetched job)))))
-    (:failed (let ((why (or (tuatara.runtime:job-error job) "it ended unexpectedly")))
+             (defer-action (lambda ()
+                             (let ((*package-job-deciding* job))
+                               (unwind-protect (package-fetched job)
+                                 (let-package-go job)))))))
+    (:failed (let-package-go job)
+             (let ((why (or (tuatara.runtime:job-error job) "it ended unexpectedly")))
                (push (cons (package-fetch-name job) why) *package-failures*)
-               (message "The package ~a was not fetched: ~a" (package-fetch-name job) why)))))
+               (message "The package ~a was not fetched: ~a" (package-fetch-name job) why)))
+    (t (let-package-go job))))
 
 (defun package-fetched (job)
-  "Load the package JOB fetched: at once when that commit was let load
-before, said to be up to date when it is loaded already; else asked about
-first. Its commit is remembered either way."
-  (let* ((name (package-fetch-name job)) (key (package-fetch-key job))
+  "Take the version of a package JOB fetched, or refuse it. One that needs a
+newer Tuatara than this was passed over for the newest that fits, said; when
+none fits, the version loaded now is kept. One whose signer is not the one
+trusted is refused (PACKAGE-TRUST-VERDICT). Else it is loaded: at once when
+that commit was let load before and its source's signer is known, said to
+be up to date when it is loaded already; else asked about first, who signed
+it shown, and that signer remembered once it is let load. The version taken
+before is kept to fall back on (LOAD-VERSION), older ones deleted
+\(PRUNE-PACKAGE-VERSIONS)."
+  (let* ((name (package-fetch-name job)) (key (package-fetch-key job)) (where (package-fetch-where job))
          (commit (package-fetch-commit job)) (tag (package-fetch-tag job))
-         (folder (package-folder-in (package-fetch-folder job) name))
-         (had (fetched-package key))
-         (load (lambda ()
-                 (state-list-put *fetched-packages* (list (list key commit tag t)))
-                 (load-package-folder folder name (package-fetch-file job))
-                 (when (package-loaded-p name)
-                   (message "The package ~a~@[ ~a~] is loaded" name tag)))))
-    (cond ((and had (fourth had) (string= (second had) commit))
-           (if (package-loaded-p name)
-               (message "The package ~a is up to date~@[ (~a)~]" name tag)
-               (funcall load)))
-          (t (state-list-put *fetched-packages* (list (list key commit tag nil)))
-             (package-question name (package-fetch-where job) folder load)))))
+         (passed (package-fetch-passed job))
+         (had (fetched-package key)))
+    (cond
+      ((null (package-fetch-folder job))
+       (let ((words (format nil "The package ~a ~a needs Tuatara ~a or later, and this is ~a; ~:[no older version tried fits~;~
+                                 it is not signed as the versions taken before were, so no older version is looked for~]"
+                            name (first passed) (second passed) (tuatara:version) (third passed)))
+             (loaded (package-loaded-p name)))
+         (unless loaded (push (cons name words) *package-failures*))
+         (message "~a: ~:[it is not loaded~;the version loaded now is kept~]" words loaded)))
+      (t
+       (when passed
+         (message "The package ~a ~a needs Tuatara ~a or later, and this is ~a: ~a, the newest version that fits, is taken"
+                  name (first passed) (second passed) (tuatara:version) (or tag (subseq commit 0 7))))
+       (multiple-value-bind (verdict words remember) (package-trust-verdict where (package-fetch-signature job))
+         (if (eq verdict :refuse)
+             (progn
+               ;; a version taken before and refused now is asked about again, never loaded at a start unchecked
+               (when (and had (fourth had) (string= (second had) commit))
+                 (state-list-put *fetched-packages* (list (list key commit tag nil (fifth had) (sixth had) (seventh had)))))
+               (refuse-package-version name where words remember))
+             (let* ((folder (package-folder-in (package-fetch-folder job) name))
+                    (same (and had (string= (second had) commit)))
+                    (previous (if (and had (fourth had) (not same)) (second had) (fifth had)))
+                    (previous-tag (if (and had (fourth had) (not same)) (third had) (sixth had)))
+                    (signer (signature-signer (package-fetch-signature job)))
+                    (trust (lambda ()
+                             (when remember
+                               (state-list-put *package-trust* (list remember)))))
+                    (load (lambda ()
+                            (state-list-put *fetched-packages* (list (list key commit tag t previous previous-tag signer)))
+                            (when (eq (load-version name where folder (package-fetch-file job)
+                                                    (cond ((and had (fourth had) (not same)) had)
+                                                          (previous (list key previous previous-tag t))))
+                                      :taken)
+                              (funcall trust)
+                              (when (package-loaded-p name)
+                                (message "The package ~a~@[ ~a~] is loaded~@[ (~a needs Tuatara ~a or later)~]"
+                                         name (or tag (and passed (subseq commit 0 7))) (first passed) (second passed))))
+                            (prune-package-versions name where))))
+               (cond ((and had (fourth had) same (package-loaded-p name))
+                      (funcall trust)
+                      (unless (equal (seventh had) signer)
+                        (state-list-put *fetched-packages* (list (list key commit tag t (fifth had) (sixth had) signer))))
+                      (message "The package ~a is up to date~@[ (~a)~]" name tag))
+                     ((and had (fourth had) same (not (eq verdict :ask)))
+                      (funcall load))
+                     ((and had (fourth had) same)
+                      ;; taken before its source's signer was remembered: asked again, who signed it shown
+                      (package-question name where folder load words))
+                     (t (state-list-put *fetched-packages* (list (list key commit tag nil previous previous-tag signer)))
+                        (package-question name where folder load words))))))))))
 
 ;;; load-package with a source
 
@@ -1151,18 +1936,32 @@ once the editor has started; ACCEPT, a function, remembers that it was let."
 
 (defun load-package-from (name source version file)
   "Load the package NAME from SOURCE (LOAD-PACKAGE): a folder of your disk at
-once, asked about the first time; one fetched before from where it was kept;
-else fetched in the background first."
+once, asked about the first time; one fetched before from where it was kept,
+the version before it in its place when it fails to load (LOAD-VERSION),
+unless it is to be asked about, or who signed it checked again first against
+the trust in force (KEPT-VERSION-CHECK-NEEDED-P), in the background
+\(START-PACKAGE-CHECK); else
+fetched in the background first."
   (let* ((where (package-where source))
          (key (package-key name where version))
          (entry (fetched-package key))
          (folder (package-folder-of name where entry)))
     (cond ((not (or (local-source-p where) (and folder (probe-file folder))))
            (start-package-fetch name where version file key))
+          ((and entry (not (local-source-p where))
+                (or (not (fourth entry)) (kept-version-check-needed-p where entry))
+                (eq :directory (tuatara.io:path-kind (tuatara.io:native folder))))
+           (start-package-check name where version file key entry)
+           nil)
           ((not (eq :directory (tuatara.io:path-kind (tuatara.io:native folder))))
            (message "The package ~a is not loaded: its folder ~a is not there" name (abbreviated-path (tuatara.io:native folder))))
-          ((and entry (fourth entry))
+          ((and entry (fourth entry) (local-source-p where))
            (load-package-folder folder name file))
+          ((and entry (fourth entry))
+           (multiple-value-bind (outcome loaded) (load-version name where folder file
+                                                                       (and (fifth entry) (list key (fifth entry) (sixth entry) t)))
+             (declare (ignore outcome))
+             loaded))
           (t (load-or-ask name where folder file
                           (lambda () (state-list-put *fetched-packages*
                                                      (list (list key (if entry (second entry) "-") (third entry) t)))))))))
@@ -1175,7 +1974,11 @@ else fetched in the background first."
 disk), in the background: the version it asks for looked up anew (the newest
 tag, the newest commit, or the tag, branch or commit named), and fetched and
 loaded when it is another commit than the one there, asked about first
-\(*PACKAGE-ASK-BEFORE-LOADING*); the others are said to be up to date."
+\(*PACKAGE-ASK-BEFORE-LOADING*); the others are said to be up to date. A
+version that needs a newer Tuatara is passed over for the newest that fits,
+or the one loaded now kept; one signed by another than the source's first
+version, or unsigned when that was signed, is refused (\[package-trust-again]
+takes it); one that fails to load gives way to the version before it."
   (update-packages (mapcar #'first *declared-packages*)))
 
 (defun update-packages (names)
@@ -1209,10 +2012,10 @@ is shown. The README of the package on the line is shown beside the list,
   "Keys of the package manager (packages-mode's keymap).")
 
 (defparameter *packages-columns* '((" M" :width 2) ("Name" :width 18) ("Version" :width 16) ("Commit" :width 8)
-                                   ("State" :width 12) ("Source"))
+                                   ("State" :width 12) ("Signed by" :width 18) ("Source"))
   "The columns of the package manager, as TABLE-HEADING-PIECES takes them: the
 mark (> or D), the name, the version (its tag), the commit, what is become of
-it this session, and where it comes from.")
+it this session, who signs its source's versions, and where it comes from.")
 
 (defparameter *packages-source-width* 20
   "The columns of a package's source the package manager keeps in view: its
@@ -1241,6 +2044,20 @@ started), declined (not let load), kept or not fetched."
         (entry "kept")
         (t "not fetched")))
 
+(defun package-signed-words (where)
+  "Who signs the versions of the source WHERE, as the package manager says it:
+the signer's name or key remembered (*PACKAGE-TRUST*), unsigned, nothing yet
+or for a folder of your disk; \"unencrypted\" first for an address of
+http:// or git://."
+  (if (local-source-p where)
+      ""
+      (let ((trusted (state-list-find *package-trust* where)))
+        (format nil "~{~a~^, ~}"
+                (remove nil (list (and (plain-transport-p where) "unencrypted")
+                                  (cond ((null trusted) nil)
+                                        ((string= (second trusted) "unsigned") "unsigned")
+                                        (t (or (third trusted) (second trusted))))))))))
+
 (defun package-name-face (mark condition)
   "The face of a package's name in the package manager: that of its MARK
 \(LIST-MARK-FACE) when it has one; else :list-dim for one not loaded, by its
@@ -1265,6 +2082,7 @@ CONDITION, none for one loaded."
                (or (third entry) version (if (local-source-p where) "folder" ""))
                (if (and entry (string/= (second entry) "-")) (subseq (second entry) 0 (min 7 (length (second entry)))) "")
                condition
+               (package-signed-words where)
                (if (local-source-p where) (abbreviated-path where) where)))))
    :after (if *declared-packages*
               (list (string #\Newline)
@@ -1279,7 +2097,7 @@ CONDITION, none for one loaded."
 of date (KEEP-SHOWN-CURRENT)."
   (declare (ignore list))
   (list *declared-packages* *loaded-packages* *fetching-packages* *package-failures*
-        (state-list-entries *fetched-packages*)))
+        (state-list-entries *fetched-packages*) (state-list-entries *package-trust*)))
 
 (keep-shown-current 'packages-mode 'packages-key)
 
@@ -1289,7 +2107,8 @@ of date (KEEP-SHOWN-CURRENT)."
 line: its mark (> marked, D marked for deletion), name, the version kept (its
 tag), its commit, what is become of it (loaded; fetching; refused, using
 names this Tuatara lacks; failed; declined, not let load; kept, not loaded;
-not fetched) and where it comes from; the names of those not loaded set
+not fetched), who signs its source's versions (unsigned, and unencrypted for
+an address of http:// or git://) and where it comes from; the names of those not loaded set
 apart; why one was refused or failed is shown beside the list in place of
 its README. \\<packages-mode>\\[list-visit] or \\`RET' lists a package's
 folder in rimu, to read its source, \\[list-visit-other] in another window; \\[list-mark-entry] marks
@@ -1427,6 +2246,25 @@ OTHER, opened safely, to read its source, each file previewed beside it;
             (if folder
                 (rimu-show-directory (tuatara.io:native folder) :other other :safe t :root (tuatara.io:native folder) :back list)
                 (message "~a is not fetched yet" name)))))))
+
+(define-command package-trust-again ()
+  "Trust the source of a package asked for anew, as the first time: who
+signed the versions taken from it is forgotten, and the package is fetched
+again (\\[package-update]); the version found is asked about with who signed it
+\(*PACKAGE-ASK-BEFORE-LOADING*), and once it is let load, that signer is the
+one remembered. For a version refused because another key signed it, or
+because it is unsigned when the versions before were signed. Signers named
+in the init file (:signers) still decide for their source."
+  (let ((names (loop for (name source) in *declared-packages*
+                     when (and source (not (local-source-p (package-where source)))) collect name)))
+    (if (null names)
+        (message "No package here is fetched from a repository")
+        (let ((name (completing-read "Trust anew the source of the package: " names :require-match t)))
+          (when (member name names :test #'string=)
+            (let ((where (package-where (second (declared-package name)))))
+              (state-list-drop *package-trust* (list where))
+              (log-message (format nil "The source ~a is trusted anew: who signs it is asked again" where))
+              (update-packages (list name))))))))
 
 (define-command packages-update-marked ()
   "Fetch again the marked packages (>), or with none marked the one on the

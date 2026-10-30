@@ -1632,6 +1632,19 @@
 ;; (load-package "example" :source "mine" :version "v1.2.0" :folder "lisp"
 ;;               :file "start.lisp")
 
+;; Only versions signed by these keys taken from a source, from the first: an
+;; SSH key's fingerprint (ssh-keygen -lf KEY.pub) or a GPG key's (gpg
+;; --fingerprint). Not set: whoever signed the first version taken is
+;; remembered, and a later version signed by another key, or unsigned when it
+;; was signed, is refused until M-x package-trust-again; unsigned sources stay
+;; usable.
+;; (package-source "mine" "https://example.org/my-packages.git"
+;;                 :signers '("SHA256:hdVZ5mzqXcO1EQf8N4u9MJvZb7TfsHkLqR2wPaXyC0s"))
+
+;; A source over http:// or git://, whose transport is not encrypted (a server
+;; inside your organisation): refused unless its load-package says :plain t.
+;; (load-package "example" :source "http://git.example.org/example.git" :plain t)
+
 ;; A package from a folder of your disk, without naming a source first.
 ;; (load-package "mine" :source "~/src/mine/")
 

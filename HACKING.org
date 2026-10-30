@@ -168,6 +168,26 @@ project's own packages each in =Tuatara-Editor/tuatara-NAME=. Its entry,
 =:folder= naming the folder within the repository when the package is not
 at its top.
 
+The entry's header says the oldest Tuatara the package works with, in a
+line of its own among the comments at the top:
+
+#+begin_src lisp
+;;;; garamond.lisp --- The spaces between sentences, kept by the document itself.
+;;;; Copyright (C) 2026 Your Name.  GPL-3.0-or-later; see LICENSE.
+;;;; Needs: Tuatara 0.91.0
+#+end_src
+
+It is read without running anything. A Tuatara older than that never takes
+the version: it takes the newest older one that fits (the tag before it,
+or for =:version "latest"= the commit before the line changed), or keeps
+the one it has. A package that says nothing loads in any Tuatara, the names
+it uses checked as it loads. Sign the commits or tags you publish (=git tag
+-s=, =git commit -S=, with a GPG or an SSH key): the key that signed the
+first version someone takes is remembered, and a later version signed by
+another, or not signed, is refused for them until they trust it again
+(=M-x package-trust-again=). Unsigned packages are taken too, and shown as
+unsigned.
+
 It has a Lisp package of its own that uses Tuatara's API, the names the
 package =tuatara= exports (=lisp/api.lisp=), and nothing else of Tuatara's:
 
