@@ -46,7 +46,7 @@ tools/terminal-library.sh
 # changed since it, with these scripts, the same grammars and terminal
 # library, and the same Lisp libraries
 stamp="$root/build/release/.built-from"
-wanted="$(git rev-parse HEAD) $(cat "$0" tools/build-image.lisp tools/build-image.sh tools/inside.sh build/grammars/.built-from \
+wanted="$(git rev-parse HEAD) $(cat "$0" tools/lisp-archives.sh tools/lisp-archives.sha256 tools/build-image.lisp tools/build-image.sh tools/inside.sh build/grammars/.built-from \
             build/terminal/.built-from "$(dirname "$(find_quicklisp_setup)")/dists/quicklisp/distinfo.txt" | sha256sum | cut -c1-16)"
 if [ -z "$(git status --porcelain --untracked-files=no)" ] &&
    [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$wanted" ] && [ -x build/release/tuatara/tuatara ] &&
@@ -65,6 +65,7 @@ mkdir -p "$work/src/build" "$work/cache"
 git archive HEAD | tar -x -C "$work/src"
 cp -a build/grammars build/terminal "$work/src/build/"
 cp -a "$quicklisp" "$work/quicklisp"
+tools/lisp-archives.sh prepare "$work/quicklisp"
 "$work/src/tools/build-image.sh" \
   QUICKLISP_SETUP="$work/quicklisp/setup.lisp" XDG_CACHE_HOME="$work/cache" \
   CL_SOURCE_REGISTRY="(:source-registry (:tree \"$work/src/\") :ignore-inherited-configuration)" \

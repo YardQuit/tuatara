@@ -14,6 +14,11 @@ cd "$(dirname "$0")/.."
 # the executable is dated by when its build began, so that a source changed
 # while it was built is newer than it, and tools/tuatara-tui.sh builds again
 start=$(date +%s)
+# no library is compiled whose archive is not the one tools/lisp-archives.sha256 lists
+for word in "$@"; do
+  case "$word" in QUICKLISP_SETUP=*) QUICKLISP_SETUP="${word#QUICKLISP_SETUP=}" ;; esac
+done
+QUICKLISP_SETUP="${QUICKLISP_SETUP:-}" tools/lisp-archives.sh check
 tools/grammars.sh
 tools/terminal-library.sh
 # The heap it is saved with: half this machine's memory, at most 16 GB and at
