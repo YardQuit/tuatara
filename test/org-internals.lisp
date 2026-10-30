@@ -537,6 +537,7 @@ out), a CLOCK: line, where a logged line goes, and clocking in from any key.")
       (is string= (wanted) (after (lambda (b) (tuatara.defaults::org-apply-edits b (list (list 0 0 (given)))))) "~a" ending))))
 
 (define-test (org-internals long-lists-and-sections-found-by-halves)
+  :time-limit 900
   ;; a note with no headline (one section of many paragraphs) or one long list: what is in sight
   ;; is found among their children by halves, alike to before
   (flet ((note (kind count)

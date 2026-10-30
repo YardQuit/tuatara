@@ -392,6 +392,7 @@ question as PATTERN/REPLACEMENT."
     (is equal '() (both "[[:base64:]]" "TheKeaIsAParrotOfTheSouthernAlpsOfAotearoa"))))
 
 (define-test (search-constructs named-patterns-make-no-garbage)
+  :time-limit 900
   ;; a named pattern tried at every place of a long text makes no garbage: its checks
   ;; read into buffers on the stack, and repetitions are written out, never counted
   (let ((line (format nil "id 99887766, 3.14 at 192.168.1.1 by fe80::1 on ac:de:48:00:00:80 ~

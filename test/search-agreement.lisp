@@ -140,6 +140,7 @@ in parallel (LINE-MATCHES)."
           (tuatara.defaults::line-matches rope matcher t 0 (tuatara.text:rope-bytes rope))))
 
 (define-test (search-agreement regex-agrees)
+  :time-limit 900
   ;; each pattern on each text, at each size: every match, how many, the first on each
   ;; line, and the next and the one before from anywhere, as the whole text's scan has them
   (with-evidence-seed

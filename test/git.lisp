@@ -898,6 +898,7 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
         (is = 2 (count renamed told :test #'string=))))))
 
 (define-test (git tags-and-remotes)
+  :time-limit 900
   ;; t t tags, -a with a message; t d deletes; M a adds a remote, M r renames
   ;; it, M u gives it a new address, M d removes it; ext:: is never taken
   (with-test-directory (dir)

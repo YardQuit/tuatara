@@ -115,6 +115,7 @@
   :serial t
   :components ((:file "package")
                (:file "fences")
+               (:file "time-bound")
                (:file "harness")
                (:file "pool")
                (:file "garbage")
@@ -232,6 +233,7 @@
                (:file "recorded-keys")
                (:file "spellcheck")
                (:file "prose")
+               (:file "ended-tests")
                (:file "bench-rope"))
   :perform (test-op (o c)
              (symbol-call :parachute :test :tuatara.tests :report :plain)))
