@@ -378,7 +378,7 @@ shown at the end of a row after a space."
   (with-rimu-tree (dir)
     (flet ((previews () (mapcar #'tuatara.buffer:buffer-name
                                 (remove-if-not (lambda (b) (search "(preview" (tuatara.buffer:buffer-name b))) tuatara.buffer:*buffers*))))
-      (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET C-x / s z q z q RET" :preview t)
+      (multiple-value-bind (f editor) (rimu-session-then dir "g f t e x t . t x t RET" "C-x / s z q z q RET")
         (declare (ignore editor))
         (true (tuatara.frontend.fake:fake-frame-showing f "text.txt (preview)"))
         (false (member "text.txt (preview)" (previews) :test #'string=))
