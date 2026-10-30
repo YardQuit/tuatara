@@ -751,7 +751,8 @@ motion or selection they are on, or in a mark run, the run's."
           do (multiple-value-bind (start end) (cursor-line-bounds b place)
                (set-cursor b place (if (eq where :end) end start) nil nil nil)))
     (settle-cursors split)
-    (enter-split-edit split nil :start)))
+    (enter-split-edit split nil :start)
+    (setf (split-did split) (if (eq where :end) :line-ends :line-starts))))
 
 (define-command cursors-insert ()
   "Type before every cursor, or its selection: what is typed at one appears
@@ -776,7 +777,8 @@ cursor at its line's end types there."
                                  (min end (tuatara.buffer:buffer-forward-char b (cursor-position b place))))
                              nil nil nil))))
     (settle-cursors split)
-    (enter-split-edit split nil :start)))
+    (enter-split-edit split nil :start)
+    (setf (split-did split) :after)))
 
 (define-command cursors-insert-line ()
   "Type at the start of every cursor's line."
@@ -997,7 +999,8 @@ the mode indents it, and type at them all; the opening is one change."
              (set-cursor b place (point) nil nil nil))
     (tuatara.buffer:merge-undo-groups b since)
     (settle-cursors split)
-    (enter-split-edit split nil :start)))
+    (enter-split-edit split nil :start)
+    (setf (split-did split) (if above :opened-above :opened-below))))
 
 (define-command cursors-open-below ()
   "Open a line below every cursor's line and type on all of them."

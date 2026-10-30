@@ -714,3 +714,14 @@ end its lines with a carriage return and a newline."
     (is string= (format nil "a~%b~%Xc~%Xd~%e") (typed "j j C-u - 1 T i X C-g"))
     ;; more added below the last and above the first
     (is string= (format nil "Xa~%Xb~%Xc~%Xd~%Xe") (typed "j j t t T T i X C-g"))))
+
+(define-test (split cursor-typing-said-where)
+  ;; as the cursors end, the echo row says where the text went
+  (let ((three (format nil "abc~%abc~%abc")))
+    (flet ((said (keys) (string-trim " " (split-echo keys three))))
+      (is string= "Split: typed before 3 cursors" (said "l t t i X C-g C-g"))
+      (is string= "Split: typed after 3 cursors" (said "l t t a X C-g C-g"))
+      (is string= "Split: typed at the line starts of 3 cursors" (said "l t t I X C-g C-g"))
+      (is string= "Split: typed at the line ends of 3 cursors" (said "l t t A X C-g C-g"))
+      (is string= "Split: typed on new lines below 3 cursors" (said "t t o X C-g C-g"))
+      (is string= "Split: typed on new lines above 3 cursors" (said "t t O X C-g C-g")))))

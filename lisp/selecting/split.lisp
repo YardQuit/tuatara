@@ -88,7 +88,10 @@ any of; HIDDEN counts those it left alone, for what it says."
       (documentation 'split-primary 'function) "The place of SPLIT point is in, whose text the others follow."
       (documentation 'split-text 'function) "What SPLIT's primary place held when last looked at."
       (documentation 'split-phase 'function) "SPLIT's phase: :SELECT while a verb is awaited, :EDIT while typing."
-      (documentation 'split-did 'function) "What SPLIT's verb did, for the report as it ends."
+      (documentation 'split-did 'function) "What SPLIT's verb did, for the report as it ends:
+:BEFORE, :AFTER, :LINE-STARTS, :LINE-ENDS, :OPENED-BELOW, :OPENED-ABOVE (typed
+there), :CHANGED, :DELETED, :WRAPPED, :UNWRAPPED, :PASTED, :EDITED, or NIL for
+nothing."
       (documentation 'split-scope 'function) "What SPLIT searched, named for the reminder."
       (documentation 'split-agree 'function) "True when every place of SPLIT held the same text."
       (documentation 'split-tick 'function) "The content number of SPLIT's buffer as the split was made."
@@ -277,6 +280,10 @@ how many matches it left alone because a fold hides them."
                 (case (split-did split)
                   (:before (format nil "Split: typed before ~a" places))
                   (:after (format nil "Split: typed after ~a" places))
+                  (:line-starts (format nil "Split: typed at the line starts of ~a" places))
+                  (:line-ends (format nil "Split: typed at the line ends of ~a" places))
+                  (:opened-below (format nil "Split: typed on new lines below ~a" places))
+                  (:opened-above (format nil "Split: typed on new lines above ~a" places))
                   (:changed (format nil "Split: changed ~a" places))
                   (:deleted (format nil "Split: deleted ~a" places))
                   (:wrapped (format nil "Split: wrapped ~a" places))
