@@ -87,6 +87,19 @@ and the `stable-surface` tests fail on a change that breaks it within a major
 version. Before 1.0.0 the surface may still change; a pull request that
 changes it says so.
 
+## Dependencies
+
+Everything Tuatara takes from others is a way in for code that should not be
+there, so each dependency is reviewed before it is added or its pin moved,
+and the whole list again at every security review: whether it is
+maintained, how widely it is used, who keeps it and how security faults were
+handled, and whether its owner or name has changed. It is taken pinned, to a
+commit or a version, and what is downloaded is checked against a recorded
+hash. Native code that runs inside the editor (tree-sitter grammars, the
+terminal library) is read most closely, since the editor opens files that
+are not trusted. A pull request that adds a dependency or moves a pin says
+why, and what the review found.
+
 ## Sign-off
 
 The `Signed-off-by:` line `git commit -s` adds is your statement, under the
