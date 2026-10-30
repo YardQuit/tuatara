@@ -122,12 +122,15 @@ does."
   (unless (grammar-faulted grammar)
     (let ((parser (make-parser grammar)))
       (handler-case
-          (multiple-value-bind (tree why)
+          (multiple-value-bind (tree why unusable)
               (if (set-included-ranges parser rope ranges)
                   (parse-rope parser rope :limit *injection-time-limit*
                                           :budget (parse-memory-limit (loop for (start . end) in ranges sum (- end start))))
                   nil)
-            (delete-parser parser)
+            ;; a parser left half way when memory ran out is let go
+            (if unusable
+                (parser-let-go grammar "a text in another language")
+                (delete-parser parser))
             (when (eq why :failed)
               (setf (grammar-faulted grammar) (make-condition 'grammar-failure :grammar grammar)))
             (values tree why))

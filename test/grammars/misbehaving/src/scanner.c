@@ -5,11 +5,15 @@
    grammar does not have; "!m" takes a megabyte of memory, kept until the
    parser is deleted; after "!z" the scanner says its state is longer than
    the buffer for it, and after "!o" it writes 64 octets past that buffer,
-   after "!O" 64 KB; any other letter is a plain mark. */
+   after "!O" 64 KB; "!h" asks tree-sitter's own allocator for a terabyte;
+   any other letter is a plain mark. */
 
 #include "tree_sitter/parser.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* tree-sitter's allocator, where the program has it */
+extern void *(*ts_current_malloc)(size_t) __attribute__((weak));
 
 /* The memory taken by "!m" marks, each block holding the one before, and
    what the next saving of the state does wrong: 'z', 'o' or 'O', or 0. */
@@ -62,6 +66,8 @@ bool tree_sitter_misbehaving_external_scanner_scan(void *payload, TSLexer *lexer
   lexer->result_symbol = 0;
   if (what == 'z' || what == 'o' || what == 'O') {
     scanner->wrong = what;
+  } else if (what == 'h') {
+    if (&ts_current_malloc) ts_current_malloc((size_t)1 << 40);
   } else if (what == 's') {
     lexer->result_symbol = 60000;
   } else if (what == 'm') {

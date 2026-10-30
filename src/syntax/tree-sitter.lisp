@@ -309,14 +309,18 @@ failed and ends the text, so no error unwinds through the parser."
   "Parse ROPE with PARSER and return the new tree, or NIL when the parse was
 cancelled, ran out of time or memory, the grammar went wrong or the text
 could not be read. The second value then says why: :SLOW when it ran out of
-time, :MEMORY when it ran out of memory and :FAILED when the grammar's own
-code gave the parser what it cannot have (a token the grammar has no number
-for). A scanner writing past the memory given to it for its state faults
-there, as SB-SYS:MEMORY-FAULT-ERROR. OLD is the tree of the text before,
-edited to match ROPE with EDIT-TREE, or NIL to parse from scratch. CANCEL is a foreign
-32-bit flag: the parse stops soon after it becomes nonzero. LIMIT is how many
-seconds the parse may take, BUDGET how many octets of memory more than the
-tree-sitter library held before it; NIL for no limit."
+time, :MEMORY when it took more memory than BUDGET, :SHORT when the memory
+the editor may take ran short (or was short, and it did not start) and
+:FAILED when the grammar's own code gave the parser what it cannot have (a
+token the grammar has no number for). The third value is true when PARSER
+was left half way, memory running out within it, and is not to be used
+again, not even to be deleted. A scanner writing past the memory given to it
+for its state faults there, as SB-SYS:MEMORY-FAULT-ERROR. OLD is the tree of
+the text before, edited to match ROPE with EDIT-TREE, or NIL to parse from
+scratch. CANCEL is a foreign 32-bit flag: the parse stops soon after it
+becomes nonzero. LIMIT is how many seconds the parse may take, BUDGET how
+many octets of memory more than the tree-sitter library held before it; NIL
+for no limit."
   (with-foreign-memory (buffer +read-size+)
     (with-foreign-memory (own-flag 4 :zero t)
       (let* ((flag (or cancel own-flag))
@@ -328,8 +332,11 @@ tree-sitter library held before it; NIL for no limit."
                               :u32 (if limit (max 1 (min #xffffffff (round (* limit 1000)))) 0)
                               :u64 (if budget (max 1 (min (1- (expt 2 63)) (round budget))) 0)))))
         (cond ((null-pointer-p tree)
-               (ts-call "ts_parser_reset" :void :pointer parser)
-               (values nil (case (sb-sys:signed-sap-ref-32 flag 0) (2 :slow) (3 :memory) (4 :failed))))
+               (let ((code (sb-sys:signed-sap-ref-32 flag 0)))
+                 (if (= code 7)
+                     (values nil :short t)
+                     (progn (ts-call "ts_parser_reset" :void :pointer parser)
+                            (values nil (case code (2 :slow) (3 :memory) (4 :failed) (6 :short)) nil)))))
               ((parse-input-failed input)
                (delete-tree tree)
                (ts-call "ts_parser_reset" :void :pointer parser)

@@ -19,7 +19,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build/grammars"
 sources="$root/build/grammar-sources"
 stamp="$out/.built-from"
-wanted="$(cat "$root/syntax/grammars.tsv" "$root/syntax/syntax.c" "$root/syntax/safe-ctype.h" "$root"/syntax/patches/*.patch "$root"/syntax/licenses/*.txt "$0" "$root/tools/grammar-build.sh" 2>/dev/null | sha256sum | cut -c1-16)"
+wanted="$(cat "$root/syntax/grammars.tsv" "$root/syntax/syntax.c" "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" "$root"/syntax/patches/*.patch "$root"/syntax/licenses/*.txt "$0" "$root/tools/grammar-build.sh" 2>/dev/null | sha256sum | cut -c1-16)"
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$wanted" ]; then exit 0; fi
 mkdir -p "$out" "$sources" "$root/build/tools"
 . "$root/tools/inside.sh"
@@ -101,7 +101,7 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
          "$dir/lib/src/lib.c" "$root/syntax/syntax.c" -o "$out/libtuatara-syntax.so" ;;
     *)
       patch="$root/syntax/patches/$name.patch"
-      made="$commit ${grammar_cflags[*]} $(sha256sum < "$root/syntax/safe-ctype.h" | cut -c1-16)"
+      made="$commit ${grammar_cflags[*]} $(cat "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" | sha256sum | cut -c1-16)"
       [ -f "$patch" ] && made="$made $(sha256sum < "$patch" | cut -c1-16)"
       [ -f "$src/scanner.cc" ] && made="$made c++ ${grammar_cxxflags[*]}"
       if [ ! -f "$out/$name.so" ] || [ "$(cat "$out/$name.commit" 2>/dev/null)" != "$made" ]; then

@@ -18,7 +18,7 @@
            #:map-query-matches #:query-non-local-patterns #:disable-query-pattern #:query-starts #:query-source
            ;; syntax trees of buffers, and their colours
            #:syntax #:syntax-p #:syntax-buffer #:buffer-syntax #:attach-syntax #:detach-syntax #:syntax-tree #:syntax-grammar
-           #:syntax-rope #:syntax-broken #:parse-memory-limit #:parse-time-limit #:*syntax-fault-function* #:*syntax-slow-function* #:*syntax-time-limit* #:*syntax-time-per-megabyte* #:*syntax-memory-limit* #:*syntax-memory-per-octet* #:grammar-faulted #:grammar-failure #:syntax-too-big #:syntax-current #:syntax-job #:syntax-generation
+           #:syntax-rope #:syntax-broken #:parse-memory-limit #:parse-time-limit #:*syntax-fault-function* #:*syntax-slow-function* #:*syntax-time-limit* #:*syntax-time-per-megabyte* #:*syntax-memory-limit* #:*syntax-memory-per-octet* #:grammar-faulted #:grammar-failure #:parsers-let-go #:syntax-too-big #:syntax-current #:syntax-job #:syntax-generation
            #:syntax-ready-tree #:parse-under-way-p #:copy-tree-pointer #:wait-for-parse #:catch-up #:refresh-syntax #:*syntax-refresh-delay* #:syntax-patched #:syntax-no-refresh
            #:*syntax-size-limit* #:*syntax-wait* #:*syntax-edit-limit* #:*syntax-wake-function*
            #:syntax-highlights #:*rules-generation* #:rich-highlights #:language-highlights #:injection-cut #:*injection-reach*

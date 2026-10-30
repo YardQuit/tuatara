@@ -6,18 +6,23 @@
    structures by value; these functions take their parts one by one. */
 
 #include <malloc.h>
+#include <pthread.h>
+#include <setjmp.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
 #include <tree_sitter/api.h>
 
-/* The octets the tree-sitter library holds: every allocation it makes, and a
-   grammar's through it, is counted here, so that a parse that takes far more
-   than its text calls for (a grammar gone wrong, building without end) can be
-   stopped before it takes the machine's memory. */
+/* The octets the tree-sitter library holds: every allocation it makes, and
+   each a grammar's code makes (syntax/counted-memory.h), is counted here, so
+   that a parse that takes far more than its text calls for (a grammar gone
+   wrong, building without end) can be stopped before it takes the machine's
+   memory. */
 static _Atomic int64_t tuatara_held_octets;
 
 static void tuatara_count(void *pointer, int64_t sign) {
@@ -25,19 +30,21 @@ static void tuatara_count(void *pointer, int64_t sign) {
     atomic_fetch_add_explicit(&tuatara_held_octets, sign * (int64_t)malloc_usable_size(pointer), memory_order_relaxed);
 }
 
-static void *tuatara_malloc(size_t size) {
+/* What a grammar's own code takes, through syntax/counted-memory.h: counted,
+   and NULL when there is no memory, as the C library's functions are. */
+void *tuatara_counted_malloc(size_t size) {
   void *pointer = malloc(size);
   tuatara_count(pointer, 1);
   return pointer;
 }
 
-static void *tuatara_calloc(size_t count, size_t size) {
+void *tuatara_counted_calloc(size_t count, size_t size) {
   void *pointer = calloc(count, size);
   tuatara_count(pointer, 1);
   return pointer;
 }
 
-static void *tuatara_realloc(void *old, size_t size) {
+void *tuatara_counted_realloc(void *old, size_t size) {
   int64_t before = old ? (int64_t)malloc_usable_size(old) : 0;
   void *pointer = realloc(old, size);
   if (pointer)
@@ -47,13 +54,115 @@ static void *tuatara_realloc(void *old, size_t size) {
   return pointer;
 }
 
-static void tuatara_release(void *pointer) {
+void tuatara_counted_free(void *pointer) {
   tuatara_count(pointer, -1);
   free(pointer);
 }
 
+/* Tree-sitter's own allocations cannot fail: none of the places it asks for
+   memory looks for NULL. So memory is kept back for the moment it runs out:
+   TUATARA_RESERVE octets, taken and never written, given back to the system
+   when an allocation fails, which is then made again. TUATARA_SHORT is set
+   while the reserve is given back, and every parse under way stops at its
+   next check (tuatara_cancelled) and none starts; the reserve is taken
+   again when it can be had, at the start and the end of a parse
+   (tuatara_take_reserve) or when the editor asks (tuatara_memory_back).
+   The two change together under TUATARA_RESERVE_LOCK, so the flag is set
+   exactly while the reserve is given back: a thread taking it again cannot
+   clear the flag another has just set on giving it back.
+
+   An allocation that fails again, or one larger than the reserve (which
+   giving the reserve back could not make room for), cannot be answered. In
+   a parse the allocation does not return: the parse is given up there
+   (TUATARA_ESCAPE) and the parser is not used again, as its state is left
+   half made. A parse is where the sizes asked for follow the text and its
+   tree (the parse stack, a node's children, the tree's nodes); elsewhere
+   (queries, edits of a tree, deleting one, a parser's own structure) they
+   are small and bounded, far below the reserve, and an allocation failing
+   there, even with the reserve given back or larger than it, ends the
+   editor, saying why, as tree-sitter's own allocator does: going on would
+   write through no memory, at an offset that may reach the editor's own,
+   and damage it unseen. While the text a parse reads is fetched (from the
+   editor's Lisp, which an escape must not cross), no parse is under way. */
+#define TUATARA_RESERVE ((size_t)64 << 20)
+static pthread_mutex_t tuatara_reserve_lock = PTHREAD_MUTEX_INITIALIZER;
+static void *tuatara_reserve;
+static atomic_bool tuatara_short;
+static _Thread_local jmp_buf *tuatara_escape;
+
+/* Give the reserve back; false when it was given back already. */
+static bool tuatara_give_reserve(void) {
+  pthread_mutex_lock(&tuatara_reserve_lock);
+  void *reserve = tuatara_reserve;
+  tuatara_reserve = NULL;
+  atomic_store(&tuatara_short, true);
+  pthread_mutex_unlock(&tuatara_reserve_lock);
+  free(reserve);
+  return reserve != NULL;
+}
+
+/* Take the reserve again when it was given back and the memory can be had. */
+static void tuatara_take_reserve(void) {
+  if (!atomic_load(&tuatara_short)) return;
+  void *reserve = malloc(TUATARA_RESERVE);
+  if (!reserve) return;
+  pthread_mutex_lock(&tuatara_reserve_lock);
+  if (!tuatara_reserve) {
+    tuatara_reserve = reserve;
+    reserve = NULL;
+    atomic_store(&tuatara_short, false);
+  }
+  pthread_mutex_unlock(&tuatara_reserve_lock);
+  free(reserve);
+}
+
+/* An allocation of SIZE octets for tree-sitter failed: true to make it again,
+   the reserve given back; else it does not return (see above). */
+static bool tuatara_again(size_t size) {
+  if (size <= TUATARA_RESERVE && tuatara_give_reserve()) return true;
+  if (tuatara_escape) longjmp(*tuatara_escape, 1);
+  static const char said[] = "tuatara: out of memory in the syntax library\n";
+  if (write(2, said, sizeof said - 1) < 0) {}
+  abort();
+}
+
+static void *tuatara_malloc(size_t size) {
+  void *pointer = malloc(size);
+  while (!pointer && size && tuatara_again(size)) pointer = malloc(size);
+  tuatara_count(pointer, 1);
+  return pointer;
+}
+
+static void *tuatara_calloc(size_t count, size_t size) {
+  void *pointer = calloc(count, size);
+  size_t total = size && count > SIZE_MAX / size ? SIZE_MAX : count * size;
+  while (!pointer && total && tuatara_again(total)) pointer = calloc(count, size);
+  tuatara_count(pointer, 1);
+  return pointer;
+}
+
+static void *tuatara_realloc(void *old, size_t size) {
+  int64_t before = old ? (int64_t)malloc_usable_size(old) : 0;
+  void *pointer = realloc(old, size);
+  while (!pointer && size && tuatara_again(size)) pointer = realloc(old, size);
+  if (pointer)
+    atomic_fetch_add_explicit(&tuatara_held_octets, (int64_t)malloc_usable_size(pointer) - before, memory_order_relaxed);
+  else if (size == 0 && old)
+    atomic_fetch_sub_explicit(&tuatara_held_octets, before, memory_order_relaxed);
+  return pointer;
+}
+
 __attribute__((constructor)) static void tuatara_count_allocations(void) {
-  ts_set_allocator(tuatara_malloc, tuatara_calloc, tuatara_realloc, tuatara_release);
+  tuatara_reserve = malloc(TUATARA_RESERVE);
+  atomic_store(&tuatara_short, tuatara_reserve == NULL);
+  ts_set_allocator(tuatara_malloc, tuatara_calloc, tuatara_realloc, tuatara_counted_free);
+}
+
+/* True when the memory kept back for running out is kept again, taking it
+   when it can be had: memory is no longer short. */
+bool tuatara_memory_back(void) {
+  tuatara_take_reserve();
+  return !atomic_load(&tuatara_short);
 }
 
 /* The octets the tree-sitter library holds now. */
@@ -65,6 +174,35 @@ int64_t tuatara_held(void) {
 int64_t tuatara_physical_memory(void) {
   long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGESIZE);
   return pages > 0 && size > 0 ? (int64_t)pages * size : 0;
+}
+
+/* The octets of address space the editor may still take, when it is held to
+   a limit (ulimit -v); -1 when it is not, or the system does not say. Read
+   from the system at most once a second, unless FRESH: the figure kept may
+   be from before memory was given back. */
+int64_t tuatara_address_space_left(bool fresh) {
+  static _Atomic int64_t left = -1;
+  static _Atomic int64_t read_at = INT64_MIN;
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  if (!fresh && now.tv_sec == atomic_load(&read_at)) return atomic_load(&left);
+  struct rlimit limit;
+  int64_t found = -1;
+  if (getrlimit(RLIMIT_AS, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY) {
+    long pages = 0, page = sysconf(_SC_PAGESIZE);
+    FILE *statm = fopen("/proc/self/statm", "r");
+    if (statm) {
+      int fields = fscanf(statm, "%ld", &pages);
+      fclose(statm);
+      if (fields == 1 && page > 0) {
+        int64_t used = (int64_t)pages * page;
+        found = (int64_t)limit.rlim_cur > used ? (int64_t)limit.rlim_cur - used : 0;
+      }
+    }
+  }
+  atomic_store(&left, found);
+  atomic_store(&read_at, (int64_t)now.tv_sec);
+  return found;
 }
 
 /* Reads the text: returns the octets from BYTE on and stores how many there
@@ -79,13 +217,18 @@ struct tuatara_input {
 static const char *tuatara_read(void *payload, uint32_t byte, TSPoint point, uint32_t *length) {
   struct tuatara_input *input = payload;
   (void)point;
-  return input->read(input->payload, byte, length);
+  jmp_buf *escape = tuatara_escape;
+  tuatara_escape = NULL;
+  const char *text = input->read(input->payload, byte, length);
+  tuatara_escape = escape;
+  return text;
 }
 
 /* When a parse is to stop: when *CANCEL becomes nonzero; once DEADLINE has
-   passed if LIMITED, which sets *CANCEL to 2; or once the library holds more
+   passed if LIMITED, which sets *CANCEL to 2; once the library holds more
    than BUDGET octets beyond the HELD it held when the parse began, unless
-   BUDGET is 0, which sets *CANCEL to 3. */
+   BUDGET is 0, which sets *CANCEL to 3; or when memory runs short, which sets
+   it to 6. */
 struct tuatara_progress {
   volatile int32_t *cancel;
   bool limited;
@@ -97,6 +240,10 @@ struct tuatara_progress {
 static bool tuatara_cancelled(TSParseState *state) {
   struct tuatara_progress *progress = state->payload;
   if (*progress->cancel != 0) return true;
+  if (atomic_load_explicit(&tuatara_short, memory_order_relaxed)) {
+    *progress->cancel = 6;
+    return true;
+  }
   if (progress->budget > 0 && tuatara_held() - progress->held > progress->budget) {
     *progress->cancel = 3;
     return true;
@@ -114,13 +261,15 @@ static bool tuatara_cancelled(TSParseState *state) {
 }
 
 /* Parse the UTF-8 text READ gives with PARSER, reusing OLD (already edited to
-   match the text) unless it is NULL. The parse stops, returning NULL, soon
-   after *CANCEL becomes nonzero; once LIMIT milliseconds have passed unless
-   LIMIT is 0, *CANCEL then set to 2; or once it has taken BUDGET octets of
-   memory unless BUDGET is 0, *CANCEL then set to 3. It returns NULL as well
-   when the grammar's own code gave the parser what it cannot have (a token
-   number the grammar does not have, a state longer than its buffer), *CANCEL
-   then set to 4. The parser must be reset after a NULL. */
+   match the text) unless it is NULL. The parse stops, returning NULL and
+   setting *CANCEL to say why, soon after *CANCEL becomes nonzero; once LIMIT
+   milliseconds have passed unless LIMIT is 0 (2); once it has taken BUDGET
+   octets of memory unless BUDGET is 0 (3); when the grammar's own code gave
+   the parser what it cannot have, a token number the grammar does not have
+   or a state longer than its buffer (4); and when memory runs short, or is
+   short already, so that none starts (6). When memory ran out within an
+   allocation of tree-sitter's (7), PARSER is left half way and is not to be
+   used again; else it must be reset after a NULL. */
 TSTree *tuatara_parse(TSParser *parser, const TSTree *old, tuatara_reader read, void *payload,
                       volatile int32_t *cancel, uint32_t limit, uint64_t budget) {
   struct tuatara_input source = {read, payload};
@@ -136,10 +285,24 @@ TSTree *tuatara_parse(TSParser *parser, const TSTree *old, tuatara_reader read, 
       progress.deadline.tv_nsec -= 1000000000L;
     }
   }
+  tuatara_take_reserve();
+  if (atomic_load(&tuatara_short)) {
+    *cancel = 6;
+    return NULL;
+  }
   TSParseOptions options = {&progress, tuatara_cancelled};
-  TSTree *tree = ts_parser_parse_with_options(parser, old, input, options);
+  jmp_buf escape;
+  TSTree *volatile tree = NULL;
+  if (setjmp(escape) == 0) {
+    tuatara_escape = &escape;
+    tree = ts_parser_parse_with_options(parser, old, input, options);
+  } else {
+    *cancel = 7;
+  }
+  tuatara_escape = NULL;
   /* stopped by none of the above: the grammar went wrong */
   if (!tree && *cancel == 0) *cancel = 4;
+  tuatara_take_reserve();
   return tree;
 }
 
@@ -187,17 +350,6 @@ int32_t tuatara_next_match(TSQueryCursor *cursor, uint32_t *pattern, uint32_t *c
     captures[4 * i + 3] = ts_node_symbol(node);
   }
   return (int32_t)match.capture_count;
-}
-
-/* The syntax tree of TREE's smallest node spanning octets START below END, as
-   an S-expression in text the caller releases with tuatara_free. */
-char *tuatara_node_string(const TSTree *tree, uint32_t start, uint32_t end) {
-  return ts_node_string(ts_node_descendant_for_byte_range(ts_tree_root_node(tree), start, end));
-}
-
-/* Release memory the tree-sitter library allocated for the caller. */
-void tuatara_free(void *pointer) {
-  tuatara_release(pointer);
 }
 
 /* The smallest node of TREE spanning octets START below END, named or not,

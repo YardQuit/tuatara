@@ -5,13 +5,16 @@
 # type as another, which GCC compiles wrongly unless told not to assume that
 # never happens; the assertions of a grammar are left out, as a failed one
 # would end the editor; and its character classes answer for any code point
-# (syntax/safe-ctype.h). A scanner written in C++ (the YAML and Vue grammars
-# have one) is compiled apart, with the same care but for the character
-# classes: the headers of C++ take those back, and such scanners ask the wide
-# ones (iswspace), which answer for any code point; its names are kept inside
-# the grammar, as the same ones (Scanner::scan) are in several.
+# (syntax/safe-ctype.h); and the memory its scanner takes is counted with
+# tree-sitter's, so that a parse's budget sees it (syntax/counted-memory.h).
+# A scanner written in C++ (the YAML and Vue grammars have one) is compiled
+# apart, with the same care but for the character classes and the memory:
+# the headers of C++ take those back, and such scanners ask the wide ones
+# (iswspace), which answer for any code point; its names are kept inside the
+# grammar, as the same ones (Scanner::scan) are in several.
 grammar_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-grammar_cflags=(-O2 -fPIC -shared -std=c11 -fno-strict-aliasing -DNDEBUG -include "$grammar_root/syntax/safe-ctype.h")
+grammar_cflags=(-O2 -fPIC -shared -std=c11 -fno-strict-aliasing -DNDEBUG -include "$grammar_root/syntax/safe-ctype.h"
+                -include "$grammar_root/syntax/counted-memory.h")
 grammar_cxxflags=(-O2 -fPIC -fno-strict-aliasing -DNDEBUG -fvisibility=hidden)
 
 # compile_grammar SRC LIB [--assertions]: compile the grammar whose parser.c

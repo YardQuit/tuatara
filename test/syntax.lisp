@@ -535,11 +535,46 @@ and its SYNTAX; the buffer is to be killed by the caller."
                   (tuatara.buffer:kill-buffer buffer))))
          (setf (tuatara.syntax:grammar-faulted grammar) nil))))))
 
+(define-test (syntax scanner-memory-counted)
+  ;; the memory a grammar's scanner takes is counted with tree-sitter's: a
+  ;; scanner taking a megabyte for each mark is stopped by the parse's
+  ;; budget; in a buffer the parse is given up, the editor says so and goes
+  ;; on, and the scanner's memory is let go
+  (call-with-misbehaving-grammar
+   (lambda (grammar directory)
+     (declare (ignore directory))
+     (let ((text (with-output-to-string (o) (dotimes (i 64) (write-string "word !m " o))))
+           (parser (tuatara.syntax:make-parser grammar)))
+       (unwind-protect
+            (multiple-value-bind (tree why)
+                (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text) :budget (* 8 1024 1024))
+              (false tree)
+              (is eq :memory why))
+         (tuatara.syntax:delete-parser parser))
+       (let ((held (tuatara.syntax::ts-call "tuatara_held" :i64))
+             (said nil))
+         (let ((tuatara.syntax:*syntax-memory-limit* (* 8 1024 1024))
+               (tuatara.syntax:*syntax-memory-per-octet* 0)
+               (tuatara.syntax:*syntax-slow-function* (lambda (syntax) (setf said syntax))))
+           (multiple-value-bind (buffer syntax) (parse-in-buffer grammar text)
+             (unwind-protect
+                  (progn
+                    (is eq syntax said)
+                    (is eq :memory (tuatara.syntax:syntax-broken syntax))
+                    (false (tuatara.syntax:grammar-faulted grammar))
+                    ;; editing goes on, the text no longer parsed
+                    (tuatara.buffer:buffer-insert buffer 0 "more ")
+                    (false (tuatara.syntax:syntax-job syntax)))
+               (tuatara.syntax:detach-syntax buffer)
+               (tuatara.buffer:kill-buffer buffer))))
+         (true (< (- (tuatara.syntax::ts-call "tuatara_held" :i64) held) (* 1024 1024))))))))
+
 (defmacro found-in-child ((found case) &body body)
   "Run BODY with FOUND what test/syntax/memory.lisp found for CASE, run in a
 process of its own held to 3 GB of address space, with the grammar of
-test/grammars/misbehaving/ beside it (SURVIVING): one whose memory a scanner
-writes past, so that it is not the test run's."
+test/grammars/misbehaving/ beside it (SURVIVING): one whose memory runs
+short, or whose memory a scanner writes past, so that it is not the test
+run's."
   (let ((grammar (gensym "GRAMMAR")) (directory (gensym "DIRECTORY")))
     `(call-with-misbehaving-grammar
       (lambda (,grammar ,directory)
@@ -547,6 +582,33 @@ writes past, so that it is not the test run's."
         (surviving (,found ,case :script "test/syntax/memory.lisp" :heap "1GB"
                                  :address-space (* 3 1024 1024 1024) :directory ,directory)
           ,@body)))))
+
+(define-test (syntax parses-stop-when-memory-runs-short)
+  ;; with the address space all but full, a parse that needs more is given up
+  ;; once the memory kept back for that is given back, and its parser reads
+  ;; again; while memory stays short no parse starts; a buffer whose parse
+  ;; was given up so is parsed again at its next edit once memory is back
+  (found-in-child (found "reserve")
+    (is equal '(nil :short nil) (getf found :first))
+    (false (getf found :back-while-full))
+    (is equal '(nil :short) (getf found :while-short))
+    (is eq :short (getf found :buffer-broken))
+    (true (getf found :back-after))
+    ;; the figure of the memory left is read again when it holds a parse down
+    (true (> (getf found :limit-after 0) (* 64 1024 1024)))
+    (is eq nil (getf found :buffer-broken-after))
+    (true (getf found :buffer-tree-after))
+    (true (getf found :parsed-after))))
+
+(define-test (syntax tight-memory-budget-tried-again)
+  ;; with little memory left, a parse's budget is held down by it: spent,
+  ;; the parse is given up as memory running short, and the text is parsed
+  ;; again at its next edit once memory is back
+  (found-in-child (found "tight")
+    (true (getf found :tight-limit))
+    (is eq :short (getf found :buffer-broken))
+    (is eq nil (getf found :buffer-broken-after))
+    (true (getf found :buffer-tree-after))))
 
 (define-test (syntax scanner-writing-past-its-buffer-faults)
   ;; a scanner writing past the buffer for its state, a little or much,
@@ -558,6 +620,17 @@ writes past, so that it is not the test run's."
     (true (getf found :buffer-fault))
     (true (getf found :buffer-broken))
     (true (getf found :other-parses))))
+
+(define-test (syntax no-memory-for-one-request)
+  ;; tree-sitter asked, in a parse, for more memory than can be had at once:
+  ;; the parse is given up and its parser let go, and counted so in a
+  ;; buffer; the editor carries on, the memory kept back untouched
+  (found-in-child (found "huge")
+    (is equal '(nil :short t) (getf found :in-parse))
+    (true (getf found :back))
+    (is eq :short (getf found :buffer-broken))
+    (is eql 1 (getf found :let-go))
+    (true (getf found :parsed-after))))
 
 ;; how the parse of a big file stops when it takes too long
 (define-test (syntax slow-parses)

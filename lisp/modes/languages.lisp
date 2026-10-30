@@ -636,19 +636,27 @@ left alone long enough since parses after its edits
              (wait (and syntax (tuatara.syntax:refresh-syntax syntax))))
         (when wait (setf soonest (if soonest (min soonest wait) wait)))))))
 
+(defvar *memory-low-said* nil
+  "True once the editor has said that memory is low and that parses stopped
+half way keep what they took until it starts again.")
+
 (defun report-slow-parse (syntax)
   "Say that parsing the text of SYNTAX's buffer took too long, or too much
-memory, and was given up."
-  (let ((bytes (tuatara.text:rope-bytes (tuatara.syntax:syntax-rope syntax))))
-    (if (eq (tuatara.syntax:syntax-broken syntax) :memory)
-        (message "The ~a grammar went wrong reading ~a and was stopped (it took over ~:d MB): its colours are off in that buffer."
-                 (tuatara.syntax:grammar-name (tuatara.syntax:syntax-grammar syntax))
-                 (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
-                 (floor (tuatara.syntax:parse-memory-limit bytes) (* 1024 1024)))
-        (message "The ~a grammar took too long to read ~a (over ~,0f seconds): its colours are off in that buffer."
-                 (tuatara.syntax:grammar-name (tuatara.syntax:syntax-grammar syntax))
-                 (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
-                 (tuatara.syntax:parse-time-limit bytes)))))
+memory, or that memory ran short, and it was given up."
+  (let ((bytes (tuatara.text:rope-bytes (tuatara.syntax:syntax-rope syntax)))
+        (grammar (tuatara.syntax:grammar-name (tuatara.syntax:syntax-grammar syntax)))
+        (buffer (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))))
+    (case (tuatara.syntax:syntax-broken syntax)
+      (:memory
+       (message "The ~a grammar went wrong reading ~a and was stopped (it took over ~:d MB): its colours are off in that buffer."
+                grammar buffer (floor (tuatara.syntax:parse-memory-limit bytes) (* 1024 1024))))
+      (:short
+       (message "Memory ran short while the ~a grammar read ~a: its colours are off there until memory is back and the text is edited.~:[~; Memory is low: parses stopped half way keep what they took until Tuatara starts again.~]"
+                grammar buffer
+                (and (plusp (tuatara.syntax:parsers-let-go)) (not (shiftf *memory-low-said* t)))))
+      (t
+       (message "The ~a grammar took too long to read ~a (over ~,0f seconds): its colours are off in that buffer."
+                grammar buffer (tuatara.syntax:parse-time-limit bytes))))))
 
 (defun report-grammar-fault (syntax)
   "Say that the grammar of SYNTAX failed while reading its buffer and is off

@@ -53,11 +53,14 @@ or NIL for no limit."
   (and *syntax-time-limit* (+ *syntax-time-limit* (* *syntax-time-per-megabyte* (/ bytes 1048576)))))
 
 (defvar *syntax-memory-limit* (* 256 1024 1024)
-  "The octets of memory a parse of a text may take, and *SYNTAX-MEMORY-PER-OCTET*
-more for each octet of it, but never more than a quarter of the machine's; a
-parse that takes more is given up, and its buffer shows no syntax colours: a
-grammar can go wrong on a text and build without end, which would take all
-the memory there is. NIL for no limit.")
+  "The octets of memory a parse of a text may take, and
+*SYNTAX-MEMORY-PER-OCTET* more for each octet of it, but never more than a
+quarter of the machine's, nor more than half of what the editor may still
+take where it is held to a limit (ulimit -v); a parse that takes more is
+given up, and its buffer shows no syntax colours: a grammar can go wrong on
+a text and build without end, which would take all the memory there is. A
+parse under way when memory runs short is given up too, and its text parsed
+again at its next edit once memory is back. NIL for no limit.")
 
 (defvar *syntax-memory-per-octet* 256
   "The octets of memory a parse may take for each octet of text, on top of
@@ -67,11 +70,22 @@ where every character or two is a token of its own (a long list of numbers).")
 
 (defun parse-memory-limit (bytes)
   "The octets of memory a parse of a text of BYTES octets may take
-(*SYNTAX-MEMORY-LIMIT*), or NIL for no limit."
-  (and *syntax-memory-limit*
-       (let ((wanted (+ *syntax-memory-limit* (* *syntax-memory-per-octet* bytes)))
-             (machine (ts-call "tuatara_physical_memory" :i64)))
-         (if (plusp machine) (min wanted (floor machine 4)) wanted))))
+(*SYNTAX-MEMORY-LIMIT*), or NIL for no limit; true as a second value when
+that is less than the setting allows because little of the memory the
+editor may take is left, a parse stopped by it then to be tried again once
+memory is back."
+  (when *syntax-memory-limit*
+    (let ((wanted (+ *syntax-memory-limit* (* *syntax-memory-per-octet* bytes)))
+          (machine (ts-call "tuatara_physical_memory" :i64)))
+      (when (plusp machine) (setf wanted (min wanted (floor machine 4))))
+      ;; the figure kept from a moment ago is read again when it is what
+      ;; holds the parse down: memory may have been given back since
+      (let ((left (ts-call "tuatara_address_space_left" :i64 :bool nil)))
+        (when (and (>= left 0) (< (floor left 2) wanted))
+          (setf left (ts-call "tuatara_address_space_left" :i64 :bool t)))
+        (if (and (>= left 0) (< (floor left 2) wanted))
+            (values (floor left 2) t)
+            (values wanted nil))))))
 
 (defstruct (parse-job (:constructor make-parse-job (rope old cancel wake)) (:copier nil))
   "One parse, run in its syntax's parse thread: of ROPE, from OLD (a copy of the tree before,
@@ -81,9 +95,12 @@ OBSOLETE when the text changed too much for its tree to be of use. WAKE is
 called when it finishes; STARTED and ENDED are when it began and ended, in
 internal time units. FAULT is the condition when the grammar's own code failed
 while reading; LIMIT is how many seconds the parse may take and BUDGET how
-many octets of memory (NIL: no limit), SLOW :SLOW when it took longer and
-:MEMORY when it took more, and was given up. REFRESH is set for a parse
-afresh of a text left alone (REFRESH-SYNTAX), which an edit stops."
+many octets of memory (NIL: no limit), TIGHT true when that is less than
+the setting allows as memory is short (PARSE-MEMORY-LIMIT), SLOW :SLOW when
+it took longer, :MEMORY when it took more and :SHORT when memory ran short
+(or the budget held down by that was spent), and was given up. REFRESH is
+set for a parse afresh of a text left alone (REFRESH-SYNTAX), which an edit
+stops."
   (rope nil :read-only t)
   (old nil :read-only t)
   (cancel (null-pointer) :type sb-sys:system-area-pointer :read-only t)
@@ -96,6 +113,7 @@ afresh of a text left alone (REFRESH-SYNTAX), which an edit stops."
   (fault nil)
   (limit nil)
   (budget nil)
+  (tight nil)
   (slow nil)
   (refresh nil))
 
@@ -113,7 +131,8 @@ afresh of a text left alone (REFRESH-SYNTAX), which an edit stops."
       (documentation 'parse-job-fault 'function) "The condition when the grammar's own code failed while reading, or NIL."
       (documentation 'parse-job-limit 'function) "The seconds the job's parse may take, or NIL for no limit."
       (documentation 'parse-job-budget 'function) "The octets of memory the job's parse may take, or NIL for no limit."
-      (documentation 'parse-job-slow 'function) "Why the job's parse was given up: :SLOW when it took too long, :MEMORY when it took too much memory; else NIL."
+      (documentation 'parse-job-tight 'function) "True when the job's budget is less than the setting allows because memory is short."
+      (documentation 'parse-job-slow 'function) "Why the job's parse was given up: :SLOW when it took too long, :MEMORY when it took too much memory, :SHORT when the editor's memory ran short; else NIL."
       (documentation 'parse-job-refresh 'function) "True when the job parses afresh a text left alone, which an edit stops.")
 
 (defstruct (syntax (:constructor %make-syntax (buffer grammar parser)) (:copier nil))
@@ -164,7 +183,7 @@ and DONE guard the job's result, NEXT and ENDING."
       (documentation 'syntax-job 'function) "The parse running, or NIL."
       (documentation 'syntax-edits 'function) "Edits made since the running parse began, newest first."
       (documentation 'syntax-generation 'function) "A number that changes whenever the tree does."
-      (documentation 'syntax-broken 'function) "True when the text could not be parsed; :SLOW when parsing it took too long, :MEMORY when it took too much memory."
+      (documentation 'syntax-broken 'function) "True when the text could not be parsed; :SLOW when parsing it took too long, :MEMORY when it took too much memory, :SHORT when the editor's memory ran short, the text then parsed again at its next edit once memory is back."
       (documentation 'syntax-too-big 'function) "True while the text is too large to parse."
       (documentation 'syntax-last-update 'function) "How long the last parse after an edit took, in internal time units, or NIL."
       (documentation 'syntax-edited 'function) "When the text was last edited, in internal time units, or NIL."
@@ -238,7 +257,9 @@ is parsed afresh."
 (defun syntax-change (buffer batch)
   "Tell BUFFER's syntax tree about BATCH, an edit just made: pass each edit to
 the tree, keep them for the parse running, and ask for a new parse. A change
-of the whole text, or of very many places, has the text parsed afresh."
+of the whole text, or of very many places, has the text parsed afresh. A text
+whose parse was given up when memory ran short is parsed again once memory
+is back."
   (let ((syntax (buffer-syntax buffer)))
     (when syntax
       (setf (syntax-edited syntax) (get-internal-real-time))
@@ -261,6 +282,8 @@ of the whole text, or of very many places, has the text parsed afresh."
               (setf (syntax-current syntax) nil)
               (incf (syntax-generation syntax))))
         (setf (syntax-rope syntax) (tuatara.buffer:buffer-text buffer))
+        (when (and (eq (syntax-broken syntax) :short) (ts-call "tuatara_memory_back" :bool))
+          (setf (syntax-broken syntax) nil))
         (request-parse syntax)))))
 
 ;;; Parsing
@@ -269,6 +292,23 @@ of the whole text, or of very many places, has the text parsed afresh."
   "Seconds a buffer's parse thread waits for the next parse before it ends,
 to be started again by the next edit.")
 
+(sb-ext:defglobal **parsers-let-go** (list 0)
+  "How many parsers were let go, left half way when memory ran out, in a cons
+for atomic counting.")
+
+(defun parsers-let-go ()
+  "How many parsers were let go this session, left half way when memory ran
+out: the memory they hold comes back only when the editor starts again."
+  (car **parsers-let-go**))
+
+(defun parser-let-go (grammar what)
+  "Count a parser of GRAMMAR, reading WHAT (a buffer's name, or words for
+it), as let go, left half way when memory ran out, and say so in the debug
+log."
+  (let ((count (1+ (sb-ext:atomic-incf (car **parsers-let-go**)))))
+    (tuatara.runtime:debug-report :parse "a ~a parser reading ~a let go, memory having run out within it (~d this session)"
+                                  (grammar-name grammar) what count)))
+
 (defun run-parse-job (syntax job)
   "Parse in this thread for JOB of SYNTAX, then record the result and call the
 job's wake function. A failure inside the grammar's own code is recorded as
@@ -276,11 +316,18 @@ the job's fault, for CATCH-UP to deal with; the editor carries on."
   (let ((tree (handler-case
                   (tuatara.runtime:reporting-errors ("parsing ~a with ~a" (tuatara.buffer:buffer-name (syntax-buffer syntax))
                                                      (grammar-name (syntax-grammar syntax)))
-                    (multiple-value-bind (tree why)
+                    (multiple-value-bind (tree why unusable)
                         (parse-rope (syntax-parser syntax) (parse-job-rope job)
                                     :old (parse-job-old job) :cancel (parse-job-cancel job)
                                     :limit (parse-job-limit job) :budget (parse-job-budget job))
-                      (when (member why '(:slow :memory)) (setf (parse-job-slow job) why))
+                      ;; a budget held down by memory running short, spent, is memory running short
+                      (when (and (eq why :memory) (parse-job-tight job)) (setf why :short))
+                      (when (member why '(:slow :memory :short)) (setf (parse-job-slow job) why))
+                      ;; a parser left half way when memory ran out is let go;
+                      ;; another is made once memory is back (REQUEST-PARSE)
+                      (when (and unusable (eq why :short))
+                        (parser-let-go (syntax-grammar syntax) (tuatara.buffer:buffer-name (syntax-buffer syntax)))
+                        (setf (syntax-parser syntax) (null-pointer)))
                       (when (eq why :failed)
                         (setf (parse-job-fault job) (make-condition 'grammar-failure :grammar (syntax-grammar syntax))))
                       tree))
@@ -337,14 +384,18 @@ tree is current (REFRESH-SYNTAX)."
              (setf (syntax-too-big syntax) t)))
           (t
            (setf (syntax-too-big syntax) nil)
+           (when (null-pointer-p (syntax-parser syntax))
+             (setf (syntax-parser syntax) (make-parser (syntax-grammar syntax))))
            (let* ((cancel (sb-alien:alien-sap (sb-alien:make-alien (sb-alien:signed 32))))
                   (job (progn (setf (sb-sys:signed-sap-ref-32 cancel 0) 0)
                               (make-parse-job rope (and (not fresh) (syntax-tree syntax) (copy-tree-pointer (syntax-tree syntax)))
                                               cancel *syntax-wake-function*))))
              (setf (parse-job-refresh job) fresh)
              ;; worked out here, where the editor's settings are seen
-             (setf (parse-job-limit job) (parse-time-limit (tuatara.text:rope-bytes rope))
-                   (parse-job-budget job) (parse-memory-limit (tuatara.text:rope-bytes rope)))
+             (setf (parse-job-limit job) (parse-time-limit (tuatara.text:rope-bytes rope)))
+             (multiple-value-bind (budget tight) (parse-memory-limit (tuatara.text:rope-bytes rope))
+               (setf (parse-job-budget job) budget
+                     (parse-job-tight job) tight))
              (if (hand-to-parse-thread syntax job)
                  (setf (syntax-job syntax) job
                        (syntax-edits syntax) '())
@@ -401,7 +452,7 @@ another parse if the tree is not current."
                      (syntax-current syntax) (null edits))
                (incf (syntax-generation syntax)))
               ((parse-job-fault job) (grammar-failed syntax (parse-job-fault job)))
-              ((parse-job-refresh job)
+              ((and (parse-job-refresh job) (not (eq (parse-job-slow job) :short)))
                ;; a parse afresh given up (too slow, too large) leaves the
                ;; tree as it was, and is not tried again
                (unless (parse-job-obsolete job)
