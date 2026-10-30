@@ -98,6 +98,7 @@ background, are in; return the frontend and the editor."
            (multiple-value-bind (f editor) (vc-session "j A y C-g" file)
              (is string= "~ twoy" (tuatara.frontend.fake:fake-screen-line f 1))
              (tuatara.buffer:kill-buffer (tuatara.display:window-buffer (tuatara.command:editor-window editor)))))
+      (forget-committed-lines)
       (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
 
 (define-test (gutter git-in-odd-directories)
@@ -156,6 +157,20 @@ background, are in; return the frontend and the editor."
              (is = 3 (length (tuatara.defaults::committed-line-hashes file)))
              (is = 2 read))
         (sb-int:unencapsulate 'tuatara.defaults::run-git 'counted)))))
+
+(define-test (gutter test-directories-leave-no-committed-lines)
+  ;; what a test commits is not found read already by the next one that commits the same text
+  (forget-committed-lines)
+  (with-test-directory (dir)
+    (let ((file (merge-pathnames "data.txt" dir)))
+      (git dir "init" "-q")
+      (git dir "config" "user.email" "t@example.com") (git dir "config" "user.name" "t")
+      (git dir "config" "commit.gpgsign" "false")
+      (put-file file (format nil "one~%two~%"))
+      (git dir "add" "data.txt") (git dir "commit" "-q" "-m" "base")
+      (is = 2 (length (tuatara.defaults::committed-line-hashes file)))
+      (is = 1 (hash-table-count tuatara.defaults::**committed-lines**))))
+  (is = 0 (hash-table-count tuatara.defaults::**committed-lines**)))
 
 (define-test (gutter vc-marks-after-a-save)
   ;; a save has the marks worked out again: a line edited back to what git has is unmarked

@@ -26,6 +26,13 @@ cache directory."
         (when (and (stringp name) (uiop:string-prefix-p prefix name))
           (uiop:delete-directory-tree kept :validate (lambda (p) (search "/indexes/" (namestring p)))))))))
 
+(defun forget-committed-lines ()
+  "Forget the line hashes the gutter keeps of the texts git has. They are kept
+by the text, whichever repository holds it, so that a text one test committed
+is found read already by another that commits the same."
+  (sb-ext:with-locked-hash-table (tuatara.defaults::**committed-lines**)
+    (clrhash tuatara.defaults::**committed-lines**)))
+
 (defmacro with-test-directory ((directory) &body body)
   "Run BODY with DIRECTORY bound to a new empty directory in the cache directory
 (on the file system of your home, which shares blocks on btrfs), removed
@@ -36,6 +43,7 @@ afterwards with everything in it, and the buffers visiting its files killed."
      (unwind-protect (progn ,@body)
        (kill-buffers-under ,directory)
        (forget-kept-indexes ,directory)
+       (forget-committed-lines)
        (uiop:delete-directory-tree ,directory :validate (lambda (p) (search "/tuatara/test-" (namestring p)))))))
 
 (defmacro with-visited ((buffer path) &body body)
