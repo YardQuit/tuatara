@@ -1,9 +1,5 @@
-# The archives of the Lisp libraries Tuatara is built with, from the Quicklisp set
-# tools/ci-setup.sh names: each checked by its SHA-256 before it is used. Made from
-# your own Quicklisp when its set changes: the archives of build/lisp-systems.tsv's
-# libraries, from ~/quicklisp/dists/quicklisp/archives/ (sha256sum).
+# The archives of the Lisp libraries Tuatara is built with, from the pinned Quicklisp
+# set, each checked by its SHA-256 before it is used. Made and extended by
+# tools/lisp-archives.sh add; checked by tools/lisp-archives.sh check.
 dcdfc5bac229a952358dfe661f0860e8a02480e406d0d95dee4300cdc3d45b31  alexandria-20241012-git.tgz
-e30d399fdcdf6f540ba28185fb6d9e3ebb4219c1df314d861ef3ed26be38d08d  babel-20260101-git.tgz
-c4935fbb8ed96a062e9f2315f6566b53d3ec90a1d00c001cac908d242a8d84e6  cffi-20260101-git.tgz
 a9d6a9ca9eb862283f6079856629c8b19254f108fcde065d61f280e7c2c6ec39  cl-ppcre-20250622-git.tgz
-d8c9686e0425ea6f2cc8e18139a80bb082c44a23ac68fd455e5c74848b42257a  trivial-features-20250622-git.tgz
