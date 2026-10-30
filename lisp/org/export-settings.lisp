@@ -416,6 +416,47 @@ pages turned already, as they are."
          (> (search-count "\\begin{multicols}" template :end at)
             (search-count "\\end{multicols}" template :end at)))))
 
+(defparameter *latex-paper-widths*
+  '(("a3paper" . 297) ("a4paper" . 210) ("a5paper" . 148) ("a6paper" . 105) ("b5paper" . 176)
+    ("letterpaper" . 2159/10) ("legalpaper" . 2159/10) ("executivepaper" . 18415/100))
+  "The width in millimetres of each paper size a geometry option names.")
+
+(defun latex-length-millimetres (value)
+  "VALUE, a length as written in a template (28mm, 1.5cm, 1in, 12pt), in
+millimetres; NIL for anything else."
+  (multiple-value-bind (n unit) (setting-length value)
+    (and n (case unit
+             (:mm n) (:cm (* 10 n)) (:in (* 254/10 n)) (:pt (* 3515/10000 n))))))
+
+(defun latex-template-text-characters (template)
+  "About how many characters of the normal size go across the text of the
+page the LaTeX TEMPLATE sets with its geometry package (a paper size or
+paperwidth, and the margins left and right, margin or hmargin, or
+textwidth), as the enhanced export's own A4 page, 154 mm across, has
+*ORG-LATEX-TEXT-CHARACTERS*; NIL when the template says too little to know."
+  (let ((options (nth-value 1 (cl-ppcre:scan-to-strings "\\\\usepackage\\[([^\\]]*)\\]\\{geometry\\}" template))))
+    (when options
+      (let ((given '()))
+        (dolist (option (cl-ppcre:split "\\s*,\\s*" (string-trim '(#\Space #\Newline) (aref options 0))))
+          (let ((at (position #\= option)))
+            (push (if at
+                      (cons (string-trim " " (subseq option 0 at)) (string-trim " {}" (subseq option (1+ at))))
+                      (cons (string-trim " " option) t))
+                  given)))
+        (flet ((value (&rest keys)
+                 (loop for key in keys
+                       for found = (cdr (assoc key given :test #'string=))
+                       when (stringp found) return found)))
+          (let* ((paper (or (let ((w (value "paperwidth"))) (and w (latex-length-millimetres w)))
+                            (loop for (name . width) in *latex-paper-widths*
+                                  when (assoc name given :test #'string=) return width)))
+                 (text (let ((w (value "textwidth" "width"))) (and w (latex-length-millimetres w))))
+                 (left (let ((m (value "left" "lmargin" "inner" "margin" "hmargin"))) (and m (latex-length-millimetres m))))
+                 (right (let ((m (value "right" "rmargin" "outer" "margin" "hmargin"))) (and m (latex-length-millimetres m))))
+                 (width (or text (and paper left right (- paper left right)))))
+            (and width (plusp width)
+                 (max 30 (round (* *org-latex-text-characters* width) 154)))))))))
+
 (defun latex-line-stretch (spacing)
   "The stretch LaTeX's \\linespread takes for the SPACING between lines a word
 processor counts (1 single, 1.5, 2 double), as setspace's one and a half

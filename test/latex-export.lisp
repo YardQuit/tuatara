@@ -2078,3 +2078,26 @@ Shut in.
       (true (search "\\discretionary{}{}{}" latex))
       (true (< (latex-longest-between-breaks (subseq latex (search "SHA-256" latex))) 17))
       (true (search line (latex-without-breaks latex))))))
+
+(define-test (latex-export long-table-cells-break)
+  ;; a long cell of a table of columns too many for the text: the pieces are shorter than in
+  ;; running text, and with the places to break taken out, the cell is what was written
+  (let* ((digest "d41d8cd98f00b2040000e9800998ecf8427e0000da39a3ee5e6b4b0d3255bfef95601890")
+         (row (format nil "| =[[:sha1:]]= | a digest, 40 hex digits | =[[:sha1:]]= | =~a and more= | =~a= |" digest digest))
+         (latex (tuatara.defaults::org-latex-document
+                 (format nil "| Written | Means | Pattern | In | Finds |~%|-~%~a~%~a~%" row row) :enhanced t)))
+    (true (search (format nil "\\texttt{~a and more}" digest) (latex-without-breaks latex)))
+    (true (< (latex-longest-between-breaks (subseq latex (search "\\midrule" latex) (search "\\bottomrule" latex))) 11))))
+
+(define-test (latex-export text-width-from-the-template)
+  ;; the enhanced export's own A4 page is the standard; a narrower page has fewer characters across
+  (is = 78 (tuatara.defaults::latex-template-text-characters
+            (tuatara.defaults::find-latex-template "article" :built-in t)))
+  (is = 64 (tuatara.defaults::latex-template-text-characters
+            "\\usepackage[a5paper, top=12mm, bottom=14mm, left=11mm, right=11mm]{geometry}"))
+  (is = 64 (tuatara.defaults::latex-template-text-characters
+            (format nil "\\usepackage[paperwidth=14.8cm, paperheight=21cm, margin=1.1cm]{geometry}~%")))
+  (is = 39 (tuatara.defaults::latex-template-text-characters "\\usepackage[textwidth=77mm]{geometry}"))
+  ;; a template that says too little leaves the standard
+  (false (tuatara.defaults::latex-template-text-characters "\\documentclass{article}"))
+  (false (tuatara.defaults::latex-template-text-characters "\\usepackage[a4paper]{geometry}")))

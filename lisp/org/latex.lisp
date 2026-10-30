@@ -1185,9 +1185,9 @@ between the places LATEX-CODE-BREAK-P allows."
 (defun org-latex-least-width (piece)
   "How many characters of text a table column is at least as wide as, its
 longest part that cannot go on to the next line PIECE characters long: a
-character of code is a fifth wider than one of text, and a cell has room on
+character of code is a third wider than one of text, and a cell has room on
 each side."
-  (+ (ceiling (* 6 piece) 5) 2))
+  (+ (ceiling (* 4 piece) 3) 2))
 
 (defun org-latex-table-columns (node columns lengths widest wraps longest fitted table-width special standard cookies lines
                                 &optional (characters *org-latex-text-characters*))
@@ -1302,7 +1302,26 @@ again at the top of each page, under CAPTION continued when it has one."
                           (format out "~a~%" (funcall rule-across :middle))))))
       (when (member :bottom lines) (format out "~a~%" (funcall rule-across :bottom))))))
 
-(defun org-latex-fitted-table (node out rows special standard columns cookies)
+(defun org-latex-table-run-limit (columns special standard)
+  "The most characters of code in a cell of the table with COLUMNS columns
+\(SPECIAL and STANDARD as ORG-EXPORT-TABLE-SHAPE found them) the enhanced
+export keeps together (*LATEX-CODE-RUN-LIMIT*): the usual, or fewer, the
+first that lets the table, in the smallest type it is set in, go across the
+text; the fewest when none does. A second value is the measure of the
+columns at that limit (EXPORT-TABLE-MEASURE), as a list."
+  (let ((limits (list *latex-code-run-limit* 10 6)))
+    (loop for (limit . more) on limits
+          do (let* ((*latex-code-run-limit* limit)
+                    (measure (multiple-value-list (export-table-measure columns special standard))))
+               (destructuring-bind (lengths widest wraps longest) measure
+                 (declare (ignore lengths))
+                 (when (or (null more)
+                           (<= (+ (loop for w in widest for wrap in wraps unless wrap sum w) (* 2 (1- columns))
+                                  (loop for wrap in wraps for piece in longest when wrap sum (max 12 (org-latex-least-width piece))))
+                               (* 1.25 *org-latex-text-characters*)))
+                   (return (values limit measure))))))))
+
+(defun org-latex-fitted-table (node out rows special standard columns cookies &optional measure)
   "Write the table NODE to OUT in the enhanced export, laid out to fit: as
 wide as it is when that fits across the text, else as wide as the text, the
 columns with words in them wrapping and sharing what the others leave, in
@@ -1313,8 +1332,10 @@ width and alignment, the table's width (full: margin to margin, its columns
 sharing it as their text does), its position (left, centre or right),
 whether the header repeats, and the lines printed (TABLE-LINES)
 \(ORG-LATEX-SETTING). ROWS, SPECIAL, STANDARD, COLUMNS and COOKIES are as
-ORG-LATEX-TABLE found them."
-  (multiple-value-bind (lengths widest wraps longest) (export-table-measure columns special standard)
+ORG-LATEX-TABLE found them, MEASURE the columns' EXPORT-TABLE-MEASURE as a
+list when it has been made."
+  (multiple-value-bind (lengths widest wraps longest)
+      (values-list (or measure (multiple-value-list (export-table-measure columns special standard))))
     (let* ((natural (+ (reduce #'+ widest) (* 2 (1- columns))))
            ;; the least it can be: the columns with words to wrap no narrower than their longest part kept whole
            (fixed (+ (loop for w in widest for wrap in wraps unless wrap sum w) (* 2 (1- columns))
@@ -1413,7 +1434,9 @@ out to fit (ORG-LATEX-FITTED-TABLE)."
                (sized (member environment '("tabularx" "tabulary") :test #'string=))
                (table (format nil "\\begin{~a}~:[~*~;{~a}~]{~a}~%~a\\end{~a}~%"
                               environment sized (or width "\\textwidth") align body environment)))
-          (cond (fit (org-latex-fitted-table node out rows special standard columns cookies))
+          (cond (fit (multiple-value-bind (limit measure) (org-latex-table-run-limit columns special standard)
+                       (let ((*latex-code-run-limit* limit))
+                         (org-latex-fitted-table node out rows special standard columns cookies measure))))
                 ((string= environment "longtable")
                  (format out "~@[~a~%~]\\begin{longtable}{~a}~%~@[\\caption{~a}~a\\\\~%~]~a\\end{longtable}~%"
                          font align caption (if caption (org-latex-name-label node) "") body))
@@ -1851,7 +1874,8 @@ of TEXT, for the lines an error names."
                             (find-latex-template "article"))
                            (t (find-latex-template "org"))))
            ;; a template setting the note's text in columns: its tables kept whole
-           (body (let ((*org-latex-in-columns* (latex-template-body-in-columns-p template)))
+           (body (let ((*org-latex-in-columns* (latex-template-body-in-columns-p template))
+                       (*org-latex-text-characters* (or (latex-template-text-characters template) *org-latex-text-characters*)))
                    (with-output-to-string (s) (org-latex-element tree s))))
            (missing '()))
       (when enhanced
