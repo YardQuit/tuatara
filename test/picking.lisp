@@ -14,11 +14,25 @@ the background says how far it has got in the same words everywhere.")
   (map 'list #'tuatara.command:candidate-string
        (tuatara.command::completion-candidates (tuatara.command:editor-completion tuatara.command:*editor*))))
 
-(defun home-directory-candidates ()
-  "The directories of your home directory, as the questions for a directory list them."
-  (sort (remove-if-not #'tuatara.defaults::directory-input-p
-                       (mapcar #'tuatara.command:candidate-string (tuatara.defaults::file-candidates "~/")))
-        #'string<))
+(defmacro with-test-home ((home) &body body)
+  "Run BODY with HOME bound to a home folder of the test's own, in a new
+temporary directory, holding the folders Documents/ and notes/ and the file
+todo.org: ~ leads there meanwhile, never to your own home, and HOME is as it
+was afterwards (unset when it was)."
+  (let ((old (gensym "OLD")) (dir (gensym "DIR")))
+    `(with-test-directory (,dir)
+       (let ((,home (merge-pathnames "home/" ,dir))
+             (,old (uiop:getenv "HOME")))
+         (ensure-directories-exist (merge-pathnames "Documents/" ,home))
+         (ensure-directories-exist (merge-pathnames "notes/" ,home))
+         (put-file (merge-pathnames "todo.org" ,home) "* one")
+         (unwind-protect
+              (progn (sb-posix:setenv "HOME" (string-right-trim "/" (namestring ,home)) 1)
+                     ;; the folder ~ named a moment ago is looked up again
+                     (setf tuatara.io::*default-directory-found* nil)
+                     ,@body)
+           (if ,old (sb-posix:setenv "HOME" ,old 1) (sb-posix:unsetenv "HOME"))
+           (setf tuatara.io::*default-directory-found* nil))))))
 
 (define-test (picking directory-in-search-in-files)
   (with-test-directory (dir)
@@ -63,11 +77,12 @@ the background says how far it has got in the same words everywhere.")
         (true (tuatara.frontend.fake:fake-frame-showing f "Copied 1 file to"))
         (is string= "alpha" (alexandria:read-file-into-string (here there "a.txt"))))
       ;; ~/ starts again from the home directory: its directories offered
-      (let ((offered :none))
-        (ops-session dir (list (format nil "g f a . t x t RET C C-u ~a" (rimu-typed (concatenate 'string root "sub/~/")))
-                               (lambda () (setf offered (sort (shown-candidates) #'string<)))
-                               "C-g"))
-        (is equal (home-directory-candidates) offered)))))
+      (with-test-home (home)
+        (let ((offered :none))
+          (ops-session dir (list (format nil "g f a . t x t RET C C-u ~a" (rimu-typed (concatenate 'string root "sub/~/")))
+                                 (lambda () (setf offered (sort (shown-candidates) #'string<)))
+                                 "C-g"))
+          (is equal '("Documents/" "notes/") offered))))))
 
 (defvar *picked* nil
   "What the test commands of picking read.")
