@@ -55,7 +55,7 @@ recording began."
         (t (unless *keys-counter-set* (setf *keys-counter* 1))
            (setf *keys-counter-set* nil)
            (start-keys-recording)
-           (message "Recording keys: \\[stop-recording-keys] ends the recording, \\[keyboard-quit] gives it up"))))
+           (message "Recording keys: \\[stop-recording-keys] ends the recording, ~a gives it up" (quit-key-text)))))
 
 (define-command stop-recording-keys ()
   "End the recording \\[start-recording-keys] began: the keys typed since,

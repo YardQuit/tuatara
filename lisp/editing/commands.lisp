@@ -1441,6 +1441,16 @@ until then goes, such as the matches of the last search."
   (mapc #'funcall *keyboard-quit-functions*)
   (keyboard-quit-signal))
 
+(defun quit-key-text ()
+  "The key that gives up what is going on, as messages name it, between the
+marks of a key (MARK-KEY): the one bound to keyboard-quit, else the one bound
+to tuatara-quit, which gives up so outside INSERT state; M-x keyboard-quit
+when neither has a key."
+  (let ((keymaps (keymaps-for-keys)))
+    (mark-key (or (command-key 'keyboard-quit keymaps)
+                  (command-key 'tuatara-quit keymaps)
+                  "M-x keyboard-quit"))))
+
 ;;; Undo
 
 (define-command undo ()

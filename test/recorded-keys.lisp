@@ -334,3 +334,12 @@ queued: keys typed meanwhile."
     (is string= (format nil "ne~%two~%three~%four~%five~%") (session-text editor))
     (true (search "Stopped after 0 of 3 plays" (session-message editor)))
     (true (search "read-only" (session-message editor)))))
+
+(define-test (recorded-keys start-names-the-quit-key)
+  ;; the key that gives the recording up is named as it is bound, modal editing on or off
+  (dolist (modal '(t nil))
+    (let ((tuatara.defaults::*modal-editing* modal))
+      (multiple-value-bind (f editor) (recorded-keys-session "C-x (" :text *five-lines*)
+        (declare (ignore f))
+        (is string= "Recording keys: C-x ) ends the recording, C-g gives it up" (session-message editor)
+            "modal editing ~:[off~;on~]" modal)))))
