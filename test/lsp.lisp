@@ -632,6 +632,39 @@ what marks a project; check-health saying which are installed.")
         (true (member "ranges" (told log) :test #'string=))
         (false (member "whole" (told log) :test #'string=))))))
 
+(define-test (lsp changes-reach-a-server-before-another-opens)
+  ;; changes not yet sent to one server reach it when a second opens the file, not lost to it
+  (with-test-directory (dir)
+    (ensure-directories-exist (merge-pathnames ".git/" dir))
+    (let* ((first-log (merge-pathnames "first.log" dir))
+           (second-log (merge-pathnames "second.log" dir))
+           (script (namestring (merge-pathnames "test/stand-in-language-server.py" (asdf:system-source-directory :tuatara))))
+           (file (namestring (merge-pathnames "two.py" dir)))
+           (tuatara.defaults::*modal-editing* nil)
+           (tuatara-user:*language-servers*
+             (list (list 'python (list "python3" script (namestring first-log))
+                         (list "env" "STAND_IN_SLOW_START=1" "python3" script (namestring second-log)))))
+           (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+           (tuatara-user:*lsp-sync-delay* 4)
+           ;; nothing asked of the server where the cursor rests, which would send the change
+           (tuatara-user:*lsp-idle-delay* 30)
+           (seen nil))
+      (alexandria:write-string-into-file (format nil "x = 1~%") file)
+      (flet ((buffer () (tuatara.buffer:find-buffer "two.py")))
+        (unwind-protect
+             (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
+                                      (list :until (lambda () (member "textDocument/didOpen" (told first-log) :test #'string=)))
+                                      "M-> y SPC = SPC b a d"
+                                      (list :until (lambda () (member "textDocument/didOpen" (told second-log) :test #'string=)))
+                                      (list :until (lambda () (= 2 (length (tuatara.defaults::buffer-diagnostics (buffer))))))
+                                      (list :until (lambda () (setf seen (tuatara.defaults::buffer-diagnostics (buffer))) t)))
+                                :width 100)
+          (tuatara.defaults::lsp-stop-all)
+          (when (buffer) (tuatara.buffer:kill-buffer (buffer))))
+        (true (member "textDocument/didOpen" (told second-log) :test #'string=))
+        (true (member "ranges" (told first-log) :test #'string=))
+        (is equal '("bad found" "bad found") (mapcar #'tuatara.defaults::diagnostic-message seen))))))
+
 (define-test (lsp diagnostics-asked-for)
   ;; a server that gives some of what it finds only when asked: asked after each change, kept beside what it sends
   (with-test-directory (dir)

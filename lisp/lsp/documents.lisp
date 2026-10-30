@@ -397,7 +397,13 @@ VERSION, the number of the text sent: an answer asked of it then still holds."
     (if (integerp sync) sync (or (tuatara.text:json-get sync "change") 0))))
 
 (defun lsp-open-document (server doc)
-  "Tell SERVER that DOC is open, with its whole text."
+  "Tell SERVER that DOC is open, with its whole text; the changes not yet
+sent to DOC's other servers sent to them first, as what is sent from then
+on counts from the text as it is now."
+  (let ((servers (lsp-doc-servers doc)))
+    (setf (lsp-doc-servers doc) (remove server servers))
+    (unwind-protect (lsp-in-step (lsp-doc-buffer doc))
+      (setf (lsp-doc-servers doc) servers)))
   (lsp-notify server "textDocument/didOpen"
               (tuatara.text:json-object "textDocument"
                                         (tuatara.text:json-object "uri" (lsp-doc-uri doc)

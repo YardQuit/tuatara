@@ -40,8 +40,10 @@ As a build run on each save does, it checks the file as saved for "oops", an
 error: a second after each save it says what that check found, with what it
 finds in the text it had when told of the save, under that text's number,
 and logs "checked"; it says them again with what it finds after each change,
-until the next check. What it says always carries the number of its text."""
-import json, re, sys, threading, time
+until the next check. What it says always carries the number of its text.
+With STAND_IN_SLOW_START in its environment it answers its start a second
+and a half late."""
+import json, os, re, sys, threading, time
 from urllib.parse import unquote, urlparse
 
 LOG = open(sys.argv[1], 'a') if len(sys.argv) > 1 else None
@@ -388,6 +390,8 @@ while True:
         LOG.write(method + '\n'); LOG.flush()
     params = message.get('params') or {}
     if method == 'initialize':
+        if os.environ.get('STAND_IN_SLOW_START'):
+            time.sleep(1.5)
         ROOT[0] = params.get('rootUri')
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': {'capabilities': {
             'positionEncoding': 'utf-8', 'textDocumentSync': 2, 'hoverProvider': True, 'definitionProvider': True,
