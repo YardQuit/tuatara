@@ -183,15 +183,101 @@ value how closely the one matching least closely matches (0 with none)."
 better, COMPONENT-SCORE), or NIL when some component does not match."
   (components-score (input-components input) (candidate-string candidate)))
 
-(defun exact-first (input candidates)
-  "CANDIDATES, a list, with the one whose string is INPUT exactly brought to
-the front, the others in their order."
-  (let ((exact (and (plusp (length input))
-                    (find input candidates :key #'candidate-string :test #'string=))))
-    (if exact (cons exact (remove exact candidates :count 1)) candidates)))
+(defparameter *filter-room-kept* 131072
+  "The most candidates FILTER-CANDIDATES keeps room for between one question's
+keys and the next: room made for more is let go of once used.")
+
+(defun make-filter-room (size)
+  "Room for FILTER-CANDIDATES to sort SIZE candidates in: a list (KEYS ORDER
+ITEMS SPARE) of vectors of SIZE, fixnums but ITEMS, which holds candidates."
+  (list (make-array size :element-type 'fixnum) (make-array size :element-type 'fixnum)
+        (make-array size :initial-element nil) (make-array size :element-type 'fixnum)))
+
+(defvar *filter-rooms*
+  (tuatara.runtime:make-spares (lambda () (make-filter-room 64))
+                               :keep-p (lambda (room)
+                                         (<= (length (the simple-vector (third room))) *filter-room-kept*)))
+  "The room FILTER-CANDIDATES sorts in, kept from one call to the next
+\(MAKE-FILTER-ROOM), as much as *FILTER-ROOM-KEPT* allows.")
+
+(defmacro with-filter-room ((keys order items spare count) &body body)
+  "Run BODY with KEYS, ORDER, ITEMS and SPARE bound to the vectors of room
+for COUNT candidates (*FILTER-ROOMS*), grown when too short (to twice its
+size at least, up to *FILTER-ROOM-KEPT*), and given back however BODY ends,
+the candidates ITEMS held let go of."
+  (let ((room (gensym "ROOM")) (n (gensym "COUNT")))
+    `(let ((,n ,count))
+       (tuatara.runtime:with-spare (,room *filter-rooms*)
+         (let ((size (length (the simple-vector (third ,room)))))
+           ;; doubled at least, up to what is kept, never grown by a little each time
+           (when (< size ,n)
+             (replace ,room (make-filter-room (max ,n (min *filter-room-kept* (* 2 size)))))))
+         (destructuring-bind (,keys ,order ,items ,spare) ,room
+           (declare (type (simple-array fixnum (*)) ,keys ,order ,spare) (type simple-vector ,items)
+                    (ignorable ,keys ,order ,spare))
+           (unwind-protect (progn ,@body)
+             (fill ,items nil :end (min ,n (length ,items)))))))))
+
+(defun candidate-sort-key (exact closeness place score length)
+  "The order of a candidate matching an input, one fixnum, lower first, made
+of (in order of weight) EXACT (0 when it is the input itself, else 1),
+CLOSENESS (0 to 3), PLACE (its place in the history or its rank, or NIL for
+none: those with one first, the lower the sooner), SCORE and LENGTH (the
+smaller first); each kept to the bits it has, huge values tying."
+  (declare (type fixnum exact closeness score length))
+  (flet ((capped (value bits) (min (max value 0) (1- (ash 1 bits)))))
+    (logior (ash exact 50) (ash (capped closeness 2) 48)
+            (ash (if place 0 1) 47) (ash (if place (capped place 21) 0) 26)
+            (ash (capped score 14) 12) (capped length 12))))
+
+(declaim (inline names-before-p))
+(defun names-before-p (a b)
+  "True when the string A comes before B by their characters' codes, as
+STRING< orders them; quick for the strings candidates usually have."
+  (if (and (typep a '(simple-array character (*))) (typep b '(simple-array character (*))))
+      (let ((la (length a)) (lb (length b)))
+        (declare (type (simple-array character (*)) a b) (type fixnum la lb))
+        (loop for i of-type fixnum from 0 below (min la lb)
+              do (let ((x (schar a i)) (y (schar b i)))
+                   (unless (char= x y) (return-from names-before-p (char< x y)))))
+        (< la lb))
+      (and (string< a b) t)))
+
+(defun sort-matches (keys order spare items count)
+  "Sort the indices 0 below COUNT, put in ORDER, by KEYS (lower first), then
+by the strings of the candidates of ITEMS at them, those alike keeping their
+order; in place, with SPARE, as long, to merge into, making nothing.
+Complexity: O(COUNT log COUNT)."
+  (declare (type (simple-array fixnum (*)) keys order spare) (type simple-vector items) (type fixnum count)
+           (optimize speed))
+  (macrolet ((before (i j)
+               `(let ((ki (aref keys ,i)) (kj (aref keys ,j)))
+                  (or (< ki kj)
+                      (and (= ki kj)
+                           (names-before-p (candidate-string (svref items ,i)) (candidate-string (svref items ,j))))))))
+    (dotimes (i count) (setf (aref order i) i))
+    ;; merged in runs of 1, 2, 4 ... from one vector into the other, a run's
+    ;; first taken first when neither comes before the other
+    (let ((from order) (to spare) (width 1))
+      (declare (type (simple-array fixnum (*)) from to) (type fixnum width))
+      (loop while (< width count)
+            do (loop for start of-type fixnum from 0 below count by (* 2 width)
+                     do (let* ((middle (min count (+ start width))) (end (min count (+ start (* 2 width))))
+                               (i start) (j middle) (k start))
+                          (declare (type fixnum middle end i j k))
+                          (loop while (< k end)
+                                do (if (and (< j end) (or (>= i middle) (before (aref from j) (aref from i))))
+                                       (progn (setf (aref to k) (aref from j)) (incf j))
+                                       (progn (setf (aref to k) (aref from i)) (incf i)))
+                                   (incf k))))
+               (rotatef from to)
+               (setf width (* 2 width)))
+      (unless (eq from order) (replace order from :end2 count)))
+    order))
 
 (defun filter-candidates (input candidates &key history keep-order)
-  "Return the CANDIDATES matching INPUT as a simple-vector sorted best first:
+  "Return the CANDIDATES (a list or a vector) matching INPUT as a
+simple-vector sorted best first:
 the one whose string is INPUT exactly; then those matching more closely
 \(COMPONENT-SCORE's second value: found at the start of a word before inside
 one, before the first letters of words, before letters apart); among those
@@ -201,58 +287,57 @@ matching better (CANDIDATE-SCORE: most of the name in one piece, near its
 start), then shorter strings, then alphabetical order. With
 KEEP-ORDER, those matching in the order of CANDIDATES instead, the exact one
 still first; with KEEP-ORDER :UNTIL-TYPED, only while INPUT has nothing to
-match. With an empty INPUT every candidate matches. The second value lists
-those matching in the order of CANDIDATES."
+match. With an empty INPUT every candidate matches. The second value holds
+those matching, to filter again for a longer INPUT: in the order of
+CANDIDATES when it is kept, else the first value itself. Sorted, the matches
+make no garbage but the vector returned (SORT-MATCHES)."
   (let ((components (input-components input)))
     (when (if (eq keep-order :until-typed) (null components) keep-order)
-      (let ((matching (remove-if-not (lambda (c) (components-score components (candidate-string c))) candidates)))
-        (return-from filter-candidates (values (coerce (exact-first input matching) 'simple-vector) matching))))
-    (let ((scored '()) (matching '()) (exact (plusp (length input)))
+      (let ((matching (with-filter-room (keys order items spare (length candidates))
+                        (let ((count 0))
+                          (declare (type fixnum count))
+                          (map nil (lambda (c)
+                                     (when (components-score components (candidate-string c))
+                                       (setf (svref items count) c)
+                                       (incf count)))
+                               candidates)
+                          (subseq items 0 count)))))
+        (return-from filter-candidates
+          (let ((exact (and (plusp (length input))
+                            (position input matching :key #'candidate-string :test #'string=))))
+            (values (if (and exact (plusp exact))
+                        (concatenate 'simple-vector (vector (svref matching exact))
+                                     (subseq matching 0 exact) (subseq matching (1+ exact)))
+                        matching)
+                    matching)))))
+    (let ((exact (plusp (length input)))
           (places (let ((table (make-hash-table :test 'equal)))
                     (loop for entry in history
                           for i from 0
                           unless (gethash entry table) do (setf (gethash entry table) i))
-                    table)))
-      (dolist (c candidates)
-        (multiple-value-bind (score closeness) (components-score components (candidate-string c))
-          (when score
-            (push c matching)
-            (let ((h (or (gethash (candidate-string c) places) (candidate-rank c))))
-              (push (cons (list (if (and exact (string= input (candidate-string c))) 0 1) closeness (if h 0 1) (or h 0) score
-                                (length (candidate-string c)))
-                          c)
-                    scored)))))
-      (values (sorted-by-keys scored) (nreverse matching)))))
-
-(defun sorted-by-keys (entries)
-  "The candidates of ENTRIES, each (KEYS . CANDIDATE), KEYS a list of integers
-of the same length, as a simple-vector in the order of their KEYS, the first
-deciding first, then of their strings; those alike keep their order."
-  (let ((lows '()) (shifts '()) (width 0))
-    ;; each key made a field of one integer, lowest bits for the last key
-    (when entries
-      (loop for i from (1- (length (car (first entries)))) downto 0
-            do (let ((low most-positive-fixnum) (high most-negative-fixnum))
-                 (dolist (entry entries)
-                   (let ((key (nth i (car entry))))
-                     (when (< key low) (setf low key))
-                     (when (> key high) (setf high key))))
-                 (push low lows)
-                 (push width shifts)
-                 (incf width (integer-length (- high low))))))
-    (let ((packed (map 'simple-vector
-                       (lambda (entry)
-                         (cons (loop for key in (car entry)
-                                     for low in lows
-                                     for shift in shifts
-                                     sum (ash (- key low) shift))
-                               (cdr entry)))
-                       entries)))
-      (map-into packed #'cdr
-                (stable-sort packed (lambda (a b)
-                                      (let ((x (car a)) (y (car b)))
-                                        (or (< x y)
-                                            (and (= x y) (string< (candidate-string (cdr a)) (candidate-string (cdr b))) t)))))))))
+                    table))
+          (count 0))
+      (declare (type fixnum count))
+      (with-filter-room (keys order items spare (length candidates))
+        (flet ((consider (c)
+                 (let ((string (candidate-string c)))
+                   (multiple-value-bind (score closeness) (components-score components string)
+                     (when score
+                       (setf (aref items count) c
+                             (aref keys count)
+                             (candidate-sort-key (if (and exact (string= input string)) 0 1) closeness
+                                                 (if (plusp (hash-table-count places))
+                                                     (or (gethash string places) (candidate-rank c))
+                                                     (candidate-rank c))
+                                                 score (length string)))
+                       (incf count))))))
+          (if (listp candidates)
+              (dolist (c candidates) (consider c))
+              (loop for c across candidates do (consider c))))
+        (sort-matches keys order spare items count)
+        (let ((sorted (make-array count)))
+          (dotimes (i count) (setf (svref sorted i) (svref items (aref order i))))
+          (values sorted sorted))))))
 
 ;;; Groups, fields and the parts of a candidate that match
 
