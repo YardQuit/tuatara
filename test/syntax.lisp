@@ -983,6 +983,31 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
         (setf result (session-text editor)))
       (is string= (format nil "fn main() {~%x~%}~%") result))))
 
+(define-test (syntax new-line-in-a-block-not-closed-yet)
+  ;; RET after a shell block's opening line puts the new line inside the block
+  ;; before its closing word is typed, as it does once the block is closed
+  (flet ((column (text)
+           (let (result)
+             (with-file-session ((f editor) "M-> A RET x C-g" text "sh")
+               (setf result (session-text editor)))
+             (let ((line (find "x" (uiop:split-string result :separator '(#\Newline))
+                               :test #'string= :key (lambda (line) (string-left-trim " " line)) :from-end t)))
+               (and line (position #\x line))))))
+    (loop for (text expected)
+            in '(("if [ -n \"$1\" ]; then" 2) ("if true; then~%  echo a" 2) ("if a; then~%  x~%else" 2)
+                 ("if a; then~%  x~%elif b; then" 2) ("if a; then~%  if b; then" 4)
+                 ("for a in b; do" 2) ("while true; do" 2) ("until a; do" 2) ("select a in b c; do" 2)
+                 ("f() {" 2) ("function f {" 2) ("f() {~%  echo a" 2) ("{" 2)
+                 ("case $1 in" 2) ("case $1 in~%  a)" 4) ("case $1 in~%  a) echo;;" 2)
+                 ("case $1 in~%  a)~%    echo" 4) ("case $1 in~%  a)~%    echo~%    ;;" 2)
+                 ;; as yet a blank line ends a block not closed, and an unclosed function
+                 ;; reads as one piece of text the grammar cannot place: Emacs gives 2 and 6
+                 ("if a; then~%" 0) ("f() {~%  case $1 in~%    a)" 4)
+                 ;; closed, the line after is outside
+                 ("if true; then~%  echo~%fi" 0) ("for a in b; do~%  x~%done" 0)
+                 ("case x in~%  a) echo;;~%esac" 0) ("case x in~%  a)~%esac" 0))
+          do (is = expected (column (format nil text)) "after ~s" text))))
+
 (define-test (syntax indenting-lisp-quickly)
   ;; a form of 100,000 lines is indented in one pass, and one line at its end
   ;; without reading more than that form

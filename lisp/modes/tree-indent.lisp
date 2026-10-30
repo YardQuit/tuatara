@@ -72,7 +72,7 @@ of ROPE, by the indentation rules' CAPTURES marking them @extend: the node
 ending before POSITION inside the innermost node of CHAIN (the nodes holding
 POSITION, innermost first) and those around it up to that innermost node,
 from the one marked @extend that reaches, outwards; NIL when none reaches. It
-reaches when it ends on the line before TARGET that was just typed after
+reaches when its text ends on the line before TARGET that was just typed after
 (*TYPED-LINE*), or when that line, else line TARGET, is indented deeper than
 the node's first line; a node marked @extend.prevent-once passed on the way
 up stops the next one reaching (a block does not go on after its return)."
@@ -84,13 +84,17 @@ up stops the next one reaching (a block does not go on after its return)."
                                                                   (tuatara.syntax:tree-node-end inner)
                                                                   (tuatara.syntax:tree-node-symbol inner)
                                                                   :to position)
-                               :from-end t))))
+                               :from-end t)))
+         ;; the end of its text, without the blanks and line ends it may close on
+         (last (and before (tuatara.text:rope-skip-octets rope (cdr before) tuatara.text:*blank-octets*
+                                                           :backward t :bound (car before)))))
     (flet ((key (node) (list (tuatara.syntax:tree-node-start node) (tuatara.syntax:tree-node-end node)
                              (tuatara.syntax:tree-node-symbol node))))
-      (when (and before (< (car before) (cdr before)))
-        (let* ((up (tuatara.syntax:node-ancestry syntax (1- (cdr before)) (cdr before)))
+      (when (and last (< (car before) last))
+        (let* ((up (tuatara.syntax:node-ancestry syntax (1- last) last))
                (stop (member (key inner) up :key #'key :test #'equal))
                (line (if *typed-line* (1- target) target))
+               (ends (tuatara.text:byte->line rope (1- last)))
                (indent nil)
                (prevented nil))
           (loop for rest on up
@@ -101,7 +105,7 @@ up stops the next one reaching (a block does not go on after its return)."
                      (when (assoc :extend what)
                        (if prevented
                            (setf prevented nil)
-                           (when (or (= (tuatara.text:byte->line rope (tuatara.syntax:tree-node-end node)) line)
+                           (when (or (= ends line)
                                      (> (or indent (setf indent (line-indent-column rope line)))
                                         (line-indent-column rope (tuatara.text:byte->line
                                                                   rope (tuatara.syntax:tree-node-start node)))))
