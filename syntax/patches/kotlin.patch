@@ -1,5 +1,5 @@
 diff --git a/src/scanner.c b/src/scanner.c
-index 64b8182..6f0a74a 100644
+index 64b8182..c3404b8 100644
 --- a/src/scanner.c
 +++ b/src/scanner.c
 @@ -53,13 +53,13 @@ typedef char Delimiter;
@@ -18,3 +18,42 @@ index 64b8182..6f0a74a 100644
    stack->size -= 2;
  }
  
+@@ -867,6 +867,7 @@ static bool scan_import_dot(TSLexer *lexer) {
+ }
+ 
+ bool tree_sitter_kotlin_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
++  if (payload == NULL) return false;
+   // BY_DELEGATION_HINT is declared in the grammar (optional, before `by` in
+   // explicit_delegation and property_delegate) purely so it appears in
+   // valid_symbols when the parser is in a delegation context. The scanner
+@@ -927,19 +928,21 @@ bool tree_sitter_kotlin_external_scanner_scan(void *payload, TSLexer *lexer, con
+ 
+ void *tree_sitter_kotlin_external_scanner_create() {
+   Stack *stack = ts_calloc(1, sizeof(Stack));
+-  if (stack == NULL) abort();
++  if (stack == NULL) return NULL;
+   array_init(stack);
+   return stack;
+ }
+ 
+ void tree_sitter_kotlin_external_scanner_destroy(void *payload) {
+   Stack *stack = (Stack *)payload;
++  if (stack == NULL) return;
+   array_delete(stack);
+   ts_free(stack);
+ }
+ 
+ unsigned tree_sitter_kotlin_external_scanner_serialize(void *payload, char *buffer) {
+   Stack *stack = (Stack *)payload;
++  if (stack == NULL) return 0;
+   unsigned n = stack->size;
+   if (n > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
+     n = TREE_SITTER_SERIALIZATION_BUFFER_SIZE;
+@@ -953,6 +956,7 @@ unsigned tree_sitter_kotlin_external_scanner_serialize(void *payload, char *buff
+ 
+ void tree_sitter_kotlin_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
+   Stack *stack = (Stack *)payload;
++  if (stack == NULL) return;
+   // Stack entries are 2 bytes each (delimiter + prefix_len).
+   // Discard corrupted state with odd length.
+   if (length > 0 && length % 2 == 0) {

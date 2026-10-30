@@ -336,19 +336,30 @@ before each by its program."
   "The longest a process of SURVIVES-IN-CHILD may take before it is ended and its
 test fails.")
 
-(defun survives-in-child (case)
-  "Show the output CASE names (test/emulator/survives.lisp) in a terminal in
-a process of its own, so that output ending that process fails a test
-rather than ending the tests: what the terminal showed after, a property
-list; the process's exit code, or :TIMEOUT when it was ended after
-*SURVIVAL-SECONDS*; and what it printed, its errors among it."
+(defun survives-in-child (case &key (script "test/emulator/survives.lisp") (heap "2GB") address-space directory)
+  "Run SCRIPT, a file of this repository run with sbcl --script and given CASE,
+a file to write to and DIRECTORY (by default one of the test's own), in a
+process of its own, so that what could end that process fails a test rather
+than ending the tests; by default the script that shows the output CASE
+names in a terminal (test/emulator/survives.lisp). HEAP is SBCL's dynamic
+space; ADDRESS-SPACE, when given, holds the process to that many octets of
+address space (ulimit -v).
+Returns what the script wrote to the file, read as Lisp (for the terminal,
+what it showed after, a property list); the process's exit code, or
+:TIMEOUT when it was ended after *SURVIVAL-SECONDS*; and what it printed,
+its errors among it."
   (with-test-directory (dir)
     (let* ((out (merge-pathnames "shown" dir))
            (printed (merge-pathnames "printed" dir))
-           (process (sb-ext:run-program sb-ext:*runtime-pathname*
-                                        (list "--dynamic-space-size" "2GB" "--noinform" "--disable-ldb" "--end-runtime-options" "--script"
-                                              (namestring (asdf:system-relative-pathname :tuatara "test/emulator/survives.lisp"))
-                                              case (namestring out) (namestring dir))
+           (sbcl (list (namestring sb-ext:*runtime-pathname*) "--dynamic-space-size" heap "--noinform" "--disable-ldb"
+                       "--end-runtime-options" "--script"
+                       (namestring (asdf:system-relative-pathname :tuatara script))
+                       case (namestring out) (namestring (or directory dir))))
+           (process (sb-ext:run-program "/bin/sh"
+                                        (if address-space
+                                            (list* "-c" "ulimit -v \"$1\" && shift && exec \"$@\"" "sh"
+                                                   (princ-to-string (floor address-space 1024)) sbcl)
+                                            (list* "-c" "exec \"$@\"" "sh" sbcl))
                                         :wait nil :output (namestring printed) :if-output-exists :supersede :error :output))
            (deadline (tuatara.runtime:deadline-in *survival-seconds*)))
       (loop while (and (sb-ext:process-alive-p process) (plusp (tuatara.runtime:seconds-left deadline)))
@@ -361,14 +372,15 @@ list; the process's exit code, or :TIMEOUT when it was ended after
                 code
                 (or (ignore-errors (uiop:read-file-string printed)) ""))))))
 
-(defmacro surviving ((shown case) &body body)
-  "Run BODY with SHOWN what the terminal showed of the output CASE names, in a
-process of its own (SURVIVES-IN-CHILD), once that process ended well; the
-tests skipped when they run in Tuatara's own program, which runs no
-scripts as SBCL does."
+(defmacro surviving ((shown case &rest keys) &body body)
+  "Run BODY with SHOWN what the terminal showed of the output CASE names, or
+what another script wrote for CASE, run in a process of its own
+(SURVIVES-IN-CHILD, given KEYS: the script, what the process is held to),
+once that process ended well; the tests skipped when
+they run in Tuatara's own program, which runs no scripts as SBCL does."
   (let ((code (gensym "CODE")) (printed (gensym "PRINTED")))
     `(if (string-equal "sbcl" (pathname-name sb-ext:*runtime-pathname*))
-         (multiple-value-bind (,shown ,code ,printed) (survives-in-child ,case)
+         (multiple-value-bind (,shown ,code ,printed) (survives-in-child ,case ,@keys)
            (is eql 0 ,code "the process ended with ~a; it printed:~%~a" ,code ,printed)
            ,@body)
          (skip "these tests run in Tuatara's own program, not SBCL, which they start a process of" (true t)))))

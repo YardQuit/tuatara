@@ -117,8 +117,10 @@ static bool tuatara_cancelled(TSParseState *state) {
    match the text) unless it is NULL. The parse stops, returning NULL, soon
    after *CANCEL becomes nonzero; once LIMIT milliseconds have passed unless
    LIMIT is 0, *CANCEL then set to 2; or once it has taken BUDGET octets of
-   memory unless BUDGET is 0, *CANCEL then set to 3. The parser must then be
-   reset. */
+   memory unless BUDGET is 0, *CANCEL then set to 3. It returns NULL as well
+   when the grammar's own code gave the parser what it cannot have (a token
+   number the grammar does not have, a state longer than its buffer), *CANCEL
+   then set to 4. The parser must be reset after a NULL. */
 TSTree *tuatara_parse(TSParser *parser, const TSTree *old, tuatara_reader read, void *payload,
                       volatile int32_t *cancel, uint32_t limit, uint64_t budget) {
   struct tuatara_input source = {read, payload};
@@ -135,7 +137,10 @@ TSTree *tuatara_parse(TSParser *parser, const TSTree *old, tuatara_reader read, 
     }
   }
   TSParseOptions options = {&progress, tuatara_cancelled};
-  return ts_parser_parse_with_options(parser, old, input, options);
+  TSTree *tree = ts_parser_parse_with_options(parser, old, input, options);
+  /* stopped by none of the above: the grammar went wrong */
+  if (!tree && *cancel == 0) *cancel = 4;
+  return tree;
 }
 
 /* Tell TREE that the octets from START below OLD_END became those below

@@ -281,6 +281,8 @@ the job's fault, for CATCH-UP to deal with; the editor carries on."
                                     :old (parse-job-old job) :cancel (parse-job-cancel job)
                                     :limit (parse-job-limit job) :budget (parse-job-budget job))
                       (when (member why '(:slow :memory)) (setf (parse-job-slow job) why))
+                      (when (eq why :failed)
+                        (setf (parse-job-fault job) (make-condition 'grammar-failure :grammar (syntax-grammar syntax))))
                       tree))
                 (sb-sys:memory-fault-error (e) (setf (parse-job-fault job) e) nil)
                 (error () nil))))
@@ -398,7 +400,7 @@ another parse if the tree is not current."
                (setf (syntax-tree syntax) tree
                      (syntax-current syntax) (null edits))
                (incf (syntax-generation syntax)))
-              ((parse-job-fault job) (grammar-failed syntax))
+              ((parse-job-fault job) (grammar-failed syntax (parse-job-fault job)))
               ((parse-job-refresh job)
                ;; a parse afresh given up (too slow, too large) leaves the
                ;; tree as it was, and is not tried again
@@ -437,12 +439,16 @@ NIL when there is nothing to do until the text is edited."
           (progn (request-parse syntax :fresh t) nil)
           (float (- delay idle))))))
 
-(defun grammar-failed (syntax)
+(defun grammar-failed (syntax fault)
   "Turn SYNTAX's grammar off for the rest of the session after its own code
-failed while reading SYNTAX's text: SYNTAX stops parsing, keeping the tree it
-has; its parser is left alone, since its memory may be damaged; nothing more
-is parsed with the grammar; and *SYNTAX-FAULT-FUNCTION* says so."
-  (setf (grammar-faulted (syntax-grammar syntax)) t
+failed while reading SYNTAX's text, FAULT saying how: SYNTAX stops parsing,
+keeping the tree it has; its parser is deleted when the grammar only gave it
+a value it cannot have (a GRAMMAR-FAILURE), else left alone, since its memory
+may be damaged; nothing more is parsed with the grammar; and
+*SYNTAX-FAULT-FUNCTION* says so."
+  (when (typep fault 'grammar-failure)
+    (delete-parser (syntax-parser syntax)))
+  (setf (grammar-faulted (syntax-grammar syntax)) fault
         (syntax-broken syntax) t
         (syntax-parser syntax) (null-pointer))
   (when *syntax-fault-function*

@@ -91,8 +91,11 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
       # with syntax/patches/tree-sitter.patch applied, as a grammar is
       git -C "$dir" checkout -q -- .
       [ -f "$root/syntax/patches/tree-sitter.patch" ] && git -C "$dir" apply "$root/syntax/patches/tree-sitter.patch"
-      # its checks name their files from the top of the sources, not from this machine
-      cc -O2 -fPIC -shared -std=c11 -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE \
+      # without its assertions, as the grammars are: one that fails would end
+      # the editor, and the patch makes the parser check what a grammar gives
+      # it instead (a parse that meets a wrong value fails); what names a
+      # file names it from the top of the sources, not from this machine
+      cc -O2 -fPIC -shared -std=c11 -DNDEBUG -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE \
          -ffile-prefix-map="$root/=" -ffile-prefix-map="$dir/=tree-sitter/" \
          -I"$dir/lib/include" -I"$dir/lib/src" \
          "$dir/lib/src/lib.c" "$root/syntax/syntax.c" -o "$out/libtuatara-syntax.so" ;;

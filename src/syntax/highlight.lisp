@@ -114,22 +114,26 @@ coloured; past it that text is left without its colours.")
 
 (defun parse-ranges (grammar rope ranges)
   "A syntax tree of ROPE's text in GRAMMAR, reading only RANGES, each (START .
-END), in order and apart; NIL when it cannot be parsed, with :SLOW or :MEMORY
-as a second value when it took too long or too much memory (PARSE-ROPE). A
-failure inside the grammar's own code turns the grammar off, as a failed parse
-of a buffer does."
+END), in order and apart; NIL when it cannot be parsed, with :SLOW, :MEMORY or
+:FAILED as a second value when it took too long or too much memory or the
+grammar went wrong (PARSE-ROPE). A failure inside the
+grammar's own code turns the grammar off, as a failed parse of a buffer
+does."
   (unless (grammar-faulted grammar)
     (let ((parser (make-parser grammar)))
       (handler-case
-          (multiple-value-prog1
+          (multiple-value-bind (tree why)
               (if (set-included-ranges parser rope ranges)
                   (parse-rope parser rope :limit *injection-time-limit*
                                           :budget (parse-memory-limit (loop for (start . end) in ranges sum (- end start))))
                   nil)
-            (delete-parser parser))
-        (sb-sys:memory-fault-error ()
+            (delete-parser parser)
+            (when (eq why :failed)
+              (setf (grammar-faulted grammar) (make-condition 'grammar-failure :grammar grammar)))
+            (values tree why))
+        (sb-sys:memory-fault-error (fault)
           ;; the parser is left alone: its memory may be damaged
-          (setf (grammar-faulted grammar) t)
+          (setf (grammar-faulted grammar) fault)
           nil)
         (error () (delete-parser parser) nil)))))
 

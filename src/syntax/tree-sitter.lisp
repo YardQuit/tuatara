@@ -80,7 +80,7 @@ when its own code failed while reading a text: it reads nothing more."
       (documentation 'grammar-pointer 'function) "The grammar's tree-sitter language, a foreign pointer."
       (documentation 'grammar-symbols 'function) "The grammar's node type names, by symbol number."
       (documentation 'grammar-named 'function) "For each symbol of the grammar, true when it names a node rather than a literal token."
-      (documentation 'grammar-faulted 'function) "True once the grammar's own code failed while reading a text; it reads nothing more."
+      (documentation 'grammar-faulted 'function) "What failed once the grammar's own code failed while reading a text (a GRAMMAR-FAILURE or a memory fault), else NIL; it reads nothing more."
       (documentation 'grammar-spans-query 'function) "The grammar's query for strings and comments, compiled when first needed.")
 
 (defmethod print-object ((grammar grammar) stream)
@@ -307,13 +307,16 @@ failed and ends the text, so no error unwinds through the parser."
 
 (defun parse-rope (parser rope &key old cancel limit budget)
   "Parse ROPE with PARSER and return the new tree, or NIL when the parse was
-cancelled, ran out of time or memory or the text could not be read, with :SLOW
-as a second value when it ran out of time and :MEMORY when it ran out of
-memory. OLD is the tree of the text before, edited to match ROPE with
-EDIT-TREE, or NIL to parse from scratch. CANCEL is a foreign 32-bit flag: the
-parse stops soon after it becomes nonzero. LIMIT is how many seconds the parse
-may take, BUDGET how many octets of memory more than the tree-sitter library
-held before it; NIL for no limit."
+cancelled, ran out of time or memory, the grammar went wrong or the text
+could not be read. The second value then says why: :SLOW when it ran out of
+time, :MEMORY when it ran out of memory and :FAILED when the grammar's own
+code gave the parser what it cannot have (a token the grammar has no number
+for). A scanner writing past the memory given to it for its state faults
+there, as SB-SYS:MEMORY-FAULT-ERROR. OLD is the tree of the text before,
+edited to match ROPE with EDIT-TREE, or NIL to parse from scratch. CANCEL is a foreign
+32-bit flag: the parse stops soon after it becomes nonzero. LIMIT is how many
+seconds the parse may take, BUDGET how many octets of memory more than the
+tree-sitter library held before it; NIL for no limit."
   (with-foreign-memory (buffer +read-size+)
     (with-foreign-memory (own-flag 4 :zero t)
       (let* ((flag (or cancel own-flag))
@@ -326,7 +329,7 @@ held before it; NIL for no limit."
                               :u64 (if budget (max 1 (min (1- (expt 2 63)) (round budget))) 0)))))
         (cond ((null-pointer-p tree)
                (ts-call "ts_parser_reset" :void :pointer parser)
-               (values nil (case (sb-sys:signed-sap-ref-32 flag 0) (2 :slow) (3 :memory))))
+               (values nil (case (sb-sys:signed-sap-ref-32 flag 0) (2 :slow) (3 :memory) (4 :failed))))
               ((parse-input-failed input)
                (delete-tree tree)
                (ts-call "ts_parser_reset" :void :pointer parser)
@@ -376,6 +379,18 @@ directives set)."
       (documentation 'query-error-kind 'function) "What was wrong, in words."
       (documentation 'query-error-line 'function) "The line of the query source where it went wrong."
       (documentation 'query-error-text 'function) "The text of the query source around the error.")
+
+;;; A grammar going wrong
+
+(define-condition grammar-failure (error)
+  ((grammar :initarg :grammar :reader grammar-failure-grammar))
+  (:documentation "A grammar's own code gave the parser what it cannot have,
+such as a token the grammar has no number for, and the parse stopped.")
+  (:report (lambda (c s)
+             (format s "the ~a grammar gave the parser a value it does not have"
+                     (grammar-name (grammar-failure-grammar c))))))
+
+(setf (documentation 'grammar-failure-grammar 'function) "The grammar that went wrong.")
 
 (defparameter *query-error-kinds*
   #("No error" "Syntax error" "Unknown node type" "Unknown field" "Unknown capture" "Impossible pattern" "Wrong grammar")

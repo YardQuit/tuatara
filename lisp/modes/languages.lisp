@@ -652,13 +652,19 @@ memory, and was given up."
 
 (defun report-grammar-fault (syntax)
   "Say that the grammar of SYNTAX failed while reading its buffer and is off
-until the editor starts again."
-  (tuatara.runtime:debug-report :error "the ~a grammar failed reading ~a"
-                                (tuatara.syntax:grammar-name (tuatara.syntax:syntax-grammar syntax))
-                                (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax)))
-  (message "The ~a grammar failed while reading ~a: its colours and syntax are off until Tuatara starts again. Save your work and restart."
-           (tuatara.syntax:grammar-name (tuatara.syntax:syntax-grammar syntax))
-           (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))))
+until the editor starts again; and, when its code may have damaged the
+editor's memory, to save and restart."
+  (let* ((grammar (tuatara.syntax:syntax-grammar syntax))
+         (fault (tuatara.syntax:grammar-faulted grammar))
+         (clean (typep fault 'tuatara.syntax:grammar-failure)))
+    (tuatara.runtime:debug-report :error "the ~a grammar failed reading ~a~@[: ~a~]"
+                                  (tuatara.syntax:grammar-name grammar)
+                                  (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
+                                  (and (typep fault 'condition) fault))
+    (message "The ~a grammar failed while reading ~a: its colours and syntax are off until Tuatara starts again.~:[ Save your work and restart.~;~]"
+             (tuatara.syntax:grammar-name grammar)
+             (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
+             clean)))
 
 ;;; The languages
 

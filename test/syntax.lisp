@@ -459,6 +459,106 @@ what stopped the walk (NIL at a bracket)."
                 (true (tuatara.syntax:buffer-syntax buffer)))
       (tuatara.buffer:kill-buffer buffer))))
 
+;; a grammar that goes wrong on purpose, test/grammars/misbehaving/
+
+(defun call-with-misbehaving-grammar (function)
+  "Call FUNCTION with the grammar of test/grammars/misbehaving/, compiled as the
+build compiles every grammar into a directory of the test's own, and loaded
+from there, and that directory; the grammar is forgotten afterwards."
+  (with-test-directory (directory)
+    (let ((source (uiop:native-namestring (asdf:system-relative-pathname :tuatara "test/grammars/misbehaving/src/")))
+          (library (uiop:native-namestring (merge-pathnames "misbehaving.so" directory))))
+      (multiple-value-bind (output error code)
+          (uiop:run-program (list "bash" "-c" ". \"$1\" && compile_grammar \"$2\" \"$3\"" "_"
+                                  (tools-script "grammar-build.sh") source library)
+                            :output :string :error-output :output :ignore-error-status t)
+        (declare (ignore error))
+        (is = 0 code "the test grammar did not compile:~%~a" output))
+      (remhash "misbehaving" tuatara.syntax::*grammars*)
+      (unwind-protect
+           (funcall function
+                    (let ((tuatara.syntax:*grammar-directories* (cons directory (tuatara.syntax:grammar-directories))))
+                      (tuatara.syntax:find-grammar "misbehaving"))
+                    directory)
+        (remhash "misbehaving" tuatara.syntax::*grammars*)))))
+
+(defun parse-in-buffer (grammar text)
+  "A buffer holding TEXT whose syntax in GRAMMAR has been parsed, or given up,
+and its SYNTAX; the buffer is to be killed by the caller."
+  (let* ((buffer (tuatara.buffer:make-buffer "*misbehaving*" :text text))
+         (syntax (tuatara.syntax:attach-syntax buffer grammar)))
+    (loop repeat 500 while (tuatara.syntax:syntax-job syntax)
+          do (let ((tuatara.syntax:*syntax-wait* 0.01)) (tuatara.syntax:wait-for-parse syntax)))
+    (values buffer syntax)))
+
+(define-test (syntax wrong-values-fail-the-parse)
+  ;; each value a grammar's own code gives the parser that it cannot have
+  ;; fails the parse: a token number from the scanner ("!s"), from the
+  ;; lexing function ("#") and from the keyword lexing function ("bad"), and
+  ;; a length of the scanner's state longer than its buffer ("!z"); the
+  ;; parser reads a right text afterwards
+  (call-with-misbehaving-grammar
+   (lambda (grammar directory)
+     (declare (ignore directory))
+     (true grammar)
+     (when grammar
+       (dolist (text '("abc !s def" "abc # def" "abc bad def" "abc !z def"))
+         (let ((parser (tuatara.syntax:make-parser grammar)))
+           (unwind-protect
+                (multiple-value-bind (tree why)
+                    (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text))
+                  (false tree "~s parsed" text)
+                  (is eq :failed why "~s" text)
+                  (let ((tree (tuatara.syntax:parse-rope parser (tuatara.text:string->rope "abc begin !x def"))))
+                    (true tree "after ~s" text)
+                    (when tree (tuatara.syntax:delete-tree tree))))
+             (tuatara.syntax:delete-parser parser))))))))
+
+(define-test (syntax failing-grammar-turned-off)
+  ;; in a buffer, a grammar that gave the parser a wrong value is turned off
+  ;; for the session and said to have failed, its parser deleted
+  (call-with-misbehaving-grammar
+   (lambda (grammar directory)
+     (declare (ignore directory))
+     (let ((said nil))
+       (unwind-protect
+            (let ((tuatara.syntax:*syntax-fault-function* (lambda (syntax) (setf said syntax))))
+              (multiple-value-bind (buffer syntax) (parse-in-buffer grammar "abc !s def")
+                (unwind-protect
+                     (progn
+                       (is eq syntax said)
+                       (true (typep (tuatara.syntax:grammar-faulted grammar) 'tuatara.syntax:grammar-failure))
+                       (true (tuatara.syntax:syntax-broken syntax))
+                       (true (tuatara.io:null-pointer-p (tuatara.syntax::syntax-parser syntax)))
+                       (false (tuatara.syntax:syntax-tree syntax)))
+                  (tuatara.syntax:detach-syntax buffer)
+                  (tuatara.buffer:kill-buffer buffer))))
+         (setf (tuatara.syntax:grammar-faulted grammar) nil))))))
+
+(defmacro found-in-child ((found case) &body body)
+  "Run BODY with FOUND what test/syntax/memory.lisp found for CASE, run in a
+process of its own held to 3 GB of address space, with the grammar of
+test/grammars/misbehaving/ beside it (SURVIVING): one whose memory a scanner
+writes past, so that it is not the test run's."
+  (let ((grammar (gensym "GRAMMAR")) (directory (gensym "DIRECTORY")))
+    `(call-with-misbehaving-grammar
+      (lambda (,grammar ,directory)
+        (declare (ignore ,grammar))
+        (surviving (,found ,case :script "test/syntax/memory.lisp" :heap "1GB"
+                                 :address-space (* 3 1024 1024 1024) :directory ,directory)
+          ,@body)))))
+
+(define-test (syntax scanner-writing-past-its-buffer-faults)
+  ;; a scanner writing past the buffer for its state, a little or much,
+  ;; faults on the page after it before it reaches anything else: the parse
+  ;; is given up as a memory fault, in a buffer the grammar is turned off,
+  ;; and the editor carries on
+  (found-in-child (found "overflow")
+    (is equal '(:fault :fault) (getf found :faults))
+    (true (getf found :buffer-fault))
+    (true (getf found :buffer-broken))
+    (true (getf found :other-parses))))
+
 ;; how the parse of a big file stops when it takes too long
 (define-test (syntax slow-parses)
   ;; a parse that takes longer than it may is given up: the buffer shows no

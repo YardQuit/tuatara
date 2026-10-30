@@ -1,8 +1,17 @@
 diff --git a/lib/src/lexer.c b/lib/src/lexer.c
-index 1709c41..68f48d8 100644
+index 1709c41..11950bd 100644
 --- a/lib/src/lexer.c
 +++ b/lib/src/lexer.c
-@@ -253,7 +253,17 @@ static void ts_lexer__do_advance(Lexer *self, bool skip) {
+@@ -6,6 +6,8 @@
+ 
+ #include <stdarg.h>
+ #include <stdio.h>
++#include <sys/mman.h>
++#include <unistd.h>
+ 
+ #define LOG(message, character)              \
+   if (self->logger.log) {                    \
+@@ -253,7 +255,17 @@ static void ts_lexer__do_advance(Lexer *self, bool skip) {
  // chunk of source code if needed.
  static void ts_lexer__advance(TSLexer *_self, bool skip) {
    Lexer *self = (Lexer *)_self;
@@ -21,7 +30,7 @@ index 1709c41..68f48d8 100644
  
    if (skip) {
      LOG("skip", self->data.lookahead)
-@@ -293,6 +303,10 @@ static void ts_lexer__mark_end(TSLexer *_self) {
+@@ -293,6 +305,10 @@ static void ts_lexer__mark_end(TSLexer *_self) {
  static uint32_t ts_lexer__get_column(TSLexer *_self) {
    Lexer *self = (Lexer *)_self;
  
@@ -32,7 +41,33 @@ index 1709c41..68f48d8 100644
    self->did_get_column = true;
  
    if (!self->column_data.valid) {
-@@ -400,6 +414,11 @@ void ts_lexer_reset(Lexer *self, Length position) {
+@@ -379,10 +395,25 @@ void ts_lexer_init(Lexer *self) {
+     }
+   };
+   ts_lexer_set_included_ranges(self, NULL, 0);
++  size_t page = (size_t)sysconf(_SC_PAGESIZE);
++  char *pages = mmap(NULL, 3 * page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++  if (pages != MAP_FAILED && mprotect(pages + page, page, PROT_READ | PROT_WRITE) == 0) {
++    self->debug_buffer_pages = pages;
++    self->debug_buffer = pages + 2 * page - TREE_SITTER_SERIALIZATION_BUFFER_SIZE;
++  } else {
++    // without pages to spare, a buffer of the usual memory, unguarded
++    if (pages != MAP_FAILED) munmap(pages, 3 * page);
++    self->debug_buffer_pages = NULL;
++    self->debug_buffer = ts_malloc(TREE_SITTER_SERIALIZATION_BUFFER_SIZE);
++  }
+ }
+ 
+ void ts_lexer_delete(Lexer *self) {
+   ts_free(self->included_ranges);
++  if (self->debug_buffer_pages)
++    munmap(self->debug_buffer_pages, 3 * (size_t)sysconf(_SC_PAGESIZE));
++  else
++    ts_free(self->debug_buffer);
+ }
+ 
+ void ts_lexer_set_input(Lexer *self, TSInput input) {
+@@ -400,6 +431,11 @@ void ts_lexer_reset(Lexer *self, Length position) {
  }
  
  void ts_lexer_start(Lexer *self) {
@@ -45,10 +80,10 @@ index 1709c41..68f48d8 100644
    self->token_end_position = LENGTH_UNDEFINED;
    self->data.result_symbol = 0;
 diff --git a/lib/src/lexer.h b/lib/src/lexer.h
-index 7f451e3..68cbdc4 100644
+index 7f451e3..5846a00 100644
 --- a/lib/src/lexer.h
 +++ b/lib/src/lexer.h
-@@ -31,6 +31,7 @@ typedef struct {
+@@ -31,10 +31,16 @@ typedef struct {
    uint32_t chunk_start;
    uint32_t chunk_size;
    uint32_t lookahead_size;
@@ -56,3 +91,72 @@ index 7f451e3..68cbdc4 100644
    bool did_get_column;
    ColumnData column_data;
  
+-  char debug_buffer[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
++  // the buffer a scanner writes its state into, of
++  // TREE_SITTER_SERIALIZATION_BUFFER_SIZE octets: at the end of a page of its
++  // own between two that cannot be touched, so that a scanner writing past
++  // it, or before the page, faults at once rather than damage the parser
++  char *debug_buffer;
++  void *debug_buffer_pages;
+ } Lexer;
+ 
+ void ts_lexer_init(Lexer *self);
+diff --git a/lib/src/parser.c b/lib/src/parser.c
+index 2f6b176..05d5787 100644
+--- a/lib/src/parser.c
++++ b/lib/src/parser.c
+@@ -406,7 +406,13 @@ static unsigned ts_parser__external_scanner_serialize(
+       self->lexer.debug_buffer
+     );
+   }
+-  ts_assert(length <= TREE_SITTER_SERIALIZATION_BUFFER_SIZE);
++  // a scanner that says it wrote more than the buffer holds has gone wrong:
++  // the parse fails rather than read past the buffer (one that wrote past it
++  // has faulted on the page after it, see Lexer)
++  if (length > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
++    self->has_scanner_error = true;
++    length = 0;
++  }
+   return length;
+ }
+ 
+@@ -544,10 +550,17 @@ static Subtree ts_parser__lex(
+       ts_parser__external_scanner_deserialize(self, external_token);
+       found_token = ts_parser__external_scanner_scan(self, lex_mode.external_lex_state);
+       if (self->has_scanner_error) return NULL_SUBTREE;
++      // a token the grammar has no number for: the parse fails rather than
++      // read past the grammar's tables
++      if (found_token && self->lexer.data.result_symbol >= self->language->external_token_count) {
++        self->has_scanner_error = true;
++        return NULL_SUBTREE;
++      }
+       ts_lexer_finish(&self->lexer, &lookahead_end_byte);
+ 
+       if (found_token) {
+         external_scanner_state_len = ts_parser__external_scanner_serialize(self);
++        if (self->has_scanner_error) return NULL_SUBTREE;
+         external_scanner_state_changed = !ts_external_scanner_state_eq(
+           ts_subtree_external_scanner_state(external_token),
+           self->lexer.debug_buffer,
+@@ -599,6 +612,10 @@ static Subtree ts_parser__lex(
+     ts_lexer_start(&self->lexer);
+     found_token = ts_parser__call_main_lex_fn(self, lex_mode);
+     ts_lexer_finish(&self->lexer, &lookahead_end_byte);
++    if (found_token && self->lexer.data.result_symbol >= self->language->token_count) {
++      self->has_scanner_error = true;
++      return NULL_SUBTREE;
++    }
+     if (found_token) break;
+ 
+     if (!error_mode) {
+@@ -656,6 +673,10 @@ static Subtree ts_parser__lex(
+       ts_lexer_start(&self->lexer);
+ 
+       is_keyword = ts_parser__call_keyword_lex_fn(self);
++      if (is_keyword && self->lexer.data.result_symbol >= self->language->token_count) {
++        self->has_scanner_error = true;
++        return NULL_SUBTREE;
++      }
+ 
+       if (
+         is_keyword &&
