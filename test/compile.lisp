@@ -291,6 +291,20 @@ force; *compile* killed afterwards."
      :width 100 :height 30)
     (is equal '(("b.txt" 1 0) ("Makefile" 0 0)) (reverse *places-reached*))))
 
+(define-test (compiling places-in-the-file-typed-in-keep-insert-state)
+  ;; with modal editing, M-g n to a place in the file being typed in leaves it in INSERT
+  ;; state, as going to another place in it does
+  (with-compile-session (dir (format nil "echo 'a.c:1: one'~%echo 'a.c:3: three'~%"))
+    (let ((tuatara.defaults::*modal-editing* t) (state nil))
+      (auto-save-session
+       (compile-steps dir (list :until #'compile-ended-p)
+                      "M-g n" (reached '("a.c" 0 0))
+                      "i" "M-g n" (reached '("a.c" 2 0))
+                      (lambda () (setf state (tuatara.defaults::modal-state
+                                              (tuatara.buffer:find-buffer "a.c")))))
+       :width 100 :height 30)
+      (is eq :insert state))))
+
 (define-test (compiling killed-output-no-places)
   ;; killing *compile* drops its places from those in force
   (with-compile-session (dir (format nil "echo 'a.c:1: x'~%"))

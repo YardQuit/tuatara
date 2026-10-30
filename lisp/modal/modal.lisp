@@ -426,7 +426,8 @@ while modal editing is on (MODAL-SYNC)."
 (defun install-tuatara-modal (editor)
   "Install Tuatara's modal editing into EDITOR: keys, mode line, cursor shape, the state sync and
 position tracking after every command, the state sync after work from the background too, and
-a file read again while typing kept a step of its own to undo."
+a file read again while typing kept a step of its own to undo, and a file open already, visited
+from another buffer, shown in NORMAL state."
   (install-tuatara-modal-keys)
   (setf (editor-mode-line-function editor) #'modal-mode-line
         (editor-cursor-shape-function editor) #'modal-cursor-shape)
@@ -441,6 +442,7 @@ a file read again while typing kept a step of its own to undo."
   (pushnew 'modal-sync-after-background *after-tick-functions*)
   (pushnew 'insert-undo-break *before-reload-functions*)
   (pushnew 'insert-undo-restart *after-reload-functions*)
+  (pushnew 'end-insert-state *shown-again-functions*)
   (pushnew 'track-position (editor-post-command-functions editor))
   (define-key (editor-global-keymap editor) "C-g" 'tuatara-quit)
   (modal-sync editor))

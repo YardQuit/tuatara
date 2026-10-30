@@ -482,10 +482,19 @@ default), and put it first among the recent files. A name that does not exist
 becomes a new file, except for a safe visit. Visited as usual, a file one of
 *FILE-VIEWS* shows otherwise, a PDF, is shown so; one that looks binary, in
 the hex view (*HEX-VIEW-BINARY-FILES*). Why a file opened safely unasked is
-said, and a file opened safely goes back to where it was left. The file's
-first octets are read once for all of this (TUATARA.IO:CALL-WITH-FILE-HEADS).
+said, and a file opened safely goes back to where it was left. A file open
+already that was left in INSERT state is shown in NORMAL state when it is
+visited from another buffer (*SHOWN-AGAIN-FUNCTIONS*); visited from its own
+buffer, going to another place in it, it stays as it is. The file's first
+octets are read once for all of this (TUATARA.IO:CALL-WITH-FILE-HEADS).
 Returns the buffer, and true as a second value when it was open already."
   (tuatara.io:call-with-file-heads (lambda () (visit-path-once path safe show))))
+
+(defvar *shown-again-functions* '()
+  "Functions called with a buffer of a file open already, just shown by a
+visit of its file from another buffer (VISIT-PATH). A buffer a command opens
+without showing it (a capture's target, a journal's day) has none of them
+called.")
 
 (defvar *visiting-safely* nil
   "True while a file or folder is being visited safely, for the views that
@@ -530,24 +539,29 @@ is read-only."
   "Visit the file at PATH as its text (or octets), as VISIT-PATH-ONCE does
 when no view of *FILE-VIEWS* shows it, saying why a view left it so
 \(*FILE-VIEW-SAID*) with how it opened; called outside a visit, by a view of
-its own, it says only how the file opened."
-  (multiple-value-bind (buffer existing) (tuatara.io:visit-file path :safe safe)
-    (unless existing (show-binary-in-hex buffer))
-    (funcall show buffer)
-    (when (and safe existing (not (tuatara.io:safe-visit-p buffer)))
-      (message "~a is open already, with its mode; kill that buffer to open the file safely"
-               (tuatara.buffer:buffer-name buffer)))
-    (when (and (not safe) existing (tuatara.io:safe-visit-p buffer))
-      (message "~a is open safely; \\[end-safe-visit] opens it as usual" (tuatara.buffer:buffer-name buffer)))
-    (let ((said (and (not (eq *file-view-said* :none)) *file-view-said*)))
-      (cond ((and (not existing) (tuatara.io:safe-visit-reason buffer)) (say-why-safe buffer said))
-            (said (message "~a" said))
-            ((and (not existing) (not safe)) (say-new-file-folder buffer))))
-    ;; a file opened safely runs nothing after its visit, but goes back to where it was left
-    (when (and (not existing) (tuatara.io:safe-visit-p buffer)) (restore-place buffer))
-    ;; a new visit as usual was remembered as it was made (*find-file-functions*)
-    (when (or existing (tuatara.io:safe-visit-p buffer)) (remember-buffer-file buffer))
-    (values buffer existing)))
+its own, it says only how the file opened. A file open already, shown from
+another buffer, has *SHOWN-AGAIN-FUNCTIONS* called with it."
+  ;; none before the editor has a window (a file named as it starts)
+  (let ((from (and *editor* (editor-window *editor*) (current-buffer))))
+    (multiple-value-bind (buffer existing) (tuatara.io:visit-file path :safe safe)
+      (unless existing (show-binary-in-hex buffer))
+      (funcall show buffer)
+      (when (and existing (not (eq buffer from)))
+        (dolist (function *shown-again-functions*) (funcall function buffer)))
+      (when (and safe existing (not (tuatara.io:safe-visit-p buffer)))
+        (message "~a is open already, with its mode; kill that buffer to open the file safely"
+                 (tuatara.buffer:buffer-name buffer)))
+      (when (and (not safe) existing (tuatara.io:safe-visit-p buffer))
+        (message "~a is open safely; \\[end-safe-visit] opens it as usual" (tuatara.buffer:buffer-name buffer)))
+      (let ((said (and (not (eq *file-view-said* :none)) *file-view-said*)))
+        (cond ((and (not existing) (tuatara.io:safe-visit-reason buffer)) (say-why-safe buffer said))
+              (said (message "~a" said))
+              ((and (not existing) (not safe)) (say-new-file-folder buffer))))
+      ;; a file opened safely runs nothing after its visit, but goes back to where it was left
+      (when (and (not existing) (tuatara.io:safe-visit-p buffer)) (restore-place buffer))
+      ;; a new visit as usual was remembered as it was made (*find-file-functions*)
+      (when (or existing (tuatara.io:safe-visit-p buffer)) (remember-buffer-file buffer))
+      (values buffer existing))))
 
 ;;; Finding, saving and renaming files
 

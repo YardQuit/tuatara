@@ -627,6 +627,27 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
         (is string= (format nil "Third~%# Please enter the commit message.~%") (tuatara.buffer:buffer-string b))
         (tuatara.buffer:kill-buffer b)))))
 
+(define-test (git file-left-typing-opened-in-normal-state)
+  ;; with modal editing, a file left in INSERT state for the status (C-x g works while typing)
+  ;; and opened again from it with RET comes back in NORMAL state: j moves, typing nothing
+  (with-test-directory (dir)
+    (scratch-repository dir)
+    (put-file (merge-pathnames "a.txt" dir) (format nil "one~%two~%"))
+    (let ((tuatara.defaults::*modal-editing* t)
+          (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+          (state nil))
+      (flet ((file () (tuatara.buffer:find-buffer "a.txt")))
+        (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (native-in dir "a.txt")))
+                                 "i x" "C-x g" (list :until #'git-state-here)
+                                 "M-< C-s a . t x t RET RET"
+                                 (list :until (lambda () (eq (file) (tuatara.display:window-buffer
+                                                                     (tuatara.command:editor-window tuatara.command:*editor*)))))
+                                 (lambda () (setf state (tuatara.defaults::modal-state (file))))
+                                 "j")
+                           :width 120 :height 30)
+        (is eq :normal state)
+        (is string= (format nil "xone~%two~%") (tuatara.buffer:buffer-string (file)))))))
+
 (define-test (git stash-menu)
   ;; z z puts changes aside with a message; the status lists the stash; RET
   ;; shows it; z p brings it back and drops it; z d drops one, asked

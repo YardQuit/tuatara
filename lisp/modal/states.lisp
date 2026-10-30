@@ -96,6 +96,16 @@ from now on one step to undo."
   (when (eq (modal-state buffer) :insert)
     (setf (tuatara.buffer:buffer-local buffer 'insert-undo-since) (tuatara.buffer:buffer-undo-stack buffer))))
 
+(defun end-insert-state (buffer)
+  "Put BUFFER, a file open already just visited from another buffer, in
+NORMAL state when it was left in INSERT state, as \\<insert>\\[tuatara-normal] there
+would: what was typed is one step to undo, and a line begun and left blank
+loses its blanks."
+  (when (eq (modal-state buffer) :insert)
+    (when (eq buffer (current-buffer))
+      (forget-typed-indentation buffer))
+    (set-modal-state :normal buffer)))
+
 (defun modal-sync (editor)
   "Make EDITOR's state keymap and self-insert behaviour match the current buffer's
 class and state. In NORMAL state a buffer's own keys come first, when it has
