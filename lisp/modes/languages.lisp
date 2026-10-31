@@ -724,7 +724,7 @@ in a new one when it is next shown or edited."
 (defun report-no-sandbox-for-grammars (trusted)
   "Say that text is not parsed, so not coloured, because there is no sandbox
 to run the grammars in: TRUSTED when it is that of a project you trust."
-  (message "~:[Files outside the projects you trust~;No text~] are coloured or parsed: there is no sandbox (bwrap) to run the grammars in. Install bubblewrap~:[~;, or set *syntax-helper-unconfined* to run them for the projects you trust without it~]; M-x check-health says more."
+  (message "~:[Files outside the projects you trust are not~;No text is~] coloured or parsed: there is no sandbox (bwrap) to run the grammars in. Install bubblewrap~:[~;, or set *syntax-helper-unconfined* to run them for the projects you trust without it~]; M-x check-health says more."
            trusted trusted))
 
 (defun report-grammar-fault (syntax)

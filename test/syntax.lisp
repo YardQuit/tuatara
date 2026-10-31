@@ -3134,3 +3134,16 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
   (true (< 100 (length (source-files "lisp"))))
   (dolist (file (source-files "lisp"))
     (false (search "tuatara.syntax::" (uiop:read-file-string file)) "~a" (enough-namestring file))))
+
+(define-test (syntax no-sandbox-said-as-it-is)
+  ;; the message without a sandbox says that text is not parsed, in words that
+  ;; read right for both kinds of text
+  (flet ((said (trusted)
+           (flet ((messages ()
+                    (let ((buffer (tuatara.buffer:find-buffer "*Messages*")))
+                      (if buffer (tuatara.buffer:buffer-string buffer) ""))))
+             (let ((before (length (messages))))
+               (tuatara.defaults::report-no-sandbox-for-grammars trusted)
+               (subseq (messages) before)))))
+    (true (search "Files outside the projects you trust are not coloured or parsed" (said nil)))
+    (true (search "No text is coloured or parsed" (said t)))))
