@@ -470,3 +470,25 @@ headline's title objects too), to tell two parses apart."
              (is = (depth whole) (depth made))
              (is equal (org-node-full-data whole) (org-node-full-data made))))
       (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals blocks-key-costs-little-for-each-part)
+  ;; asked again after a letter typed in one part, what blocks there are is read again from
+  ;; that part alone: some 16 octets made for each part more, where reading every part's lines
+  ;; again made some 330
+  (flet ((asked (count)
+           (let ((buffer (tuatara.buffer:make-buffer (format nil "key-~a-~a" count (random 1000000))
+                                                     :text (with-output-to-string (out)
+                                                             (dotimes (n count)
+                                                               (format out "* Heading ~d~%~%#+begin_src python~%  x = ~d~%#+end_src~%~%" n n))))))
+             (unwind-protect
+                  (progn
+                    (tuatara.defaults::org-blocks-key buffer)
+                    (loop repeat 3
+                          do (tuatara.buffer:buffer-insert buffer (- (tuatara.buffer:buffer-size buffer) 2) "y")
+                          minimize (let ((before (sb-ext:get-bytes-consed)))
+                                     (tuatara.defaults::org-blocks-key buffer)
+                                     (- (sb-ext:get-bytes-consed) before))))
+               (tuatara.buffer:kill-buffer buffer)))))
+    (let* ((small (asked 2000)) (large (asked 4000))
+           (each (/ (- large small) 2000.0)))
+      (true (< each 100) "~,1f octets made for each part more" each))))

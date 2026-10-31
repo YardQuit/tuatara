@@ -68,9 +68,10 @@ START LENGTH RETURNS-BEFORE CURRENT): NODE its headline there (the whole
 TREE for the text before the first headline), START and LENGTH its
 characters in that parse's text, RETURNS-BEFORE the carriage returns that
 text lost before START; CURRENT false once the part changed, the parse then
-only shown until its own is made."
+only shown until its own is made. BLOCKS, what ORG-BLOCKS-KEY takes of it,
+once worked out."
   level todo-lines code-lines commented parse state (returns :unknown) (changed 0)
-  (changed-at (get-internal-real-time)) touched whole)
+  (changed-at (get-internal-real-time)) touched whole blocks)
 
 (setf (documentation 'org-part-p 'function) "True when OBJECT is an ORG-PART.")
 
@@ -880,34 +881,47 @@ kept."
 
 ;;; What says which source blocks a buffer has
 
+(defun org-blocks-key-entry (parts index rope)
+  "What ORG-BLOCKS-KEY takes of the part of PARTS at INDEX, ROPE the text:
+NIL for a part with no lines that may say where blocks are and what they are
+\(ORG-PART's CODE-LINES) nor a COMMENT headline; else its level and those
+lines, or all of its text when it gives :header-args, after true when every
+part's level is wanted too. Worked out once for each part: a part changed is
+a new one."
+  (let ((part (org-part-at parts index)))
+    (when (or (org-part-code-lines part) (org-part-commented part))
+      (or (org-part-blocks part)
+          (setf (org-part-blocks part)
+                (let* ((start (org-part-start parts index))
+                       (lines (loop for offset in (org-part-code-lines part)
+                                    collect (let* ((line (+ start offset))
+                                                   (end (or (tuatara.text:rope-find-octet rope 10 :start line)
+                                                            (tuatara.text:rope-bytes rope))))
+                                              (string-trim '(#\Space #\Tab #\Return)
+                                                           (tuatara.text:rope-string rope :start line :end end)))))
+                       (arguments (find-if (lambda (line) (and (plusp (length line)) (char= (char line 0) #\:))) lines)))
+                  (cons (or (org-part-commented part) (and arguments t))
+                        (list (org-part-level part) (org-part-commented part)
+                              (if arguments
+                                  (tuatara.text:rope-string rope :start start :end (org-part-end parts index))
+                                  lines)))))))))
+
 (defun org-blocks-key (buffer)
   "What the source blocks of BUFFER, an Org buffer, and what they are depend
 on, as data to compare, read from its parts (ORG-BUFFER-PARTS): for each
 part with lines that may say where blocks are and what they are (ORG-PART's
 CODE-LINES) or a COMMENT headline, its level and those lines, or all of its
-text when it gives :header-args; and every part's level when some part has
-those or such a headline, as they decide which headlines a block is under.
-Equal for two texts whose blocks, their languages, header arguments and
-commented subtrees are the same. Complexity: O(parts + those lines)."
+text when it gives :header-args (ORG-BLOCKS-KEY-ENTRY); and every part's level
+when some part has those or such a headline, as they decide which headlines
+a block is under. Equal for two texts whose blocks, their languages, header
+arguments and commented subtrees are the same. Complexity: O(parts), and the
+lines of the parts changed since it was last asked."
   (let* ((parts (org-buffer-parts buffer))
          (rope (tuatara.buffer:buffer-text buffer))
          (nesting nil)
-         (entries
-           (loop for i below (org-parts-count parts)
-                 for part = (org-part-at parts i)
-                 when (or (org-part-code-lines part) (org-part-commented part))
-                   collect (let* ((start (org-part-start parts i))
-                                  (lines (loop for offset in (org-part-code-lines part)
-                                               collect (let* ((line (+ start offset))
-                                                              (end (or (tuatara.text:rope-find-octet rope 10 :start line)
-                                                                       (tuatara.text:rope-bytes rope))))
-                                                         (string-trim '(#\Space #\Tab #\Return)
-                                                                      (tuatara.text:rope-string rope :start line :end end))))))
-                             (when (or (org-part-commented part)
-                                       (find-if (lambda (line) (and (plusp (length line)) (char= (char line 0) #\:))) lines))
-                               (setf nesting t))
-                             (list (org-part-level part) (org-part-commented part)
-                                   (if (find-if (lambda (line) (and (plusp (length line)) (char= (char line 0) #\:))) lines)
-                                       (tuatara.text:rope-string rope :start start :end (org-part-end parts i))
-                                       lines))))))
+         (entries (loop for i below (org-parts-count parts)
+                        for blocks = (org-blocks-key-entry parts i rope)
+                        when blocks
+                          collect (progn (when (car blocks) (setf nesting t))
+                                         (cdr blocks)))))
     (cons entries (and nesting (loop for i below (org-parts-count parts) collect (org-part-level (org-part-at parts i)))))))
