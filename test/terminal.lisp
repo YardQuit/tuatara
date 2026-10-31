@@ -496,7 +496,7 @@ list, has the frontend show pictures. Returns the frontend and the editor."
                                                     (true (find (search "https://example.org/x" text) links :key #'first))))))))
                                   '(:mouse :down-mouse-1 1 0 :ctrl t)
                                   ;; asked first, the file it leads to named
-                                  (list :until #'question-asked) "y RET"
+                                  (list :until #'question-asked) "y"
                                   (list :until (lambda (buffer) (equal "linked.txt" (tuatara.buffer:buffer-name buffer)))))
                             :width 250
                             :program (list "sh" "-c" (format nil "printf '\\033]8;;file://~a\\033\\\\name\\033]8;;\\033\\\\\\nsee: https://example.org/x.\\nready\\n'; exec cat" file)))
@@ -504,9 +504,11 @@ list, has the frontend show pictures. Returns the frontend and the editor."
         (is equal "linked.txt" (tuatara.buffer:buffer-name (session-buffer editor)))))))
 
 (defun question-asked (buffer)
-  "A function for TERMINAL-SESSION's :until: true once the minibuffer asks something."
+  "A function for TERMINAL-SESSION's :until: true once something is asked, in
+the minibuffer or by a key in the echo area (Y-OR-N-P*)."
   (declare (ignore buffer))
-  (tuatara.command:editor-minibuffer-active tuatara.command:*editor*))
+  (or (tuatara.command:editor-minibuffer-active tuatara.command:*editor*)
+      tuatara.command::*key-question*))
 
 (defun file-link-program (file)
   "A program for TERMINAL-SESSION writing a link (OSC 8) to FILE that shows a
@@ -529,7 +531,7 @@ web address, then ready, and reading what is typed."
       (multiple-value-bind (f editor)
           (terminal-session (list "M-x t e r m i n a l RET" (list :until (buffer-holding "ready"))
                                   '(:mouse :down-mouse-1 1 0 :ctrl t)
-                                  (list :until #'question-asked) "n RET"
+                                  (list :until #'question-asked) "n"
                                   (list :until (lambda (buffer) (declare (ignore buffer)) (not (question-asked nil)))))
                             :width 250 :program (file-link-program file))
         (true (tuatara.frontend.fake:fake-frame-showing f (format nil "Open ~a in Tuatara?" file)))
@@ -544,7 +546,7 @@ web address, then ready, and reading what is typed."
       (multiple-value-bind (f editor)
           (terminal-session (list "M-x t e r m i n a l RET" (list :until (buffer-holding "ready"))
                                   '(:mouse :down-mouse-1 1 0 :ctrl t)
-                                  (list :until #'question-asked) "y RET"
+                                  (list :until #'question-asked) "y"
                                   (list :until (lambda (buffer) (equal "other.txt" (tuatara.buffer:buffer-name buffer)))))
                             :width 250 :program (file-link-program file))
         (declare (ignore f))
