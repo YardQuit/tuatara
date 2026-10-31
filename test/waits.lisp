@@ -229,7 +229,7 @@ most the seconds given for it to end."
                                   (tuatara.buffer:buffer-insert b (tuatara.buffer:buffer-size b) (format nil "* Four~%"))
                                   (funcall wait b)))
                               keys :text text)))
-      (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text) (sleep pause) (funcall parse text))))
+      (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text &rest arguments) (sleep pause) (apply parse text arguments))))
         (let ((tuatara.defaults::*org-parse-at-once* 0))
           ;; the tree of the text as it is now, once it is parsed
           (multiple-value-bind (f editor result)
@@ -259,7 +259,7 @@ most the seconds given for it to end."
                  (loop while (<= (file-position out) tuatara.defaults::*org-parse-at-once*)
                        for i from 0 do (format out "* Heading ~d~%Some body text.~%" i))))
          (buffer (tuatara.buffer:make-buffer "large.org" :text text)))
-    (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text) (push sb-thread:*current-thread* threads) (funcall parse text))))
+    (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text &rest arguments) (push sb-thread:*current-thread* threads) (apply parse text arguments))))
       (let ((tuatara.defaults::*org-parse-wait* 5))
         (tuatara.buffer:buffer-insert buffer 0 "x")
         (tuatara.defaults::org-buffer-tree buffer)
