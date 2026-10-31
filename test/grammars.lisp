@@ -145,6 +145,8 @@ return the fake frontend."
   ;; looking at the answers again, as each command does while a question is
   ;; pending, makes nothing new while no answer has changed
   (with-grammar-answers-forgotten ("awk")
+    ;; the answers forgotten written first, as a session's are long since
+    (tuatara.defaults::finish-state-writes)
     (let ((table (tuatara.defaults::grammar-answers :again t))
           (on (tuatara.defaults::grammars-on-table)))
       (is eq table (tuatara.defaults::grammar-answers :again t))
