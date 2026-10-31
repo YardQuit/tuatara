@@ -332,16 +332,14 @@ other languages coloured again by the grammars on."
 
 (defun ask-to-turn-on-grammar (language)
   "Ask whether to turn LANGUAGE's grammar on, answered by one key pressed
-once the question is shown (keys typed before are thrown away): y keeps it
-on and parses the buffers in it, n keeps it off and says how to turn it on
-later; any other key, or \\`C-g', is \"not now\": not asked again in this
-session, and nothing kept."
+once the question is shown (READ-ANSWER-KEY; keys typed before are thrown
+away): y keeps it on and parses the buffers in it, n keeps it off and says
+how to turn it on later; any other key says which keys answer and asks
+again; \\`C-g' is \"not now\": not asked again in this session, and nothing
+kept."
   (let* ((words (language-words language))
-         (key (handler-case (read-key (format nil "Turn on the ~a grammar? (y or n) " words) :fresh t)
-                (quit () nil)))
-         (answer (and key (not (tuatara.frontend:key-ctrl key)) (not (tuatara.frontend:key-meta key))
-                      (characterp (tuatara.frontend:key-base key))
-                      (char-downcase (tuatara.frontend:key-base key)))))
+         (answer (handler-case (read-answer-key (format nil "Turn on the ~a grammar? (y or n) " words) '(#\y #\n) :fresh t)
+                   (quit () nil))))
     (case answer
       (#\y (note-grammar-answer language t)
        (grammars-changed)

@@ -1092,7 +1092,7 @@ THEN at once with *PACKAGE-ASK-BEFORE-LOADING* NIL."
       (funcall then)
       (case (handler-case (read-answer-key (format nil "Compile and load the package ~a from ~a~@[, ~a~]? (y, n, or v to view its source) "
                                                    name (abbreviated-path where) signer)
-                                           '(#\y #\n #\v))
+                                           '(#\y #\n #\v) :fresh t)
               (quit () nil))
         (#\y (funcall then))
         (#\v (rimu-show-directory (tuatara.io:native folder) :safe t :root (tuatara.io:native folder) :back (current-buffer))

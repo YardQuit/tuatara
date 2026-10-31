@@ -283,14 +283,22 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
         (false (package-test-version))))))
 
 (define-test (packages question-not-answered-by-keys-typed-ahead)
-  ;; keys typed before the question shows never answer it: the n pressed after it does
+  ;; keys typed before the question shows never answer it, wake-ups among them or not,
+  ;; nor keys left unread: the n pressed after it does
   (with-folder-package (dir "ahead" "(defparameter *package-test-version* \"ahead\")")
     (let ((tuatara-user:*package-ask-before-loading* t)
-          (f (tuatara.frontend.fake:make-fake-frontend :width 160 :height 8)))
-      (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (tuatara.frontend.fake::fake-events f)))
-      (queue-test-keys f (list (lambda () (tuatara-user:load-package "ahead" :source "mine")) "y RET" :tick "n"))
+          (f (tuatara.frontend.fake:make-fake-frontend :width 160 :height 8))
+          (waiting t))
+      (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (and waiting (tuatara.frontend.fake::fake-events f))))
+      (queue-test-keys f (list (lambda ()
+                                 (tuatara-user:load-package "ahead" :source "mine")
+                                 ;; a key a command left unread, as a wait for work keeps one
+                                 (setf (tuatara.command:editor-unread tuatara.command:*editor*)
+                                       (list (tuatara.frontend:make-event :key :key (tuatara.frontend:spec-key '(#\y))))))
+                               :tick "y RET" :tick "y" (lambda () (setf waiting nil)) "n"))
       (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults)
       (true (tuatara.frontend.fake:fake-frame-showing f "The package ahead is not loaded"))
+      (false (tuatara.frontend.fake:fake-frame-showing f "is not loaded now"))
       (false (package-test-version)))))
 
 (define-test (packages compiled-while-the-editor-goes-on)
@@ -325,6 +333,19 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
              (true (tuatara.frontend.fake:fake-frame-showing f "Compiling the package slowpkg in the background"))
              (true (tuatara.frontend.fake:fake-frame-showing f "The package slowpkg is compiled and loaded")))
         (makunbound 'tuatara-user::*package-test-loads*)))))
+
+(define-test (packages question-out-of-recorded-keys)
+  ;; keys being recorded are no part of the question: C-g there leaves the recording going,
+  ;; and neither the question nor its answer is recorded
+  (with-folder-package (dir "recorded" "(defparameter *package-test-version* \"recorded\")")
+    (let ((tuatara-user:*package-ask-before-loading* t))
+      (recorded-keys-session (list "C-x (" (lambda () (tuatara-user:load-package "recorded" :source "mine"))
+                                   "C-g" "C-f" "C-x )")
+                             :text "abc")
+      (false (package-test-version))
+      (true tuatara.defaults::*last-recorded-keys* "the recording went on after C-g")
+      (is equal '("C-f") (map 'list (lambda (event) (tuatara.frontend:key-description (tuatara.frontend:key-spec (tuatara.frontend:event-key event))))
+                              tuatara.defaults::*last-recorded-keys*)))))
 
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another

@@ -339,58 +339,67 @@ gives before reading any, and those read so far, newest first. So a key the
 command asks for is asked once and given at every place.")
 
 (defun discard-typed-ahead (editor)
-  "Throw away the keys typed to EDITOR, waiting in its frontend and not read
-yet, so that a question asked now is answered only by a key pressed once it
-is shown. Reading stops at a wake-up (a tick), which is kept; a window
-resized, closed, files dropped or text pasted are kept to be dealt with, as
-are keys a command left unread on purpose."
+  "Throw away the keys typed to EDITOR and not read yet, so that a question
+asked now is answered only by a key pressed once it is shown: those waiting
+in its frontend, wake-ups among them or not, and those a command left
+unread. What is not a key is kept to be dealt with: a wake-up (a tick), a
+window resized or closed, files dropped, text pasted."
   (let ((frontend (editor-frontend editor)) (kept '()))
     (loop while (tuatara.frontend:frontend-input-pending-p frontend)
           do (let ((event (tuatara.frontend:frontend-read-event-timeout frontend 0)))
                (case (and event (tuatara.frontend:event-kind event))
                  ((nil) (return))
-                 (:tick (push event kept) (return))
                  (:key)
                  (t (push event kept)))))
-    (setf (editor-unread editor) (append (editor-unread editor) (nreverse kept)))))
+    (setf (editor-unread editor)
+          (append (remove :key (editor-unread editor) :key #'tuatara.frontend:event-kind)
+                  (nreverse kept)))))
 
 (defun read-key (prompt &key fresh)
   "Show PROMPT in the echo area, redisplay, and return the next key pressed,
 the cursor standing after PROMPT meanwhile (*KEY-QUESTION*). With FRESH, the
-keys typed until PROMPT is shown are thrown away (DISCARD-TYPED-AHEAD):
-for a question no key typed ahead may answer. Signals QUIT when the frontend
-has nothing more to deliver."
+keys typed until PROMPT is shown are thrown away (DISCARD-TYPED-AHEAD), and
+the question is out of any recording of keys: keys being played do not
+answer it, the key pressed is not recorded, and \\`C-g' there leaves the
+recording going: for a question no key typed ahead may answer, asked by
+Tuatara of itself. Signals QUIT when the frontend has nothing more to
+deliver."
   (let ((replay *read-key-replay*))
-    (if (and replay (car replay))
+    (if (and replay (car replay) (not fresh))
         (pop (car replay))
         (let ((editor *editor*) (*key-question* t))
           (echo "~a" prompt)
-          (redisplay-or-say editor)
-          (when fresh (discard-typed-ahead editor))
-          (let* ((event (read-event editor))
-                 (key (case (tuatara.frontend:event-kind event)
-                        (:quit (keyboard-quit-signal))
-                        (t (tuatara.frontend:event-key event)))))
-            (when replay (push key (cdr replay)))
-            key)))))
+          (let ((*keys-playing* (if fresh nil *keys-playing*))
+                (*keys-recording* (if fresh nil *keys-recording*)))
+            (redisplay-or-say editor)
+            (when fresh (discard-typed-ahead editor))
+            (let* ((event (read-event editor))
+                   (key (case (tuatara.frontend:event-kind event)
+                          (:quit (if fresh (error 'quit) (keyboard-quit-signal)))
+                          (t (tuatara.frontend:event-key event)))))
+              (when (and replay (not fresh)) (push key (cdr replay)))
+              key))))))
 
 (defun answer-keys-words (answers)
   "The keys ANSWERS, a list of characters, in words: y, n or v."
   (format nil "~{~a~#[~; or ~:;, ~]~}" answers))
 
-(defun read-answer-key (prompt answers)
+(defun read-answer-key (prompt answers &key fresh)
   "Ask PROMPT in the echo area, answered by one key: one of ANSWERS, a list
-of characters such as (#\\y #\\n), pressed once the question is shown (READ-KEY
-with FRESH: keys typed before are thrown away). Returns the character, in
-lower case, whatever the case typed. Any other key says which keys answer
-and asks again; \\`C-g' signals QUIT."
+of characters such as (#\\y #\\n). Returns the character, in lower case,
+whatever the case typed. Any other key says which keys answer and asks
+again; \\`C-g' signals QUIT. With FRESH, for a question Tuatara asks of
+itself rather than one a command you gave asks, the key is one pressed once
+the question is shown (READ-KEY with FRESH): keys typed before are thrown
+away, keys being recorded or played have no part in it, and \\`C-g' leaves
+a recording of keys going on."
   (let ((asked prompt))
     (loop
-      (let* ((key (read-key asked :fresh t))
+      (let* ((key (read-key asked :fresh fresh))
              (base (tuatara.frontend:key-base key))
              (char (and (not (tuatara.frontend:key-ctrl key)) (not (tuatara.frontend:key-meta key))
                         (characterp base) (char-downcase base))))
-        (cond ((quit-key-p key) (keyboard-quit-signal))
+        (cond ((quit-key-p key) (if fresh (error 'quit) (keyboard-quit-signal)))
               ((and char (member char answers)) (return char))
               (t (setf asked (format nil "Answer ~a. ~a" (answer-keys-words answers) prompt))))))))
 
