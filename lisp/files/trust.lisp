@@ -57,10 +57,11 @@ holds, an evidence folder (FOLDER-HOLDS-EVIDENCE-P), whose programs could
 write there."
   (let ((real (real-folder root)))
     (and real
-         (not (folder-holds-evidence-p real))
          (or (member real (state-list-entries *lsp-trusted*) :test #'equal)
              (some (lambda (trusted) (tuatara.io:path-within-p real trusted))
-                   (trusted-setting-folders))))))
+                   (trusted-setting-folders)))
+         ;; asked only of a project trusted, and told from the setting, not by reading the project
+         (not (folder-holds-evidence-p real)))))
 
 (defun buffer-in-trusted-project-p (buffer)
   "True when BUFFER visits a file of a project you trust (PROJECT-TRUSTED-P):
