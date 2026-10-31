@@ -53,12 +53,6 @@ as text, how it went, and what it said on its error output."
                                         :job job))
       (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second))))))
 
-(defun gone-within (mark seconds)
-  "True once no process has MARK in its command line, looked for over SECONDS."
-  (loop repeat (ceiling seconds 0.02)
-        thereis (zerop (processes-running mark))
-        do (sleep 0.02)))
-
 (define-test (sandbox program-refusing-to-end-killed)
   ;; a program that will not end when asked is killed, with what it started,
   ;; once its time to end is up
@@ -244,6 +238,114 @@ grep -c : /proc/net/dev; ls /proc | grep -c '^[0-9]'")
     (declare (ignore output))
     (is eq :failed outcome)
     (true (search "no-such-decoder" said))))
+
+(defun gone-within (mark seconds)
+  "True once no process has MARK in its command line, looked for over SECONDS."
+  (loop repeat (ceiling seconds 0.02)
+        thereis (zerop (processes-running mark))
+        do (sleep 0.02)))
+
+(defun kill-marked (mark)
+  "Kill (SIGKILL) every process with MARK in its command line."
+  (dolist (directory (uiop:subdirectories #p"/proc/"))
+    (let* ((name (car (last (pathname-directory directory))))
+           (line (and (every #'digit-char-p name)
+                      (ignore-errors (alexandria:read-file-into-string (merge-pathnames "cmdline" directory)
+                                                                       :external-format :latin-1)))))
+      (when (and line (search mark line))
+        (ignore-errors (sb-posix:kill (parse-integer name) sb-unix:sigkill))))))
+
+(defun call-with-sandbox-held (mark function &key environment)
+  "Start bwrap as the editor starts a sandbox, on sleep with MARK, held just
+before it lets the sandbox's first process go on (its --info-fd a full pipe),
+that process made and waiting; call FUNCTION with bwrap's process. Every
+process with MARK is killed after, whatever FUNCTION did."
+  (multiple-value-bind (in out) (sb-posix:pipe)
+    (unwind-protect
+         (progn
+           ;; F_SETPIPE_SZ: one page, filled, so that bwrap's first write waits
+           (let ((size (tuatara.io::fcntl-int out 1031 4096)))
+             (tuatara.io::write-octets out (make-array size :element-type '(unsigned-byte 8)) :path "a pipe"))
+           (let ((process (sb-ext:run-program
+                           (nth-value 2 (tuatara.io:sandbox-status))
+                           (append (list "--info-fd" (princ-to-string out))
+                                   (tuatara.io::sandbox-arguments (tuatara.io:sandbox-find-program "sleep") (list mark) nil nil
+                                                                  :scratch nil))
+                           :search nil :wait nil :input nil :output nil :error nil :preserve-fds (list out)
+                           :environment environment)))
+             (true (loop repeat 200
+                         thereis (tuatara.io:session-leader process)
+                         do (sleep 0.01))
+                   "bwrap made the sandbox's first process")
+             (sleep 0.05)
+             (funcall function process)))
+      (kill-marked mark)
+      (sb-posix:close in)
+      (sb-posix:close out))))
+
+(define-test (sandbox ended-while-it-starts)
+  ;; a helper ended while bwrap still makes its sandbox leaves nothing behind:
+  ;; not the sandbox's first process, made and waiting for a go-ahead that
+  ;; would never come, which no signal but SIGKILL ends
+  (let ((mark (format nil "31.~d" (+ 100000 (random 900000)))))
+    (call-with-sandbox-held
+     mark
+     (lambda (process)
+       (multiple-value-bind (fd other) (sb-posix:pipe)
+         (sb-posix:close other)
+         (tuatara.syntax::stop-helper (tuatara.syntax::%make-helper process fd '() :own)))
+       (true (gone-within mark 2))))))
+
+(define-test (sandbox left-behind-ended)
+  ;; a sandbox's first process left behind by an editor killed while bwrap
+  ;; made it is ended when the sandbox is next tried; the editor's own
+  ;; sandboxes are not
+  (let ((mark (format nil "31.~d" (+ 100000 (random 900000))))
+        (running (format nil "31.~d" (+ 100000 (random 900000))))
+        (cancel (list nil)))
+    (sb-thread:make-thread (lambda () (tuatara.io:sandbox-run "sleep" (list running) :cancel cancel)))
+    (call-with-sandbox-held
+     mark
+     (lambda (process)
+       (sb-ext:process-kill process sb-unix:sigkill)
+       (sb-ext:process-wait process)
+       (true (loop repeat 50 thereis (= 1 (processes-running mark)) do (sleep 0.02))
+             "its first process left behind")
+       (true (plusp (processes-running running)))
+       (tuatara.io:sandbox-status :again t)
+       (true (gone-within mark 2))
+       (true (plusp (processes-running running)) "the editor's own running sandbox kept"))
+     :environment (list (tuatara.io::sandbox-mark)))
+    (setf (car cancel) t)
+    (true (gone-within running 3))))
+
+(define-test (sandbox ended-with-their-thread)
+  ;; the sandboxes a thread started are ended before it ends, and every one
+  ;; as the editor does when it ends
+  (let ((mark (format nil "31.~d" (+ 100000 (random 900000)))))
+    (flet ((start ()
+             (multiple-value-bind (in out) (sb-posix:pipe)
+               (sb-posix:close out)
+               (let ((stream (sb-sys:make-fd-stream in :input t :auto-close nil)))
+                 (prog1 (tuatara.io:sandbox-start (tuatara.io:sandbox-find-program "sleep") (list mark) stream)
+                   (sb-posix:close in))))))
+      (let* ((process nil)
+             (thread (sb-thread:make-thread
+                      (lambda ()
+                        (setf process (start))
+                        (unwind-protect (sleep 30)
+                          (tuatara.io::end-sandboxes :thread sb-thread:*current-thread*))))))
+        (true (loop repeat 200 thereis (= 3 (processes-running mark)) do (sleep 0.01)))
+        (true (find process tuatara.io::**sandboxes** :key #'car))
+        (sb-thread:terminate-thread thread)
+        (sb-thread:join-thread thread :default nil)
+        (true (gone-within mark 2))
+        (false (find process tuatara.io::**sandboxes** :key #'car)))
+      (let ((process (start)))
+        (true (loop repeat 200 thereis (= 3 (processes-running mark)) do (sleep 0.01)))
+        (tuatara.io::end-sandboxes)
+        (true (gone-within mark 2))
+        (false (sb-ext:process-alive-p process))))))
 
 (define-test (sandbox outcome-said)
   ;; how a run ended badly, said one way wherever a program is run shut in

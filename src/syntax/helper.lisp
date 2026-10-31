@@ -686,7 +686,14 @@ helpers' lives with the editor's; under **STARTER-LOCK**.")
   "What the starting thread does: run each function handed to it, keeping what
 it returns, or the condition that stopped it, by the work's token, unless
 that work was given up on; once itself given up on, nothing more, waiting
-to be ended with the rest."
+to be ended with the rest. The sandboxes it started are ended before it
+ends: a sandbox ends with the thread that started it, and ended so it may
+leave a process behind (TUATARA.IO:END-SANDBOXES)."
+  (unwind-protect (starter-work-loop)
+    (tuatara.io:end-sandboxes :thread sb-thread:*current-thread*)))
+
+(defun starter-work-loop ()
+  "The loop of STARTER-LOOP: each function handed to the starting thread run in turn."
   (loop
     (let ((work (sb-thread:with-mutex (**starter-lock**)
                   (loop until (and **starter-work** (not (member sb-thread:*current-thread* **retired**)))
@@ -697,9 +704,7 @@ to be ended with the rest."
           (if (eq (car (car work)) :abandoned)
               ;; given up on: a program it started meanwhile is ended, not left behind
               (when (sb-ext:process-p (first result))
-                (ignore-errors (sb-ext:process-kill (first result) sb-unix:sigkill))
-                (ignore-errors (sb-ext:process-wait (first result)))
-                (ignore-errors (sb-ext:process-close (first result))))
+                (tuatara.io:end-sandbox (first result)))
               (setf (gethash (car work) **starter-done**) result))
           (sb-thread:condition-broadcast **starter-wake**))))))
 
@@ -941,15 +946,8 @@ helper wanted in its place is started afresh."
               **kept-helpers** (remove helper **kept-helpers** :key #'cdr)))
       (let ((process (helper-process helper)))
         (when process
-          (when (sb-ext:process-alive-p process)
-            (ignore-errors (sb-ext:process-kill process sb-unix:sigkill)))
           ;; its end waited for here, or, on a thread that must not wait, in another
-          (flet ((reap ()
-                   (ignore-errors (sb-ext:process-wait process))
-                   (ignore-errors (sb-ext:process-close process))))
-            (if wait
-                (reap)
-                (sb-thread:make-thread #'reap :name "syntax helper ending")))))
+          (tuatara.io:end-sandbox process :wait wait)))
       (flet ((shut (fd)
                (sb-alien:alien-funcall (sb-alien:extern-alien "shutdown" (function sb-alien:int sb-alien:int sb-alien:int))
                                        fd 2)))
