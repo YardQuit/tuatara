@@ -266,6 +266,7 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
           (is = #o400 (logand #o777 (tuatara.io:stamp-mode (tuatara.io:path-stamp logged)))))
         ;; a copy whose sum differs is an error naming it
         (fail (tuatara.defaults::copy-file-checked a (concatenate 'string work "again.txt") :sum "0000") 'error)
+        (false (probe-file (concatenate 'string work "again.txt")) "an untrue copy is taken away")
         ;; never into an evidence folder
         (true (tuatara.defaults::evidence-refusal "copy into" evidence))
         (true (refused (tuatara.defaults::copy-file-checked a (concatenate 'string evidence "sub/a.txt"))))

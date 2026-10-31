@@ -212,25 +212,29 @@ file, as TUATARA.IO:COPY-REGULAR-FILE copies (never over anything there,
 never in a place nothing may be written in, its mode and times kept), then
 check the copy's SHA-256 against SUM, the original's, summed from SOURCE
 first when not given. Returns the copy's sum and, as a second value, the
-original's; an error naming TARGET when the two differ, or SOURCE when it
-cannot be summed. Stopped when CANCEL's car turns true: what was copied
-taken away, a job's work ended there (TUATARA.RUNTIME:JOB-CHECK-STOP),
-else NIL returned."
-  (flet ((stopped ()
-           (tuatara.runtime:job-check-stop)
-           (return-from copy-file-checked nil)))
-    (let ((original (or sum (file-sha256 source :cancel cancel))))
-      (unless original
-        (when (car cancel) (stopped))
-        (error "~a could not be summed: nothing copied" source))
-      (unless (tuatara.io:copy-regular-file source target :cancel cancel)
-        (ignore-errors (tuatara.io:remove-file target))
-        (stopped))
-      (let ((copy (file-sha256 target :cancel cancel)))
-        (unless (equal original copy)
+original's; an error naming TARGET when the two differ (the copy taken
+away), or SOURCE when it cannot be summed. Stopped when CANCEL's car turns
+true: what was copied taken away, a job's work ended there
+\(TUATARA.RUNTIME:JOB-CHECK-STOP), else NIL returned. Both are summed in one
+piece of memory, the file's size or *HASH-PIECE* octets when that is less."
+  (let* ((size (let ((stamp (ignore-errors (tuatara.io:path-stamp source)))) (if stamp (tuatara.io:stamp-size stamp) *hash-piece*)))
+         (buffer (make-array (max 4096 (min *hash-piece* size)) :element-type '(unsigned-byte 8))))
+    (flet ((stopped ()
+             (tuatara.runtime:job-check-stop)
+             (return-from copy-file-checked nil)))
+      (let ((original (or sum (file-sha256 source :cancel cancel :buffer buffer))))
+        (unless original
           (when (car cancel) (stopped))
-          (error "the copy at ~a does not have its original's SHA-256" target))
-        (values copy original)))))
+          (error "~a could not be summed: nothing copied" source))
+        (unless (tuatara.io:copy-regular-file source target :cancel cancel)
+          (ignore-errors (tuatara.io:remove-file target))
+          (stopped))
+        (let ((copy (file-sha256 target :cancel cancel :buffer buffer)))
+          (unless (equal original copy)
+            (ignore-errors (tuatara.io:remove-file target))
+            (when (car cancel) (stopped))
+            (error "the copy at ~a does not have its original's SHA-256: taken away" target))
+          (values copy original))))))
 
 (defun octets-sha256 (octets)
   "The SHA-256 sum, in hex, of OCTETS, summed as \\[sha256-sum] sums."
