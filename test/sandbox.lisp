@@ -36,10 +36,11 @@ as text, how it went, and what it said on its error output."
     (is string= "hi" (tuatara.io:call-with-program (list printf "hi") (lambda (p) (read-line (sb-ext:process-output p))) :output :stream))
     ;; a program still running when FUNCTION returns, or signals, is ended, not left behind
     (let ((process nil) (start (get-internal-real-time)))
-      (tuatara.io:call-with-program (list sleep "30") (lambda (p) (setf process p)))
-      (false (sb-ext:process-alive-p process))
-      (ignore-errors (tuatara.io:call-with-program (list sleep "30") (lambda (p) (setf process p) (error "gone wrong"))))
-      (false (sb-ext:process-alive-p process))
+      (flet ((ended (process) (loop repeat 200 never (sb-ext:process-alive-p process) do (sleep 0.01))))
+        (tuatara.io:call-with-program (list sleep "30") (lambda (p) (setf process p)))
+        (true (ended process))
+        (ignore-errors (tuatara.io:call-with-program (list sleep "30") (lambda (p) (setf process p) (error "gone wrong"))))
+        (true (ended process)))
       (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second))))
     ;; the program of a job: stopping the job ends it
     (let ((job (tuatara.defaults::make-vc-job nil 0)) (start (get-internal-real-time)))
@@ -55,13 +56,31 @@ as text, how it went, and what it said on its error output."
 
 (define-test (sandbox program-refusing-to-end-killed)
   ;; a program that will not end when asked is killed, with what it started,
-  ;; once its time to end is up
+  ;; once its time to end is up; the one done with it does not wait for that
   (let ((mark (format nil "31.~d" (+ 100000 (random 900000))))
         (start (get-internal-real-time)))
     (tuatara.io:call-with-program (list (tuatara.io:find-program "sh") "-c" (format nil "trap '' TERM; sleep ~a & wait" mark))
                                   (lambda (process) (declare (ignore process)) (sleep 0.2)))
-    (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second)))
-    (true (gone-within mark 2))))
+    (true (< (- (get-internal-real-time) start) (* 1/2 internal-time-units-per-second)))
+    (true (plusp (processes-running mark)) "still there within its time to end")
+    (true (gone-within mark 4))))
+
+(define-test (sandbox program-ended-with-what-it-started)
+  ;; a program no longer wanted that ends as soon as it is asked is ended with
+  ;; what it started, its children not left behind; so is one run in a
+  ;; session of its own (as a compile is), with all of that session
+  (dolist (in-session '(nil t))
+    (let* ((mark (format nil "31.~d" (+ 100000 (random 900000))))
+           (command (list (tuatara.io:find-program "sh") "-c" (format nil "sleep ~a & wait" mark)))
+           (start (get-internal-real-time)))
+      (tuatara.io:call-with-program (if in-session (tuatara.io:session-command command) command)
+                                    (lambda (process)
+                                      (declare (ignore process))
+                                      (true (loop repeat 200 thereis (>= (processes-running mark) (if in-session 3 2))
+                                                  do (sleep 0.01))
+                                            "the program and what it started running")))
+      (true (< (- (get-internal-real-time) start) (* 3 internal-time-units-per-second)))
+      (true (gone-within mark 3) "~:[in its group~;in a session of its own~]" in-session))))
 
 (define-test (sandbox found)
   (multiple-value-bind (status detail path) (tuatara.io:sandbox-status :again t)

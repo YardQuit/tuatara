@@ -144,7 +144,43 @@ stopped and its output not taken, so that it cannot fill memory.")
 
 (defparameter *program-end-grace* 2
   "The seconds a program no longer wanted has to end once asked to (SIGTERM),
-before it is killed (CALL-WITH-PROGRAM).")
+before it is killed (END-UNWANTED-PROGRAM).")
+
+(defun end-unwanted-program (process)
+  "End PROCESS, a program started and no longer wanted, with every program in
+its process group and in the sessions its children lead (as the program
+SESSION-COMMAND starts leads one): asked to end (SIGTERM), then those not
+ended within *PROGRAM-END-GRACE* seconds killed (SIGKILL), PROCESS waited for
+and closed. Returns at once: the waiting is done on a thread of its own,
+which kills what is left if it is itself ended first."
+  (let* ((groups (list (sb-ext:process-pid process)))
+         (buffer (make-array 1024 :element-type '(unsigned-byte 8)))
+         (sessions (loop for child in (process-children process)
+                         when (eql child (nth-value 1 (process-group-and-session child buffer)))
+                           collect child)))
+    ;; its group's number is its own while it is not reaped
+    (ignore-errors (sb-ext:process-kill process sb-unix:sigterm :process-group))
+    (tuatara.runtime:make-guarded-thread
+     (lambda ()
+       (let ((buffer (make-array 1024 :element-type '(unsigned-byte 8))))
+         (flet ((signal-all (signal)
+                  (dolist (pid (processes-in groups sessions buffer))
+                    (signal-process-if pid (lambda ()
+                                             (multiple-value-bind (group session) (process-group-and-session pid buffer)
+                                               (and group (or (member group groups) (member session sessions)))))
+                                       signal))))
+           (unwind-protect
+                (progn
+                  (when sessions (signal-all sb-unix:sigterm))
+                  (loop with deadline = (tuatara.runtime:deadline-in *program-end-grace*)
+                        until (or (tuatara.runtime:deadline-passed-p deadline)
+                                  (and (not (sb-ext:process-alive-p process))
+                                       (null (processes-in groups sessions buffer))))
+                        do (sleep 0.05)))
+             (signal-all sb-unix:sigkill)
+             (ignore-errors (sb-ext:process-wait process))
+             (ignore-errors (sb-ext:process-close process))))))
+     :name "program ending")))
 
 (defun call-with-program (command function &key job input output error directory (environment nil environment-p)
                                                preserve-fds (external-format '(:utf-8 :replacement #\?)))
@@ -157,9 +193,8 @@ runs, ENVIRONMENT, when given, all it sees of one; PRESERVE-FDS, descriptors
 it is given besides (pipes of its own, named in its arguments). With JOB, it
 is the program the job runs (TUATARA.RUNTIME:JOB-PROGRAM-STARTED): stopping
 the job ends it. However FUNCTION ends, the program is ended when it still
-runs, asked to (SIGTERM) and, not ended within *PROGRAM-END-GRACE* seconds,
-killed with what it started (SIGKILL), waited for and closed, so that none is
-left behind."
+runs, with what it started (END-UNWANTED-PROGRAM), without waiting for it,
+so that none is left behind; one ended already is waited for and closed."
   (let ((process (apply #'sb-ext:run-program (first command) (rest command)
                         :wait nil :input input :output output :error error :external-format external-format
                         (append (and directory (list :directory directory))
@@ -167,15 +202,10 @@ left behind."
                                 (and preserve-fds (list :preserve-fds preserve-fds))))))
     (when job (tuatara.runtime:job-program-started job process))
     (unwind-protect (funcall function process)
-      (when (sb-ext:process-alive-p process)
-        (ignore-errors (sb-ext:process-kill process sb-unix:sigterm))
-        (loop repeat (ceiling *program-end-grace* 0.01)
-              while (sb-ext:process-alive-p process)
-              do (sleep 0.01))
-        (when (process-unreaped-p process)
-          (ignore-errors (sb-ext:process-kill process sb-unix:sigkill :process-group))))
-      (ignore-errors (sb-ext:process-wait process))
-      (ignore-errors (sb-ext:process-close process)))))
+      (if (sb-ext:process-alive-p process)
+          (end-unwanted-program process)
+          (progn (ignore-errors (sb-ext:process-wait process))
+                 (ignore-errors (sb-ext:process-close process)))))))
 
 ;;; Programs in a session of their own
 
@@ -253,12 +283,39 @@ there is no such process."
   "The number of the parent of the process numbered PID; NIL when there is no such process."
   (ignore-errors (parse-integer (second (process-stat pid)))))
 
+(defun process-group-and-session (pid buffer)
+  "The process group and the session of the process numbered PID, as two
+values, read from /proc into BUFFER, octets enough for the line it reads
+\(1024); NIL when there is no such process."
+  (let ((fd (ignore-errors (sb-posix:open (format nil "/proc/~d/stat" pid) sb-posix:o-rdonly))))
+    (when fd
+      (let* ((n (unwind-protect (or (ignore-errors (read-fd-into fd buffer)) 0)
+                  (sb-posix:close fd)))
+             ;; pid (name) state ppid pgrp session ...: the fields after the name's closing parenthesis
+             (name-end (position 41 buffer :end n :from-end t)))
+        (when name-end
+          (flet ((number-at (start)
+                   (loop with value = 0
+                         for at from start below n
+                         for octet = (aref buffer at)
+                         while (<= 48 octet 57)
+                         do (setf value (+ (* value 10) (- octet 48)))
+                         finally (return (values value at)))))
+            (let* ((group-at (1+ (nth-value 1 (number-at (+ name-end 4)))))
+                   (session-at (1+ (nth-value 1 (number-at group-at)))))
+              (values (number-at group-at) (number-at session-at)))))))))
+
+(defun processes-in (groups sessions &optional (buffer (make-array 1024 :element-type '(unsigned-byte 8))))
+  "The numbers of the processes in one of the process groups GROUPS or one of
+the SESSIONS, from /proc; BUFFER is read into (PROCESS-GROUP-AND-SESSION)."
+  (loop for pid in (process-numbers)
+        when (multiple-value-bind (group session) (process-group-and-session pid buffer)
+               (and group (or (member group groups) (member session sessions))))
+          collect pid))
+
 (defun session-processes (session)
   "The numbers of the processes in the session numbered SESSION, from /proc."
-  (loop for pid in (process-numbers)
-        for fields = (process-stat pid)
-        when (and (> (length fields) 3) (eql session (ignore-errors (parse-integer (fourth fields)))))
-          collect pid))
+  (processes-in '() (list session)))
 
 (defun signal-process-if (pid test signal)
   "Send SIGNAL to the process numbered PID when TEST, a function of no
