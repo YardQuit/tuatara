@@ -129,7 +129,7 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
       # with syntax/patches/tree-sitter.patch applied, as a grammar is
       pristine "$name"
       checked "$name" ""
-      [ -f "$root/syntax/patches/tree-sitter.patch" ] && git -C "$dir" apply "$root/syntax/patches/tree-sitter.patch"
+      [ -f "$root/syntax/patches/tree-sitter.patch" ] && grammar_git -C "$dir" apply "$root/syntax/patches/tree-sitter.patch"
       # without its assertions, as the grammars are: one that fails would end
       # the program, and the patch makes the parser check what a grammar gives
       # it instead (a parse that meets a wrong value fails); what names a
@@ -151,7 +151,7 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
         [ -f "$patch" ] && pristine "$name"
         checked "$name" "$subpath"
         if [ -f "$patch" ]; then
-          git -C "$dir" apply "$patch"
+          grammar_git -C "$dir" apply "$patch"
           # a changed grammar.js needs its parser generated again, a changed scanner not
           if grep -q "^diff --git a/grammar.js" "$patch"; then
             # what its grammar.js requires, checked as it is

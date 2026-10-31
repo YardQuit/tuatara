@@ -430,3 +430,24 @@ git checkout -q -; git branch -q -D gone" repo)))
              (when mode
                (true (tuatara.modes:find-mode mode) "~(~a~) stays" mode)
                (false (tuatara.defaults::mode-language (make-instance mode)))))))
+
+(define-test (tools grammar-js-cannot-reach-git)
+  ;; the program generating a parser runs a grammar's grammar.js: whatever it
+  ;; writes to a .git (a file monitor, a hook git would run later) never
+  ;; reaches the checkout's, and only the parser comes back
+  (with-test-directory (directory)
+    (let* ((repo (uiop:native-namestring (merge-pathnames "g/" directory)))
+           (cli (uiop:native-namestring (merge-pathnames "fake-tree-sitter" directory))))
+      (write-test-file directory "fake-tree-sitter"
+                       (format nil "#!/bin/bash~%mkdir -p .git src~%printf '[core]\\n\\tfsmonitor = touch /tmp/never\\n' >> .git/config~%echo 'int parser;' > src/parser.c~%"))
+      (sb-posix:chmod cli #o755)
+      (let ((out (grammar-build-output
+                  (format nil "set -e
+git init -q '~a'; cd '~:*~a'; echo 'module.exports = {}' > grammar.js; mkdir -p src
+before=$(sha256sum .git/config)
+generate_parser '~:*~a' '~a'
+[ \"$before\" = \"$(sha256sum .git/config)\" ] && echo git-untouched
+grep -q 'int parser' src/parser.c && echo parser-back" repo cli)
+                  directory)))
+        (true (search "git-untouched" out) "~a" out)
+        (true (search "parser-back" out) "~a" out)))))

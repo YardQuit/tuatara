@@ -40,29 +40,47 @@ compile_grammar() {
   fi
 }
 
+# grammar_git ARGUMENTS...: git run on a grammar's checkout, which never
+# runs a program the checkout names for itself (a file monitor, hooks), as
+# its .git could name one
+grammar_git() {
+  git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.sshCommand=false "$@"
+}
+
 # generate_parser DIR CLI: generate the parser of the grammar in the directory
 # DIR again from its grammar.js with the tree-sitter program CLI, into
 # DIR/src/parser.c; when that fails, say why and end the script, so that a
 # grammar is never compiled from the parser it had before. grammar.js is a
-# program of the grammar's: it runs shut in (bwrap), with no network, the
-# system's programs to read and nothing but DIR to write; without bwrap,
-# nothing is generated.
+# program of the grammar's: it runs shut in (bwrap), with no network, no
+# environment, the system's programs to read, and a copy of DIR without any
+# .git to write, of which only the parser and what goes with it are taken
+# back; without bwrap, nothing is generated.
 generate_parser() {
-  local dir="$1" cli="$2"
+  local dir="$1" cli="$2" copy="$1.generate" file
   if ! command -v bwrap >/dev/null; then
     echo "No bwrap (bubblewrap) to run the grammar.js of $dir shut in: nothing is compiled." >&2
     exit 1
   fi
-  rm -f "$dir/src/parser.c"
-  if ! (cd "$dir" && bwrap --unshare-all --die-with-parent --new-session \
+  rm -rf "$copy"; mkdir -p "$copy"
+  (cd "$dir" && tar --exclude=.git --exclude='node_modules/*/.git' -cf - .) | tar -x -C "$copy"
+  rm -f "$copy/src/parser.c"
+  if ! (cd "$copy" && bwrap --unshare-all --die-with-parent --new-session --clearenv \
           --ro-bind /usr /usr --symlink usr/lib64 /lib64 --symlink usr/lib /lib --symlink usr/bin /bin \
-          --ro-bind "$cli" "$cli" --bind "$dir" "$dir" --chdir "$dir" \
-          --tmpfs /tmp --proc /proc --dev /dev --setenv HOME /tmp \
-          -- "$cli" generate --js-runtime native) > "$dir.generate.log" 2>&1 || [ ! -f "$dir/src/parser.c" ]; then
+          --ro-bind "$cli" "$cli" --bind "$copy" "$copy" --chdir "$copy" \
+          --tmpfs /tmp --proc /proc --dev /dev --setenv HOME /tmp --setenv PATH /usr/bin \
+          -- "$cli" generate --js-runtime native) > "$dir.generate.log" 2>&1 || [ ! -f "$copy/src/parser.c" ]; then
     cat "$dir.generate.log" >&2
+    rm -rf "$copy"
     echo "The parser of $dir could not be generated from its grammar.js: nothing is compiled." >&2
     exit 1
   fi
+  for file in parser.c grammar.json node-types.json tree_sitter/parser.h tree_sitter/alloc.h tree_sitter/array.h; do
+    if [ -f "$copy/src/$file" ] && [ ! -L "$copy/src/$file" ]; then
+      mkdir -p "$(dirname "$dir/src/$file")"
+      cp -- "$copy/src/$file" "$dir/src/$file"
+    fi
+  done
+  rm -rf "$copy"
   grep -v "single element" "$dir.generate.log" >&2 || true
 }
 
@@ -105,7 +123,7 @@ grammar_inputs_hash() {
 # commit_of DIR OBJECT: the commit OBJECT of the repository in DIR is or
 # points to (a tag names one through a tag object), or nothing when the
 # repository has no such object
-commit_of() { git -C "$1" rev-parse -q --verify "$2^{commit}" 2>/dev/null || true; }
+commit_of() { grammar_git -C "$1" rev-parse -q --verify "$2^{commit}" 2>/dev/null || true; }
 
 # fetch_grammar DIR URL COMMIT: DIR a checkout of the repository at URL at
 # COMMIT, fetched afresh unless it is one already (its HEAD that commit,
@@ -116,13 +134,13 @@ fetch_grammar() {
   local dir="$1" url="$2" commit="$3" head verbatim="* -text -ident -filter -working-tree-encoding"
   head="$(commit_of "$dir" HEAD)"
   if [ -z "$head" ] || [ "$head" != "$(commit_of "$dir" "$commit")" ] ||
-     [ "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" != "$dir" ] ||
+     [ "$(grammar_git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" != "$dir" ] ||
      [ "$(cat "$dir/.git/info/attributes" 2>/dev/null)" != "$verbatim" ]; then
     rm -rf "$dir"; mkdir -p "$dir"
-    git -C "$dir" init -q
+    grammar_git -C "$dir" init -q
     mkdir -p "$dir/.git/info"; echo "$verbatim" > "$dir/.git/info/attributes"
-    git -C "$dir" fetch -q --depth 1 "$url" "$commit"
-    git -C "$dir" checkout -q FETCH_HEAD
+    grammar_git -C "$dir" fetch -q --depth 1 "$url" "$commit"
+    grammar_git -C "$dir" checkout -q FETCH_HEAD
   fi
 }
 
@@ -130,7 +148,7 @@ fetch_grammar() {
 # change and file of its own gone but node_modules/ (what its grammar.js
 # requires, fetched there)
 pristine_grammar() {
-  git -C "$1" checkout -q -- . && git -C "$1" clean -q -fdx -e node_modules
+  grammar_git -C "$1" checkout -q -- . && grammar_git -C "$1" clean -q -fdx -e node_modules
 }
 
 # grammar_checked NAME DIR RECORDED HASH: true when the checkout DIR of
@@ -139,7 +157,7 @@ pristine_grammar() {
 # the file RECORDED has for it; else says why, false
 grammar_checked() {
   local name="$1" dir="$2" recorded="$3" found="$4"
-  if [ -n "$(git -C "$dir" status --porcelain --ignored --untracked-files=all 2>/dev/null | grep -v "^.. node_modules/" || true)" ]; then
+  if [ -n "$(grammar_git -C "$dir" status --porcelain --ignored --untracked-files=all 2>/dev/null | grep -v "^.. node_modules/" || true)" ]; then
     echo "$dir has been changed, or has files of its own: delete it to fetch it again. Nothing is compiled." >&2
     return 1
   fi

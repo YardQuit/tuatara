@@ -151,6 +151,7 @@ if [ "$named" = 1 ]; then
 fi
 rm -rf "$work"
 
+. tools/grammar-build.sh
 # the rest of the sources, each grammar exactly at its pinned commit (the
 # patches of syntax/patches/ go with Tuatara's sources, applied as the build
 # does); a grammar a grammar requires lives in its node_modules/
@@ -159,12 +160,12 @@ git -C build/terminal-sources archive --prefix=tuatara-sources/ghostty/ HEAD | t
 while IFS=$'\t' read -r name url commit licence subpath; do
   [ "$name" = tree-sitter-cli ] && continue
   mkdir -p "$top/grammars/$name"
-  if [ "$(git -C "build/grammar-sources/$name" rev-parse -q --verify "HEAD^{commit}")" != \
-       "$(git -C "build/grammar-sources/$name" rev-parse -q --verify "$commit^{commit}")" ]; then
+  if [ "$(grammar_git -C "build/grammar-sources/$name" rev-parse -q --verify "HEAD^{commit}")" != \
+       "$(grammar_git -C "build/grammar-sources/$name" rev-parse -q --verify "$commit^{commit}")" ]; then
     echo "tools/release.sh: build/grammar-sources/$name is not at the commit syntax/grammars.tsv pins: run tools/grammars.sh" >&2
     exit 1
   fi
-  git -C "build/grammar-sources/$name" archive HEAD | tar -x -C "$top/grammars/$name"
+  grammar_git -C "build/grammar-sources/$name" archive HEAD | tar -x -C "$top/grammars/$name"
 done < <(grep -v '^#' syntax/grammars.tsv | grep -v '^[[:space:]]*$')
 cat > "$top/README" <<EOF
 The sources of Tuatara $(sed -n 's/^ *:version "\(.*\)"$/\1/p' tuatara.asd) ($(git rev-parse --short=7 HEAD)) and of what its
