@@ -1130,6 +1130,16 @@ coloured.")
                  (true (rich-ranges grammar text (tuatara.defaults::language-rules language))
                        "~(~a~)'s sample is coloured" name))))))
 
+(define-test (languages luau-documentation-comments)
+  ;; a comment of three dashes, or of two before an @, documents; one of two
+  ;; dashes alone is a comment
+  (let* ((text (format nil "--- doc~%-- @param x~%--@return y~%-- plain~%local a = 1~%"))
+         (ranges (ranges-text text (rich-ranges "luau" text (tuatara.defaults::language-rules
+                                                              (tuatara.defaults::find-language 'luau))))))
+    (dolist (comment '("--- doc" "-- @param x" "--@return y"))
+      (is eq :comment.documentation (second (assoc comment ranges :test #'string=)) "~a" comment))
+    (is eq :comment (second (assoc "-- plain" ranges :test #'string=)))))
+
 (define-test (languages files-find-their-modes)
   (loop for (file mode first-line) in '(("/src/app.py" python-mode) ("/src/app.js" js-mode) ("/src/app.tsx" tsx-mode)
                                         ("/src/app.ts" typescript-mode) ("/src/x.json" json-mode)

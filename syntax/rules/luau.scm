@@ -3,7 +3,8 @@
 ; at commit a8914d6c1fc5, under the MIT License (its text goes with the
 ; grammar), with the names of its captures changed to Tuatara's where they
 ; differ (@keyword.conditional is @keyword.control.conditional, @module
-; @namespace).
+; @namespace), and its Lua pattern with %s written as the regular
+; expression it stands for.
 
 ; Preproc
 (hash_bang_line) @keyword.directive
@@ -295,7 +296,7 @@
   (#lua-match? @comment.documentation "^[-][-][-]"))
 
 ((comment) @comment.documentation
-  (#lua-match? @comment.documentation "^[-][-](%s?)@"))
+  (#match? @comment.documentation "^[-][-](\\s?)@"))
 
 ; string.match("123", "%d+")
 (function_call

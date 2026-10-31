@@ -48,7 +48,7 @@ diff --git a/src/scanner.c b/src/scanner.c
  // When you see a single or double quote that starts a string, call this
  // function to scan through until the end of the quoted string.
  static bool scan_javascript_quoted_string(TSLexer *lexer, int32_t delimiter) {
-@@ -280,33 +240,79 @@
+@@ -280,33 +240,81 @@
  }
  
  // When you see a backtick in a JavaScript context, call this function to scan
@@ -56,9 +56,9 @@ diff --git a/src/scanner.c b/src/scanner.c
 +// through until the end of the template string. The template strings and the
 +// `${...}` inside one another are followed on a stack of their own, not by
 +// calls within calls, so that no depth of them ends the program: an entry is
-+// a template string (TEMPLATE) or the braces opened inside a `${` (their
-+// count).
-+#define TEMPLATE UINT16_MAX
++// a template string (TEMPLATE_STRING) or the braces opened inside a `${`
++// (their count, which goes no higher than the number below it).
++#define TEMPLATE_STRING UINT16_MAX
 +
  static bool scan_javascript_template_string(TSLexer *lexer) {
      if (lexer->lookahead != '`') {
@@ -84,11 +84,11 @@ diff --git a/src/scanner.c b/src/scanner.c
 -            default:
 -                advance(lexer);
 +    Array(uint16_t) stack = array_new();
-+    array_push(&stack, TEMPLATE);
++    array_push(&stack, TEMPLATE_STRING);
 +    bool ended = false;
 +    while (lexer->lookahead && !ended) {
 +        uint16_t *top = array_back(&stack);
-+        if (*top == TEMPLATE) {
++        if (*top == TEMPLATE_STRING) {
 +            switch (lexer->lookahead) {
 +                case '$':
 +                    advance(lexer);
@@ -114,7 +114,7 @@ diff --git a/src/scanner.c b/src/scanner.c
 +            switch (lexer->lookahead) {
 +                case '`':
 +                    advance(lexer);
-+                    array_push(&stack, TEMPLATE);
++                    array_push(&stack, TEMPLATE_STRING);
 +                    break;
 +                case '\\':
 +                    // Escape character. Advance twice.
@@ -126,7 +126,9 @@ diff --git a/src/scanner.c b/src/scanner.c
 +                    scan_javascript_quoted_string(lexer, lexer->lookahead);
 +                    break;
 +                case '{':
-+                    *top = (uint8_t)(*top + 1);
++                    if (*top < TEMPLATE_STRING - 1) {
++                        *top = *top + 1;
++                    }
 +                    advance(lexer);
 +                    break;
 +                case '}':
@@ -148,7 +150,7 @@ diff --git a/src/scanner.c b/src/scanner.c
  }
  
  static bool scan_raw_text(Scanner *scanner, TSLexer *lexer) {
-@@ -629,11 +635,17 @@
+@@ -629,11 +637,17 @@
          return scan_raw_text(scanner, lexer);
      }
  
