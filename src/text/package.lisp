@@ -27,7 +27,8 @@
    #:rope-next-boundary #:rope-previous-boundary #:string-cluster-end #:string-cluster-start #:cluster-joins-p #:regional-indicator-code-p #:rope-char-start #:rope-char-at #:rope-find-octet #:rope-find-octet-backward #:rope-find-any-octet #:rope-bracket-match #:rope-escaped-p #:rope-skip-octets #:*blank-octets*
    #:rope-line-downward #:rope-line-upward #:map-line-slices #:rope-count-chars #:*text-octets*
    #:tally #:tally-p #:make-tally #:tally-line-number #:tally-line-start #:tally-counted-lines
-   #:rope-count-newlines #:rope-nth-newline
+   #:rope-count-newlines #:rope-nth-newline #:rope-find-line-end #:rope-find-line-end-backward
+   #:line-end-octet-p #:octets-line-end-p #:line-text-ends-p #:octets-line-end-position #:octets-line-end-position-backward #:octets-line-ends
    #:rope-line-start #:rope-line-end #:rope-line-pieces #:blank-line-octet-p #:*blank-line-octets*
    #:rope-pieces #:rope-slice #:splice-rope
    ;; edits
@@ -44,6 +45,6 @@
    ;; invariants
    #:check-rope #:summarise #:continuation-byte-p
    ;; strict UTF-8
-   #:octets-decode #:octets-char-start-p #:octets-pending #:octets-string #:string-octets #:put-string-octets #:string-octet-length #:char-octet-length #:lenient-string #:raw-byte-code-p #:control-code-p #:crlf-octets-p #:line-text-end #:rope-line-text-end #:rope-crlf-p #:*openers* #:*closers* #:*opening-octets* #:*closing-octets* #:*bracket-octets* #:rope-invalid
+   #:octets-decode #:octets-char-start-p #:octets-pending #:octets-string #:string-octets #:put-string-octets #:string-octet-length #:char-octet-length #:lenient-string #:raw-byte-code-p #:control-code-p #:crlf-octets-p #:line-text-end #:rope-line-text-end #:rope-line-text-ends-p #:rope-line-start-p #:rope-crlf-p #:*openers* #:*closers* #:*opening-octets* #:*closing-octets* #:*bracket-octets* #:rope-invalid
    ;; octets and lines of plain strings
    #:octets-latin-1 #:word-char-p #:name-char-p #:charset-text #:octets-hex #:*hex-pairs* #:string-line-start #:string-line-end #:one-line #:natural-string-lessp))

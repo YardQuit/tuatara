@@ -245,7 +245,7 @@ short one.")
 (defun injection-cut (rope byte)
   "Where to cut a text in another language near BYTE of ROPE: the start of
 BYTE's line when it is near, else a character boundary."
-  (let ((newline (tuatara.text:rope-find-octet-backward rope 10 :start (max 0 (- byte 4096)) :end byte)))
+  (let ((newline (tuatara.text:rope-find-line-end-backward rope :start (max 0 (- byte 4096)) :end byte)))
     (if newline (1+ newline) (tuatara.text:rope-char-start rope byte))))
 
 (defparameter *locals-reach* (* 256 1024)

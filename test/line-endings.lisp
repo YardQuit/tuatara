@@ -1,10 +1,10 @@
-;;;; test/line-endings.lisp --- Files whose lines end with a carriage return and a newline.
+;;;; test/line-endings.lisp --- Lines ended by a carriage return and a newline, or by either alone.
 ;;;; Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
 
 (in-package #:tuatara.tests)
 
 (define-test line-endings
-  :description "A Windows file (lines ending CR LF) is shown and edited without a ^M on every line, and saved exactly as it was apart from the edits: RET makes CR LF there, and a CR LF is one step.")
+  :description "A Windows file (lines ending CR LF) is shown and edited without a ^M on every line, and saved exactly as it was apart from the edits: RET makes CR LF there, and a CR LF is one step. A carriage return no newline follows ends a line in every buffer: counted, found, shown, searched and sorted so, and RET makes one in a file whose lines end so.")
 
 (define-test (line-endings detection)
   (flet ((of (string) (tuatara.buffer:detect-line-ending (tuatara.text:string->rope string))))
@@ -27,10 +27,10 @@
 
 (define-test (line-endings showing-line-endings)
   (let ((rope (tuatara.text:string->rope (format nil "ab~c~%cd~c~%lone~cCR" #\Return #\Return #\Return))))
-    ;; shown as lines, the carriage returns before newlines unseen; a lone one still shows
-    (is equal '("ab" "cd" "lone^MCR")
+    ;; shown as lines, the carriage returns before newlines unseen; a lone one ends a line, unseen too
+    (is equal '("ab" "cd" "lone" "CR")
         (map 'list (lambda (row) (coerce (tuatara.display::row-string row) 'string))
-             (tuatara.display:layout rope 0 40 3 :crlf t)))
+             (tuatara.display:layout rope 0 40 4 :crlf t)))
     ;; in a buffer that ends lines with a newline alone, every carriage return shows
     (is string= "ab^M" (coerce (tuatara.display::row-string (aref (tuatara.display:layout rope 0 40 1) 0)) 'string))))
 
@@ -91,3 +91,96 @@
       (let ((pasted (after "V j y g e k k t p" (format nil "1~c~%2~c~%ab~c~%cd~c~%" #\Return #\Return #\Return #\Return))))
         (is = 4 (count #\Return pasted))
         (is = 2 (count #\2 pasted))))))
+
+;;; A carriage return no newline follows ends a line too
+
+(defun cr (text)
+  "TEXT, a format control, made with each | a carriage return and each ~% a newline."
+  (substitute #\Return #\| (format nil text)))
+
+(define-test (line-endings lone-returns-end-lines)
+  ;; a, b, c, d and an empty last line: ended by CR, CR LF, LF and CR
+  (let ((rope (tuatara.text:string->rope (cr "a|b|~%c~%d|"))))
+    (is = 4 (tuatara.text:rope-lines rope))
+    (is equal '(0 2 5 7 9) (loop for line from 0 to 4 collect (tuatara.text:line->byte rope line)))
+    (is equal '(0 0 1 1 1 2 2 3 3 4) (loop for byte from 0 to 9 collect (tuatara.text:byte->line rope byte)))
+    (is equal '(0 0 2 2 2 5 5 7 7 9) (loop for byte from 0 to 9 collect (tuatara.text:rope-line-start rope byte)))
+    (is equal '(1 1 4 4 4 6 6 8 8 9) (loop for byte from 0 to 9 collect (tuatara.text:rope-line-end rope byte)))
+    (is equal '(t nil t nil nil t nil t nil t) (loop for byte from 0 to 9 collect (tuatara.text:rope-line-start-p rope byte)))
+    (is = 3 (tuatara.text:rope-count-newlines rope 0 8))
+    ;; the carriage return before a newline ends no line of its own, counted to there or from there
+    (is = 1 (tuatara.text:rope-count-newlines rope 0 4))
+    (is = 2 (tuatara.text:rope-count-newlines rope 3 7))
+    (is = 3 (tuatara.text:rope-line-text-end rope 2 4 t))
+    (is = 8 (tuatara.text:rope-line-text-end rope 7 8 t)))
+  ;; a newline put after a carriage return joins them in one line end; a letter put between
+  ;; parts them into two
+  (flet ((lines-after (text start end insert)
+           (let ((new (tuatara.text:apply-edits (tuatara.text:string->rope text)
+                                                (vector (tuatara.text:make-edit start end (and insert (tuatara.text:string-octets insert)))))))
+             (true (tuatara.text:check-rope new))
+             (tuatara.text:rope-lines new))))
+    (is = 1 (lines-after (cr "x|y~%z") 2 3 nil))
+    (is = 2 (lines-after (cr "x|~%z") 2 2 "y"))
+    (is = 1 (lines-after (cr "x|z") 2 2 (string #\Newline)))
+    (is = 1 (lines-after (cr "xy~%z") 2 2 (string #\Return))))
+  ;; at the edges of leaves: a carriage return and its newline are never parted
+  (let* ((text (with-output-to-string (o)
+                 (dotimes (i 40) (write-string (make-string (- 4095 (mod i 3)) :initial-element #\a) o)
+                   (write-string (cr (if (evenp i) "|~%" "|")) o))))
+         (rope (tuatara.text:string->rope text)))
+    (true (tuatara.text:check-rope rope))
+    (is = (string-lines text) (tuatara.text:rope-lines rope))
+    (loop for at in '(4095 4096 8191 8192 12287)
+          do (let ((new (tuatara.text:rope-delete rope at (1+ at))))
+               (true (tuatara.text:check-rope new))
+               (is = (string-lines (tuatara.text:rope-string new)) (tuatara.text:rope-lines new)))))
+  ;; a file read in spans counted in parallel: a carriage return at the end of one, its
+  ;; newline at the start of the next, is one line end, counted before and after
+  (with-test-directory (dir)
+    (let* ((text (concatenate 'string (make-string 65535 :initial-element #\a) (cr "|~%b|c~%")
+                              (make-string 70000 :initial-element #\b) (cr "|d")))
+           (path (put-file (merge-pathnames "spans.txt" dir) text))
+           (rope (tuatara.text:open-file-rope (namestring path)))
+           (tally (tuatara.text:make-tally))
+           (counted (tuatara.text:index-rope rope :threads 2 :chunk 4096 :tally tally)))
+      (is = 2 (tuatara.text:rope-count-newlines rope 65530 65540))
+      (is = (string-lines text) (tuatara.text:rope-count-newlines rope 0 (length text)))
+      (true (tuatara.text:check-rope counted))
+      (is = (string-lines text) (tuatara.text:rope-lines counted))
+      (is = 65537 (tuatara.text:line->byte counted 1))
+      (is = 65539 (tuatara.text:tally-line-start tally rope 2))
+      (is = 2 (tuatara.text:tally-line-number tally rope 65540)))))
+
+(define-test (line-endings lone-return-files)
+  (with-test-directory (dir)
+    (let ((path (merge-pathnames "mac.txt" dir)))
+      (put-file path (cr "one|two|three|"))
+      (is eq :cr (tuatara.buffer:detect-line-ending (tuatara.text:string->rope (cr "one|two"))))
+      ;; shown as lines, the line's number in the mode line, CR there; RET makes a carriage return
+      (multiple-value-bind (f editor) (run-keys "C-n C-n C-e i RET Z C-g C-x C-s" :file path :width 100)
+        (true (tuatara.frontend.fake:fake-frame-showing f " CR "))
+        (true (tuatara.frontend.fake:fake-frame-showing f "L4"))
+        (false (tuatara.frontend.fake:fake-frame-showing f "^M"))
+        (is string= "two" (string-right-trim " " (tuatara.frontend.fake:fake-screen-line f 1)))
+        (is string= (cr "one|two|three|Z|") (file-text path))
+        (tuatara.buffer:kill-buffer (session-buffer editor))))
+    ;; a file of every kind of line end is saved as it was but for the edit
+    (let ((path (merge-pathnames "mixed.txt" dir)))
+      (put-file path (cr "a|~%b~%c|d|~%e"))
+      (multiple-value-bind (f editor) (run-keys "C-n C-n C-n C-e i ! C-g C-x C-s" :file path :width 100)
+        (declare (ignore f))
+        (is string= (cr "a|~%b~%c|d!|~%e") (file-text path))
+        (tuatara.buffer:kill-buffer (session-buffer editor))))))
+
+(define-test (line-endings lone-returns-searched-and-sorted)
+  ;; ^ and $ at every line end, . at none of them, the same in a buffer of each kind
+  (let ((rope (tuatara.text:string->rope (cr "ab|cd|~%ef~%gh"))))
+    (flet ((starts (pattern) (map 'list #'first (tuatara.syntax:regex-search-all rope pattern))))
+      (is equal '(0 3 7 10) (starts "^\\w"))
+      (is equal '(1 4 8 11) (starts "\\w$"))
+      (is equal '() (starts "b.c"))
+      (is equal '() (starts "d.\\n"))
+      (is equal '(1) (starts "b\\rc"))))
+  ;; lines sorted with the line ends staying where they were
+  (is string= (cr "a|b~%c|") (session-text (nth-value 1 (run-keys "C-x h M-x s o r t - l i n e s RET" :text (cr "c|b~%a|"))))))

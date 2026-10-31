@@ -115,12 +115,12 @@ shown are sorted."
     (if (= a z)
         (and inserts
              (or (< start a end)
-                 (and (= a end) (/= 10 (aref insert 0)))))
+                 (and (= a end) (not (member (aref insert 0) '(10 13))))))
         (let ((reach (if (< end (tuatara.text:rope-bytes rope)) (1+ end) end)))
           (and (< a reach) (> z start)
                (not (and (= z (1+ start)) (< 0 a start)
-                         (= 10 (tuatara.text:rope-octet rope (1- a)))
-                         (or (not inserts) (= 10 (aref insert (1- (length insert))))))))))))
+                         (= (1- a) (tuatara.text:rope-line-end rope (1- a)))
+                         (or (not inserts) (member (aref insert (1- (length insert))) '(10 13))))))))))
 
 (defun map-hidden-bounds (bounds batch rope)
   "BOUNDS, as HIDE-RANGES takes them, in ROPE, carried through BATCH, the
@@ -324,7 +324,7 @@ also where point goes when no line follows them."
                 (let* ((rope (tuatara.buffer:buffer-text buffer))
                        (size (tuatara.text:rope-bytes rope))
                        (end (cdr fold)))
-                  (cond ((and (< end size) (= 10 (tuatara.text:rope-octet rope end))) (1+ end))
+                  (cond ((and (< end size) (= end (tuatara.text:rope-line-end rope end))) (1+ end))
                         ((tuatara.text:rope-crlf-p rope end)
                          (+ end 2))
                         (t end)))

@@ -763,10 +763,7 @@ drawn large."
     ;; scrolled on until the character at point fits whole in the room as the row draws
     ;; it: a tab or a wide character at the edge, or past the line's reach, where a
     ;; character counts one column though a wide one or a tab is drawn wider
-    (let* ((total (tuatara.text:rope-bytes rope))
-           (octet (and (< point total) (tuatara.text:rope-octet rope point)))
-           (after (if (or (null octet) (= octet 10)
-                          (and crlf (tuatara.text:rope-crlf-p rope point)))
+    (let* ((after (if (tuatara.text:rope-line-text-ends-p rope point crlf)
                       point
                       (tuatara.text:rope-next-boundary rope point))))
       (loop for back = (- column (window-hscroll window)) then (floor back 2)

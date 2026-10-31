@@ -82,6 +82,67 @@ for a size larger than a megabyte, new octets. BODY must not keep it."
   "True when CODE is a control character's: 0 to 31, 127 to 159."
   (or (< code 32) (<= 127 code 159)))
 
+;;; Line ends
+;;;
+;;; A line ends at a newline (10), or at a carriage return (13) that no
+;;; newline follows; a carriage return and the newline after it end one line,
+;;; at the newline. LINE-END-OCTET-P says so for one octet, and everything that
+;;; counts or finds lines asks it, or WORD-LINE-ENDS-FORM for eight at once.
+
+(declaim (inline line-end-octet-p))
+(defun line-end-octet-p (octet next)
+  "True when OCTET ends a line, NEXT being the octet after it, or NIL at the
+end of the text: a newline does, and so does a carriage return that no
+newline follows."
+  (declare (type (unsigned-byte 8) octet))
+  (or (= octet 10) (and (= octet 13) (not (eql next 10)))))
+
+(declaim (inline octets-line-end-p))
+(defun octets-line-end-p (octets i avail)
+  "True when the octet at index I of OCTETS, whose text ends at AVAIL, ends a
+line (LINE-END-OCTET-P); a carriage return at AVAIL - 1 is taken to end one."
+  (declare (type octets octets) (type fixnum i avail))
+  (line-end-octet-p (aref octets i) (and (< (1+ i) avail) (aref octets (1+ i)))))
+
+(defun octets-line-end-position (octets start end &optional (avail end))
+  "The index of the first octet of OCTETS from START below END that ends a
+line (OCTETS-LINE-END-P, the text ending at AVAIL), or NIL. AVAIL NIL says
+the text goes on past END unread: a carriage return at END - 1, whose next
+octet is not known, is then taken for none. Complexity: O(END - START)."
+  (declare (type octets octets) (type fixnum start end) (type (or null fixnum) avail) (optimize speed))
+  (loop for i of-type fixnum from start below end
+        do (let ((b (aref octets i)))
+             (when (or (= b 10)
+                       (and (= b 13)
+                            (if (< (1+ i) end)
+                                (/= 10 (aref octets (1+ i)))
+                                (and avail (octets-line-end-p octets i avail)))))
+               (return i)))))
+
+(defun octets-line-end-position-backward (octets start end &optional (avail end))
+  "The index of the last octet of OCTETS from START below END that ends a
+line (OCTETS-LINE-END-P, the text ending at AVAIL), or NIL. AVAIL NIL says
+the text goes on past END unread, as OCTETS-LINE-END-POSITION has it.
+Complexity: O(END - START)."
+  (declare (type octets octets) (type fixnum start end) (type (or null fixnum) avail) (optimize speed))
+  (loop for i of-type fixnum from (1- end) downto start
+        do (let ((b (aref octets i)))
+             (when (or (= b 10)
+                       (and (= b 13)
+                            (if (< (1+ i) end)
+                                (/= 10 (aref octets (1+ i)))
+                                (and avail (octets-line-end-p octets i avail)))))
+               (return i)))))
+
+(declaim (inline line-text-ends-p))
+(defun line-text-ends-p (octets i avail crlf)
+  "True when the text of a line ends before the octet at index I of OCTETS,
+whose text ends at AVAIL: a newline or a carriage return that ends the line
+\(OCTETS-LINE-END-P), or with CRLF a carriage return before a newline."
+  (declare (type octets octets) (type fixnum i avail))
+  (let ((b (aref octets i)))
+    (or (= b 10) (and (= b 13) (or crlf (octets-line-end-p octets i avail))))))
+
 (declaim (inline crlf-octets-p))
 (defun crlf-octets-p (octets i avail)
   "True when OCTETS hold a carriage return at index I and a newline after it,
@@ -216,45 +277,124 @@ sequence that following octets could finish (UTF8-PENDING-FORM)."
   (macrolet ((byte-at (p) `(sb-sys:sap-ref-8 sap ,p)))
     (utf8-char-start-form byte-at i start end)))
 
+(defun octets-cut-p (octets i start end)
+  "True when the text of OCTETS from START below END may be cut into pieces
+before index I, above START: a character starts there, and a carriage return
+is not parted from the newline after it, so that each piece counts its own
+line ends (LINE-END-OCTET-P)."
+  (declare (type octets octets) (type fixnum i start end))
+  (and (octets-char-start-p octets i start end)
+       (not (and (= (aref octets i) 10) (= (aref octets (1- i)) 13)))))
+
+(defun sap-cut-p (sap i start end)
+  "True when the text at SAP from START below END may be cut into pieces
+before offset I, above START (OCTETS-CUT-P)."
+  (declare (type sb-sys:system-area-pointer sap) (type fixnum i start end))
+  (and (sap-char-start-p sap i start end)
+       (not (and (= (sb-sys:sap-ref-8 sap i) 10) (= (sb-sys:sap-ref-8 sap (1- i)) 13)))))
+
 (defconstant +ascii-mask+ #x8080808080808080 "The top bit of each octet of a word.")
 (defconstant +low-seven+ #x7F7F7F7F7F7F7F7F "The other seven bits of each octet of a word.")
 (defconstant +newlines+ #x0A0A0A0A0A0A0A0A "A word of eight newline octets.")
+(defconstant +returns+ #x0D0D0D0D0D0D0D0D "A word of eight carriage return octets.")
+(defconstant +last-octet-top+ #x8000000000000000 "The top bit of the last octet of a word.")
 
-(declaim (inline word-newlines))
-(defun word-newlines (word)
-  "How many of the eight octets of WORD are newlines."
-  (declare (type (unsigned-byte 64) word) (optimize speed (safety 0)))
-  (let* ((x (logxor word +newlines+))
+(declaim (inline word-octets-of))
+(defun word-octets-of (word pattern)
+  "The top bit of each octet of WORD that equals the one in its place in
+PATTERN, the other bits clear."
+  (declare (type (unsigned-byte 64) word pattern) (optimize speed (safety 0)))
+  (let* ((x (logxor word pattern))
          (nonzero (logior (logand (+ (logand x +low-seven+) +low-seven+) #xFFFFFFFFFFFFFFFF) x)))
     (declare (type (unsigned-byte 64) x nonzero))
-    (logcount (logandc1 nonzero +ascii-mask+))))
+    (logandc1 nonzero +ascii-mask+)))
+
+(declaim (inline word-holds-p))
+(defun word-holds-p (word pattern)
+  "True when one of the eight octets of WORD equals the one in its place in
+PATTERN: a quicker test than WORD-OCTETS-OF, which says which."
+  (declare (type (unsigned-byte 64) word pattern) (optimize speed (safety 0)))
+  (let ((x (logxor word pattern)))
+    (declare (type (unsigned-byte 64) x))
+    (not (zerop (logand (logandc2 (logand (- x #x0101010101010101) #xFFFFFFFFFFFFFFFF) x) +ascii-mask+)))))
+
+(defmacro word-line-ends-form (word next)
+  "A form giving how many of the eight octets of WORD (read in memory order,
+the first the lowest) end a line (LINE-END-OCTET-P), NEXT a form giving the
+octet after them, or NIL at the end of the text: evaluated only when WORD
+holds a carriage return."
+  (let ((w (gensym "WORD")) (returns (gensym "RETURNS")) (newlines (gensym "NEWLINES")))
+    `(let* ((,w ,word)
+            (,newlines (word-octets-of ,w +newlines+)))
+       (declare (type (unsigned-byte 64) ,w ,newlines))
+       (if (not (word-holds-p ,w +returns+))
+           (logcount ,newlines)
+           ;; a carriage return ends a line unless a newline comes next
+           (let ((,returns (word-octets-of ,w +returns+)))
+             (declare (type (unsigned-byte 64) ,returns))
+             (+ (logcount ,newlines)
+                (logcount (logandc2 ,returns (logior (ash ,newlines -8)
+                                                     (if (eql ,next 10) +last-octet-top+ 0))))))))))
+
+(declaim (inline sap-holds-return-p))
+(defun sap-holds-return-p (sap start end)
+  "True when a carriage return is among the octets at SAP from offset START
+below END, found by the C library's memchr: the line ends of text without one
+are its newlines alone."
+  (declare (type sb-sys:system-area-pointer sap) (type fixnum start end))
+  (and (< start end)
+       (/= 0 (sb-sys:sap-int
+              (sb-alien:alien-funcall
+               (sb-alien:extern-alien "memchr" (function sb-sys:system-area-pointer sb-sys:system-area-pointer
+                                                         sb-alien:int sb-alien:unsigned-long))
+               (sb-sys:sap+ sap start) 13 (- end start))))))
 
 (defun summarise-sap (sap start end)
   "Scan the octets at SAP from offset START, which must start a character,
 below END, and return four values: characters (a raw byte is one), UTF-16 code
-units (a raw byte is one), newline octets, and raw bytes. Words of eight ASCII
-octets go at once. Complexity: O(END - START)."
+units (a raw byte is one), line ends (LINE-END-OCTET-P, a carriage return at
+END - 1 ending one), and raw bytes. Words of eight ASCII octets go at once,
+two at a time where no carriage return is. Complexity: O(END - START)."
   (declare (type sb-sys:system-area-pointer sap) (type fixnum start end) (optimize speed (safety 0)))
   (let ((chars 0) (utf16 0) (lines 0) (invalid 0) (state 0) (pending 0) (i start)
-        (classes **utf8-classes**) (next **utf8-next**))
+        (classes **utf8-classes**) (next **utf8-next**)
+        (returns (sap-holds-return-p sap start end)))
     (declare (type fixnum chars utf16 lines invalid state pending i)
              (type (simple-array (unsigned-byte 8) (256)) classes)
              (type (simple-array (unsigned-byte 8) (96)) next))
     (loop
       (when (zerop state)
-        (loop while (<= (+ i 8) end)
-              do (let ((word (sb-sys:sap-ref-64 sap i)))
-                   (declare (type (unsigned-byte 64) word))
-                   (unless (zerop (logand word +ascii-mask+)) (return))
-                   (incf lines (word-newlines word))
-                   (incf chars 8) (incf utf16 8) (incf i 8))))
+        (if returns
+            (loop while (<= (+ i 8) end)
+                  do (let ((word (sb-sys:sap-ref-64 sap i)))
+                       (declare (type (unsigned-byte 64) word))
+                       (unless (zerop (logand word +ascii-mask+)) (return))
+                       (incf lines (the fixnum (word-line-ends-form word (and (< (+ i 8) end) (sb-sys:sap-ref-8 sap (+ i 8))))))
+                       (incf chars 8) (incf utf16 8) (incf i 8)))
+            ;; no carriage return: the newlines of two words counted at once
+            (progn
+              (loop while (<= (+ i 16) end)
+                    do (let ((a (sb-sys:sap-ref-64 sap i)) (b (sb-sys:sap-ref-64 sap (+ i 8))))
+                         (declare (type (unsigned-byte 64) a b))
+                         (unless (zerop (logand (logior a b) +ascii-mask+)) (return))
+                         (incf lines (logcount (logior (word-octets-of a +newlines+)
+                                                       (ash (word-octets-of b +newlines+) -1))))
+                         (incf chars 16) (incf utf16 16) (incf i 16)))
+              (loop while (<= (+ i 8) end)
+                    do (let ((word (sb-sys:sap-ref-64 sap i)))
+                         (declare (type (unsigned-byte 64) word))
+                         (unless (zerop (logand word +ascii-mask+)) (return))
+                         (incf lines (logcount (word-octets-of word +newlines+)))
+                         (incf chars 8) (incf utf16 8) (incf i 8))))))
       (when (>= i end) (return))
       (let* ((b (sb-sys:sap-ref-8 sap i))
              (n (aref next (+ (* state 12) (aref classes b)))))
         (declare (type (unsigned-byte 8) b n))
         (case n
           (0 (incf chars) (incf utf16 (if (= pending 3) 2 1))
-             (when (= b 10) (incf lines))
+             (when (or (= b 10)
+                       (and returns (= b 13) (line-end-octet-p b (and (< (1+ i) end) (sb-sys:sap-ref-8 sap (1+ i))))))
+               (incf lines))
              (setf state 0 pending 0) (incf i))
           (9 (incf chars) (incf utf16) (incf invalid) (incf i))
           ;; the octets of the sequence begun are raw bytes; this octet starts afresh
@@ -263,20 +403,46 @@ octets go at once. Complexity: O(END - START)."
           (t (setf state n) (incf pending) (incf i)))))
     (values (+ chars pending) (+ utf16 pending) lines (+ invalid pending))))
 
-(defun newlines-sap (sap start end)
-  "Count the newline octets at SAP from offset START below END, eight at a
-time: a newline octet is never part of another character in UTF-8.
-Complexity: O(END - START)."
-  (declare (type sb-sys:system-area-pointer sap) (type fixnum start end) (optimize speed (safety 0)))
+(defun newlines-sap (sap start end &optional (limit end))
+  "Count the line ends (LINE-END-OCTET-P) at SAP from offset START below END,
+eight octets at a time, the text going on to LIMIT: a carriage return at
+END - 1 ends a line unless the octet at END, below LIMIT, is a newline. Line
+ends are never part of another character in UTF-8. Complexity: O(END - START)."
+  (declare (type sb-sys:system-area-pointer sap) (type fixnum start end limit) (optimize speed (safety 0)))
   (let ((lines 0) (i start))
     (declare (type fixnum lines i))
-    (loop while (<= (+ i 8) end)
-          do (incf lines (word-newlines (sb-sys:sap-ref-64 sap i)))
-             (incf i 8))
-    (loop while (< i end)
-          do (when (= (sb-sys:sap-ref-8 sap i) 10) (incf lines))
-             (incf i))
+    (if (sap-holds-return-p sap start end)
+        (progn
+          (loop while (<= (+ i 8) end)
+                do (incf lines (the fixnum (word-line-ends-form (sb-sys:sap-ref-64 sap i)
+                                                               (and (< (+ i 8) limit) (sb-sys:sap-ref-8 sap (+ i 8))))))
+                   (incf i 8))
+          (loop while (< i end)
+                do (let ((b (sb-sys:sap-ref-8 sap i)))
+                     (when (and (or (= b 10) (= b 13))
+                                (line-end-octet-p b (and (< (1+ i) limit) (sb-sys:sap-ref-8 sap (1+ i)))))
+                       (incf lines)))
+                   (incf i)))
+        (progn
+          (loop while (<= (+ i 16) end)
+                do (incf lines (logcount (logior (word-octets-of (sb-sys:sap-ref-64 sap i) +newlines+)
+                                                 (ash (word-octets-of (sb-sys:sap-ref-64 sap (+ i 8)) +newlines+) -1))))
+                   (incf i 16))
+          (loop while (<= (+ i 8) end)
+                do (incf lines (logcount (word-octets-of (sb-sys:sap-ref-64 sap i) +newlines+)))
+                   (incf i 8))
+          (loop while (< i end)
+                do (when (= (sb-sys:sap-ref-8 sap i) 10) (incf lines))
+                   (incf i))))
     lines))
+
+(defun octets-line-ends (octets start end &optional (avail end))
+  "How many line ends (LINE-END-OCTET-P) OCTETS holds from START below END,
+the text ending at AVAIL (NEWLINES-SAP): a carriage return at END - 1 ends a
+line unless the octet at END, below AVAIL, is a newline."
+  (declare (type octets octets) (type fixnum start end avail))
+  (sb-sys:with-pinned-objects (octets)
+    (newlines-sap (sb-sys:vector-sap octets) start end avail)))
 
 (defun summarise (octets start end)
   "SUMMARISE-SAP over the octet vector OCTETS from START below END."

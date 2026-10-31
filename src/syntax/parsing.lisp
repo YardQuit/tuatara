@@ -209,11 +209,13 @@ and DONE guard the job's result, NEXT and ENDING."
     (cons row (- byte (tuatara.text:line->byte rope row)))))
 
 (defun point-after (point octets)
-  "The point after OCTETS inserted at POINT (a cons of row and column)."
-  (let ((newlines (count 10 octets)))
+  "The point after OCTETS inserted at POINT (a cons of row and column), rows
+counted as POINT-AT counts them."
+  (let ((newlines (nth-value 2 (tuatara.text:summarise octets 0 (length octets)))))
     (if (zerop newlines)
         (cons (car point) (+ (cdr point) (length octets)))
-        (cons (+ (car point) newlines) (- (length octets) 1 (position 10 octets :from-end t))))))
+        (cons (+ (car point) newlines)
+              (- (length octets) 1 (tuatara.text:octets-line-end-position-backward octets 0 (length octets)))))))
 
 (defun edit-records (rope edits)
   "What EDITS (sorted edits of ROPE) tell a tree, one list (START OLD-END NEW-END
@@ -223,7 +225,7 @@ each is in the offsets of the text the ones before it made."
         for edit = (aref edits i)
         collect (let* ((start (tuatara.text:edit-start edit))
                        (old-end (tuatara.text:edit-end edit))
-                       (insert (or (tuatara.text:edit-insert edit) #()))
+                       (insert (or (tuatara.text:edit-insert edit) (tuatara.text:make-octets 0)))
                        (start-point (point-at rope start)))
                   (list start old-end (+ start (length insert))
                         start-point (point-at rope old-end) (point-after start-point insert)))))

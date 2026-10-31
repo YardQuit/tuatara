@@ -305,8 +305,8 @@ they take on the screen from COLUMN on, as ADVANCE-COLUMN does with TAB-WIDTH
 and INVISIBLE. Stops at
 the first character's start at or after TO, at the first where the count has
 reached LIMIT (past the marks and joined emoji of the cluster there), or
-before the line's end (a newline, or with CRLF a carriage
-return just before one). Returns three values: where it stopped, the column
+before the line's end (a newline or a carriage return that ends the line,
+or with CRLF a carriage return just before a newline). Returns three values: where it stopped, the column
 there, and true when that is the line's end. Complexity: O(octets walked),
 read a block at a time, an ASCII octet looked at once."
   (declare (type fixnum from to tab-width column limit) (optimize speed))
@@ -331,8 +331,7 @@ read a block at a time, an ASCII octet looked at once."
           (tuatara.text:rope-copy-into rope pos have block)
           (loop while (< i cut)
                 do (let ((b (aref block i)))
-                     (when (or (= b 10)
-                               (and crlf (tuatara.text:crlf-octets-p block i avail)))
+                     (when (and (or (= b 10) (= b 13)) (tuatara.text:line-text-ends-p block i avail crlf))
                        (return-from scan-columns (values (+ pos i) column t)))
                      (multiple-value-bind (code length)
                          (if (< b 128) (values b 1) (tuatara.text:octets-decode block i avail))
@@ -366,12 +365,12 @@ characters are still being counted. Complexity: O(log n)."
 (defun far-position (rope from count end crlf)
   "Where COUNT columns after FROM end past a line's *SCREEN-COLUMN-REACH*
 \(FAR-COLUMNS): a character's start, no further than END nor the line's end
-\(with CRLF, the carriage return before its newline). Complexity: O(log n)
+\(the octet that ends it; with CRLF, the carriage return before its newline). Complexity: O(log n)
 once ROPE's characters are counted, O(COUNT) before."
   (let* ((indexed (tuatara.text:rope-indexed-p rope))
          (line-end (if indexed
                        (min end (tuatara.text:rope-line-end rope from))
-                       (or (tuatara.text:rope-find-octet rope 10 :start from :end (min end (+ from count)))
+                       (or (tuatara.text:rope-find-line-end rope :start from :end (min end (+ from count)))
                            end)))
          (line-end (if (and crlf (> line-end from) (tuatara.text:rope-crlf-p rope (1- line-end)))
                        (1- line-end)
@@ -458,8 +457,10 @@ than WIDTH), and with WORD-WRAP at a word's edge: a row ends after the last
 blank that fits, a blank that does not fit ends it unseen, and only a word too
 long for a row is cut; otherwise lines are truncated after skipping HSCROLL
 columns, the rest of a wide character or a tab that edge cuts shown blank.
-A tab reaches the next multiple of TAB-WIDTH columns. With CRLF, a carriage return just before a newline is part of the line
-end and not shown. HIGHLIGHTS, if given, is passed to
+A tab reaches the next multiple of TAB-WIDTH columns. A newline, and a
+carriage return no newline follows, end a line and are not shown; with CRLF,
+a carriage return just before a newline is part of the line end and not
+shown. HIGHLIGHTS, if given, is passed to
 APPLY-HIGHLIGHTS once the rows exist. HIDDEN, ranges of octets in order, are
 not shown: a row reaching one, (START . END) (BUFFER-FOLDS), shows
 *FOLD-ELLIPSIS* in :fold-ellipsis, or, (START END TEXT FACE), TEXT in FACE,
@@ -581,6 +582,10 @@ O(*SCREEN-COLUMN-REACH* + log n) however long its line (SKIP-COLUMNS)."
                            ((and crlf (char= char #\Return) (eql (reader-octet reader (reader-position reader)) 10))
                             ;; the line ends here, unseen: point at the return shows after the last glyph
                             (incf (reader-position reader))
+                            (setf (row-end row) (reader-position reader) (row-shown-end row) byte)
+                            (return))
+                           ((and (char= char #\Return) (not (eql (reader-octet reader (reader-position reader)) 10)))
+                            ;; a carriage return alone ends the line, unseen, as a newline does
                             (setf (row-end row) (reader-position reader) (row-shown-end row) byte)
                             (return))
                            (t

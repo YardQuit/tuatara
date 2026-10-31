@@ -461,7 +461,7 @@ whether the grammar takes the line end into the comment or not."
                       (or (< start position end)
                           ;; at the line end a comment stops short of
                           (and (= position end) (< start end)
-                               (/= (tuatara.text:rope-octet rope (1- end)) 10)
+                               (/= (1- end) (tuatara.text:rope-line-end rope (1- end)))
                                (not (block-comment-end-p rope end))
-                               (or (>= end (tuatara.text:rope-bytes rope)) (= (tuatara.text:rope-octet rope end) 10)))))
+                               (= end (tuatara.text:rope-line-end rope end)))))
                  (return (values :comment start end)))))))))

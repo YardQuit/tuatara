@@ -411,7 +411,8 @@ saying so."
                             (let ((octets (tuatara.text:rope-octets rope :start 0 :end end)))
                               ;; a Windows file's first line ends with a carriage return too
                               (string-right-trim '(#\Return)
-                                                 (tuatara.text:lenient-string octets :end (or (position 10 octets) (length octets)))))))))
+                                                 (tuatara.text:lenient-string octets :end (or (tuatara.text:octets-line-end-position octets 0 (length octets))
+                                                                              (length octets)))))))))
     (let* ((wanted (if path (mode-for-file path first-line) 'fundamental-mode))
            (mode (mode-for-size wanted (tuatara.text:rope-bytes rope))))
       (unless (eq mode wanted)

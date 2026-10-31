@@ -1147,9 +1147,12 @@ the text is left as it was and the group stays to redo."
 ;;; Navigation helpers (byte offsets, character aware)
 
 (defun buffer-line-ending (buffer)
-  "How BUFFER's lines end: :LF, or :CRLF for text whose lines end with a
-carriage return and a newline (Windows files), which is then shown and edited
-as though each pair were one line end, the octets staying as they are.
+  "How BUFFER's lines end: :LF; :CRLF for text whose lines end with a carriage
+return and a newline (Windows files), which is then shown and edited as
+though each pair were one line end, the octets staying as they are; or :CR
+for text whose lines end with a carriage return alone (old Macintosh files).
+What a new line is made with (BUFFER-NEWLINE); in any buffer a carriage
+return that no newline follows ends a line too (TUATARA.TEXT:LINE-END-OCTET-P).
 The :LINE-ENDING local; visiting a file sets it from the file."
   (buffer-local buffer :line-ending :lf))
 
@@ -1158,18 +1161,23 @@ The :LINE-ENDING local; visiting a file sets it from the file."
   (eq (buffer-line-ending buffer) :crlf))
 
 (defun buffer-newline (buffer)
-  "The text that ends a line in BUFFER: a newline, or in a :CRLF buffer a
-carriage return and a newline. The string is shared: it must not be changed."
-  (if (buffer-crlf-p buffer)
-      (load-time-value (coerce '(#\Return #\Newline) 'simple-string) t)
-      (load-time-value (string #\Newline) t)))
+  "The text that ends a line in BUFFER: a newline, in a :CRLF buffer a
+carriage return and a newline, in a :CR buffer a carriage return. The string
+is shared: it must not be changed."
+  (case (buffer-line-ending buffer)
+    (:crlf (load-time-value (coerce '(#\Return #\Newline) 'simple-string) t))
+    (:cr (load-time-value (string #\Return) t))
+    (t (load-time-value (string #\Newline) t))))
 
 (defun detect-line-ending (rope &key (start 0) (end (tuatara.text:rope-bytes rope)))
   "How the lines of ROPE's text from START below END end, judged by its first
-line end in its first 64 KB: :CRLF when a carriage return comes before it,
-else :LF."
-  (let ((newline (tuatara.text:rope-find-octet rope 10 :start start :end (min end (+ start 65536)))))
-    (if (and newline (/= newline (tuatara.text:rope-line-text-end rope start newline t))) :crlf :lf)))
+line end in its first 64 KB: :CRLF when it is a newline a carriage return
+comes before, :CR when it is a carriage return alone, else :LF."
+  (let ((line-end (tuatara.text:rope-find-line-end rope :start start :end (min end (+ start 65536)))))
+    (cond ((null line-end) :lf)
+          ((= 13 (tuatara.text:rope-octet rope line-end)) :cr)
+          ((/= line-end (tuatara.text:rope-line-text-end rope start line-end t)) :crlf)
+          (t :lf))))
 
 (defun buffer-forward-char (buffer byte &optional (n 1))
   "Byte offset N characters after BYTE in BUFFER (before, for negative N),
@@ -1197,8 +1205,9 @@ carriage return and the newline after it are one step."
   (tuatara.text:rope-line-start (buffer-text buffer) byte))
 
 (defun buffer-line-end (buffer byte)
-  "Byte offset of the end of the line containing BYTE: its newline, in a :CRLF
-buffer the carriage return before it, or the text end."
+  "Byte offset of the end of the line containing BYTE: the octet that ends it
+\(a newline, in a :CRLF buffer the carriage return before one, or a carriage
+return alone), or the text end."
   (let* ((rope (buffer-text buffer))
          (end (tuatara.text:rope-line-end rope byte)))
     (if (and (buffer-crlf-p buffer) (tuatara.text:rope-crlf-p rope (1- end)))
@@ -1284,7 +1293,7 @@ being counted in the background, this waits for them (ENSURE-INDEXED)."
   (tuatara.text:byte->line (buffer-text buffer) byte))
 
 (defun buffer-line-count (buffer)
-  "Number of lines in BUFFER (newlines plus one), waiting as BUFFER-LINE-NUMBER does."
+  "Number of lines in BUFFER (line ends plus one), waiting as BUFFER-LINE-NUMBER does."
   (ensure-indexed buffer)
   (1+ (tuatara.text:rope-lines (buffer-text buffer))))
 
@@ -1305,7 +1314,7 @@ before BYTE, so that no more than that is read."
            (- (tuatara.text:byte->char rope byte) (tuatara.text:byte->char rope (buffer-line-start buffer byte))))
           ((null most) (tuatara.text:rope-count-chars rope (buffer-line-start buffer byte) byte))
           (t (let* ((near (max 0 (- byte most)))
-                    (newline (tuatara.text:rope-find-octet-backward rope 10 :start near :end byte)))
+                    (newline (tuatara.text:rope-find-line-end-backward rope :start near :end byte)))
                (cond (newline (tuatara.text:rope-count-chars rope (1+ newline) byte))
                      ((zerop near) (tuatara.text:rope-count-chars rope 0 byte))))))))
 

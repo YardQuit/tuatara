@@ -92,10 +92,7 @@ byte triples, scanning the whole string at once (the reference for the
 windowed engine); REGEX a pattern, or a scanner made already (as
 TUATARA.SYNTAX:COMPILE-REGEX makes one)."
   (let ((offsets (make-array (1+ (length string)) :element-type 'fixnum)) (b 0)
-        (scanner (if (functionp regex)
-                     regex
-                     (cl-ppcre:create-scanner regex :multi-line-mode t
-                                                    :case-insensitive-mode (tuatara.syntax:regex-case-fold-p regex))))
+        (scanner (if (functionp regex) regex (tuatara.syntax:compile-regex regex)))
         (out '()) (from 0))
     (loop for i from 0 below (length string)
           do (setf (aref offsets i) b)
@@ -268,7 +265,8 @@ newlines and some multibyte characters."
   (let ((scanner (tuatara.syntax:compile-regex "kea error")))
     (is eq scanner (tuatara.syntax:compile-regex (copy-seq "kea error")))
     (isnt eq scanner (tuatara.syntax:compile-regex "kea error" :case-fold nil))
-    (isnt eq scanner (tuatara.syntax:compile-regex "kea error" :crlf t))
+    ;; lines end the same way in every text: CRLF makes no other scanner
+    (is eq scanner (tuatara.syntax:compile-regex "kea error" :crlf t))
     (let ((consed (loop repeat 3
                         minimize (let ((before (tuatara.bench::bytes-consed)))
                                    (tuatara.syntax:compile-regex "kea error")

@@ -1125,10 +1125,12 @@ nearly as much is preferred."
         (when shape (values (coerce shape 'simple-vector) prefix-p))))))
 
 (defun class-item-covers-newline (item surely)
-  "Whether the char-class ITEM of a parse tree includes the newline character.
-Items not understood count as including it unless SURELY is true."
-  (cond ((characterp item) (char= item #\Newline))
-        ((and (consp item) (eq (first item) :range)) (char<= (second item) #\Newline (third item)))
+  "Whether the char-class ITEM of a parse tree includes a character that
+ends a line: the newline or the carriage return. Items not understood count
+as including one unless SURELY is true."
+  (cond ((characterp item) (or (char= item #\Newline) (char= item #\Return)))
+        ((and (consp item) (eq (first item) :range))
+         (or (char<= (second item) #\Newline (third item)) (char<= (second item) #\Return (third item))))
         ((member item '(:whitespace-char-class :non-digit-class :non-word-char-class)) t)
         ((member item '(:digit-class :word-char-class :non-whitespace-char-class)) nil)
         (t (not surely))))
@@ -1146,11 +1148,12 @@ matches may go on over lines (*FILTERS-CROSSING-LINES*)."
 
 (defun crosses-lines-p (tree)
   "True unless every match of the cl-ppcre parse TREE, and all its lookaheads
-inspect, surely lies within one line (with . not matching a newline, as
-COMPILE-REGEX leaves it). Forms not understood count as crossing."
+inspect, surely lies within one line (with . matching neither a newline nor
+a carriage return, as COMPILE-REGEX makes it). Forms not understood count as
+crossing."
   (labels ((walk (x)
-             (cond ((stringp x) (find #\Newline x))
-                   ((characterp x) (char= x #\Newline))
+             (cond ((stringp x) (or (find #\Newline x) (find #\Return x)))
+                   ((characterp x) (or (char= x #\Newline) (char= x #\Return)))
                    ((member x '(:start-anchor :end-anchor :modeless-start-anchor :modeless-end-anchor
                                 :modeless-end-anchor-no-newline :word-boundary :non-word-boundary :void
                                 :everything :digit-class :word-char-class :non-whitespace-char-class))
@@ -1162,8 +1165,10 @@ COMPILE-REGEX leaves it). Forms not understood count as crossing."
                         (:named-register (or (filter-crosses-lines-p (second x)) (walk (third x))))
                         ((:greedy-repetition :non-greedy-repetition) (walk (fourth x)))
                         ((:positive-lookbehind :negative-lookbehind) nil) ; before the match, in the context
-                        (:property (funcall (character-property (second x)) #\Newline))
-                        (:inverted-property (not (funcall (character-property (second x)) #\Newline)))
+                        (:property (or (funcall (character-property (second x)) #\Newline)
+                                       (funcall (character-property (second x)) #\Return)))
+                        (:inverted-property (not (and (funcall (character-property (second x)) #\Newline)
+                                                      (funcall (character-property (second x)) #\Return))))
                         (:char-class (some (lambda (item) (class-item-covers-newline item nil)) (rest x)))
                         (:inverted-char-class (notany (lambda (item) (class-item-covers-newline item t)) (rest x)))
                         (t t))))))
@@ -1208,38 +1213,50 @@ matches may cross lines; the same for one kept within a line.")
 (sb-ext:defglobal **regex-traits** (make-hash-table :test 'eq :weakness :key :synchronized t)
   "The REGEX-TRAITS of each scanner COMPILE-REGEX made.")
 
-(defun crlf-tree (tree)
-  "TREE, a cl-ppcre parse tree, for text whose lines end with a carriage return
-and a newline, as the Rust regex crate reads a pattern in its CRLF mode: $
-matches before the carriage return, as before a newline alone, and . matches
-neither a carriage return nor a newline, but in single-line mode ((?s)).
-Plain text stays plain: a tree that is a string alone is given as a sequence."
-  (labels ((single-after (flags single)
-             (cond ((member :single-line-mode-p flags) t)
-                   ((member :not-single-line-mode-p flags) nil)
-                   (t single)))
-           (walk (node single)
-             (cond ((eq node :end-anchor)
-                    '(:alternation (:positive-lookahead (:sequence #\Return #\Newline))
+(defun line-tree (tree)
+  "TREE, a cl-ppcre parse tree, with its lines ending as every text's do
+\(TUATARA.TEXT:LINE-END-OCTET-P), as the Rust regex crate reads a pattern in
+its CRLF mode: ^ matches after a newline and after a carriage return no
+newline follows, $ before a newline no carriage return comes before and
+before a carriage return, neither between a carriage return and its
+newline; . matches neither a carriage return nor a newline, but in
+single-line mode ((?s)). Where (?-m) makes ^ and $ the text's ends, they are
+left as they are. Plain text stays plain: a tree that is a string alone is
+given as a sequence."
+  (labels ((mode-after (flags mode on off)
+             (cond ((member on flags) t)
+                   ((member off flags) nil)
+                   (t mode)))
+           (walk (node single multi)
+             (cond ((and multi (eq node :end-anchor))
+                    '(:alternation (:positive-lookahead #\Return)
                       (:sequence (:negative-lookbehind #\Return) (:positive-lookahead #\Newline))
                       :modeless-end-anchor-no-newline))
+                   ((and multi (eq node :start-anchor))
+                    '(:alternation :modeless-start-anchor (:positive-lookbehind #\Newline)
+                      (:sequence (:positive-lookbehind #\Return) (:negative-lookahead #\Newline))))
                    ((eq node :everything) (if single node '(:inverted-char-class #\Return #\Newline)))
                    ((atom node) node)
                    ((eq (first node) :sequence)
                     ;; inline flags change the mode for the rest of the sequence
-                    (let ((mode single))
+                    (let ((single single) (multi multi))
                       (cons :sequence
                             (loop for child in (rest node)
                                   collect (if (and (consp child) (eq (first child) :flags))
-                                              (progn (setf mode (single-after (rest child) mode)) child)
-                                              (walk child mode))))))
+                                              (progn (setf single (mode-after (rest child) single :single-line-mode-p :not-single-line-mode-p)
+                                                           multi (mode-after (rest child) multi :multi-line-mode-p :not-multi-line-mode-p))
+                                                     child)
+                                              (walk child single multi))))))
                    ((eq (first node) :group)
                     (let ((flags (butlast (rest node))))
-                      (append (list :group) flags (list (walk (car (last node)) (single-after flags single))))))
+                      (append (list :group) flags
+                              (list (walk (car (last node))
+                                          (mode-after flags single :single-line-mode-p :not-single-line-mode-p)
+                                          (mode-after flags multi :multi-line-mode-p :not-multi-line-mode-p))))))
                    ((member (first node) '(:char-class :inverted-char-class :property :inverted-property :back-reference :filter))
                     node)
-                   (t (cons (first node) (mapcar (lambda (child) (walk child single)) (rest node)))))))
-    (let ((walked (walk tree nil)))
+                   (t (cons (first node) (mapcar (lambda (child) (walk child single multi)) (rest node)))))))
+    (let ((walked (walk tree nil t)))
       (if (stringp walked) (list :sequence walked) walked))))
 
 (defun tree-max-octets (tree)
@@ -1304,9 +1321,10 @@ upper-case letter outside an escape. What cl-ppcre lacks is put in first
 \(ENGINE-PATTERN): named patterns ([[:ipv4:]], [[:creditcard:]], whose card
 numbers must pass the Luhn check), POSIX classes in a set, \\Q...\\E, \\h, \\v, \\R,
 \\xNN from 80 to FF the octet NN standing on its own; named groups and
-character properties (\\p{L}) are read too (WITH-PATTERN-SYNTAX). With
-CRLF, for text whose lines end with a carriage return and a newline, $ matches
-before the carriage return and . matches neither (CRLF-TREE). THOROUGH, by
+character properties (\\p{L}) are read too (WITH-PATTERN-SYNTAX). Lines end
+as they do in every text: ^ and $ match at a newline, at a carriage return
+and a newline, and at a carriage return alone, and . matches neither a
+carriage return nor a newline (LINE-TREE); CRLF changes nothing. THOROUGH, by
 default *REGEX-THOROUGH*, has a scan find every match of up to
 *REGEX-LONGEST-MATCH* octets whole, looking as far as the pattern can reach
 (TREE-MAX-OCTETS). What the pattern allows a scan to skip (REGEX-TRAITS) is
@@ -1314,17 +1332,18 @@ registered with the scanner. The same REGEX compiled the same way gives the
 same scanner while one is kept, or soon after. Signals PATTERN-REFUSED, or
 cl-ppcre's syntax error, for a pattern that cannot be used (REGEX-PROBLEM
 words why)."
-  (let ((key (list regex (and case-fold t) (and crlf t) (and thorough t))))
+  (declare (ignore crlf))
+  (let ((key (list regex (and case-fold t) (and thorough t))))
     (or (gethash key **compiled-regexes**)
         (let ((scanner (with-pattern-syntax
-                         (compile-engine-pattern (engine-pattern regex) case-fold crlf thorough))))
+                         (compile-engine-pattern (engine-pattern regex) case-fold thorough))))
           (setf (first key) (copy-seq regex))
           (sb-ext:with-locked-hash-table (**compiled-regexes**)
             (setf (gethash key **compiled-regexes**) scanner
                   (svref **recent-regexes** (mod (incf **recent-regex-count**) (length **recent-regexes**)))
                   scanner))))))
 
-(defun compile-engine-pattern (regex case-fold crlf thorough)
+(defun compile-engine-pattern (regex case-fold thorough)
   "COMPILE-REGEX's work on REGEX, as ENGINE-PATTERN gives it."
   (let* ((tree (ignore-errors (cl-ppcre:parse-string regex)))
          (scanner (let ((cl-ppcre:*use-bmh-matchers* t))
@@ -1332,8 +1351,8 @@ words why)."
                     ;; where matches are many and case is folded
                     (cl-ppcre:create-scanner (cond ((and tree (search *filter-mark* regex))
                                                     ;; card numbers: read by code as they are matched
-                                                    (filter-tree (if crlf (crlf-tree tree) tree)))
-                                                   ((and crlf tree) (crlf-tree tree))
+                                                    (filter-tree (line-tree tree)))
+                                                   (tree (line-tree tree))
                                                    (t regex))
                                              :case-insensitive-mode case-fold :multi-line-mode t))))
     (when tree
@@ -1520,23 +1539,30 @@ one does (WITH-DECODER)."
 (defun needle-line (octets filled needle fold from)
   "The line of the first occurrence of NEEDLE (folded when FOLD) in the
 first FILLED octets of OCTETS at or after FROM, as two offsets: where it
-starts, FROM at the earliest, and where it ends, after its newline or at
-FILLED; NIL when NEEDLE is not there."
+starts, FROM at the earliest, and where it ends, after the octet that ends it
+\(TUATARA.TEXT:LINE-END-OCTET-P; a carriage return as the last octet filled
+taken for one a newline may follow) or at FILLED; NIL when NEEDLE is not
+there."
   (declare (type tuatara.text:octets octets needle) (type fixnum filled from) (optimize speed))
   (let ((at (scan-chunk octets needle fold from filled filled)))
     (when at
-      (let ((start (loop for i of-type fixnum from (1- (the fixnum at)) downto from
-                         when (= (aref octets i) 10) return (1+ i)
-                         finally (return from)))
-            (end (loop for i of-type fixnum from at below filled
-                       when (= (aref octets i) 10) return (1+ i)
-                       finally (return filled))))
-        (values start end)))))
+      (flet ((ends-line-p (i)
+               (declare (type fixnum i))
+               (let ((b (aref octets i)))
+                 (or (= b 10) (and (= b 13) (< (1+ i) filled) (/= 10 (aref octets (1+ i))))))))
+        (declare (inline ends-line-p))
+        (let ((start (loop for i of-type fixnum from (1- (the fixnum at)) downto from
+                           when (ends-line-p i) return (1+ i)
+                           finally (return from)))
+              (end (loop for i of-type fixnum from at below filled
+                         when (ends-line-p i) return (1+ i)
+                         finally (return filled))))
+          (values start end))))))
 
 (defun line-start-within (rope position floor)
   "Where the line holding POSITION of ROPE starts, or FLOOR when that is
 later. Complexity: O(log n + POSITION - FLOOR)."
-  (let ((newline (tuatara.text:rope-find-octet-backward rope 10 :start floor :end position)))
+  (let ((newline (tuatara.text:rope-find-line-end-backward rope :start floor :end position)))
     (if newline (1+ newline) floor)))
 
 (defun map-regex-matches (function rope scanner start end &key bound decoder halt (texts t) empty)
@@ -1629,7 +1655,7 @@ new buffers."
                                  ;; line holding the last start it answers for, and is exact
                                  (line-bound
                                   (let* ((cap (min bound (+ limit *regex-longest-match*)))
-                                         (newline (tuatara.text:rope-find-octet rope 10 :start (max pos (1- limit))
+                                         (newline (tuatara.text:rope-find-line-end rope :start (max pos (1- limit))
                                                                                         :end cap)))
                                     (if newline (1+ newline) cap)))
                                  (t (+ limit overlap))))
