@@ -379,7 +379,6 @@ BACKGROUND, the search too goes to the background."
       (true (tuatara.frontend.fake:fake-frame-showing
              (background-split '("% f f o o RET C-x b o t h e r C-j" "") text)
              "Not held: *scratch* was left while f searched it"))
-      (tuatara.buffer:kill-buffer (tuatara.buffer:find-buffer "other"))
       ;; a verb typed while it searches acts at the cursor, never on the whole selection searched
       (multiple-value-bind (f editor) (background-split '("% f f o o RET c Q W C-g" "") text)
         (declare (ignore f))

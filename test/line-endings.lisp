@@ -82,9 +82,7 @@
       ;; buffer whose lines end with a newline alone
       (let ((other (after "V j y C-x b o t h e r C-j p")))
         (false (find #\Return other))
-        (true (search (format nil "ab~%cb~%") other))
-        ;; the buffer pasted in, changed, is left to no test after
-        (tuatara.buffer:kill-buffer (tuatara.buffer:find-buffer "other")))
+        (true (search (format nil "ab~%cb~%") other)))
       ;; and the other way, into this one
       (let ((b (session-buffer (nth-value 1 (run-keys-in-turns '("") :text crlf :crlf t)))))
         (is string= (format nil "x~c~%y~c~%" #\Return #\Return)

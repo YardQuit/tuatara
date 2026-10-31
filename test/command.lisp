@@ -28,6 +28,28 @@ candidates found in the background (a completing read's SOURCE)."
   (loop while (tuatara.command::take-in-source tuatara.command:*editor*)
         do (sleep 0.01)))
 
+(defvar *buffers-before-test* '()
+  "The buffers there were when the test running began: those it did not make.")
+
+(defun test-buffers ()
+  "The buffers the test running made, the newest first."
+  (remove-if (lambda (b) (member b *buffers-before-test*)) tuatara.buffer:*buffers*))
+
+(defparameter *buffers-kept-between-tests* '("*Messages*" "*scratch*")
+  "The buffers a test may leave for the next: made again when missing, never
+looked for as made by a test.")
+
+(defmethod parachute:eval-in-context :around ((report parachute:report) (test parachute:test))
+  "Run TEST, then kill every buffer it made and left (but those of
+*BUFFERS-KEPT-BETWEEN-TESTS*): a test starts with the buffers there were
+before the test before it, and finds its own (TEST-BUFFERS)."
+  (let ((*buffers-before-test* (copy-list tuatara.buffer:*buffers*)))
+    (unwind-protect (call-next-method)
+      (dolist (buffer (copy-list tuatara.buffer:*buffers*))
+        (unless (or (member buffer *buffers-before-test*)
+                    (member (tuatara.buffer:buffer-name buffer) *buffers-kept-between-tests* :test #'string=))
+          (ignore-errors (tuatara.buffer:kill-buffer buffer)))))))
+
 (defun waited-in-vain (until seconds)
   "Fail the test running: a session waited SECONDS for UNTIL, a function, to
 be true, and it never was. What the editor asked and said then is told."
@@ -1390,3 +1412,12 @@ TUATARA: what a job of its own would take from a buffer before it starts.")
     (fail (tuatara.command:set-key-label map "C-c q r" "no"))
     (tuatara.command:define-key map "C-c q r" 'tuatara.defaults::end-of-buffer)
     (true (tuatara.command:keymap-p (tuatara.command:lookup-key map (tuatara.frontend:parse-key-sequence "C-c q"))))))
+
+(define-test (command a-test-leaves-a-buffer)
+  ;; with BUFFERS-OF-A-TEST-KILLED: a buffer a test made, not killed by it
+  (true (tuatara.buffer:make-buffer "left by a test")))
+
+(define-test (command buffers-of-a-test-killed)
+  :depends-on (a-test-leaves-a-buffer)
+  ;; the buffer the test before made and left is gone
+  (false (tuatara.buffer:find-buffer "left by a test")))

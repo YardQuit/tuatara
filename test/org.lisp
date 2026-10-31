@@ -201,12 +201,10 @@ file of test/org/, the same nodes, positions and properties as tools/org-oracle.
                      (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f #'check))
                      (tuatara.frontend.fake:fake-queue-keys f "j"))))
         (tuatara.frontend.fake:fake-queue-action f #'check))
-      (let ((b (tuatara.buffer:make-buffer "background.org" :text *org-coloured*)))
-        (unwind-protect
-             (progn
-               (tuatara.defaults::set-major-mode b 'tuatara.defaults::org-mode)
-               (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults :buffer b))
-          (tuatara.buffer:kill-buffer b)))
+      (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
+                                    :buffer (let ((b (tuatara.buffer:make-buffer "background.org" :text *org-coloured*)))
+                                              (tuatara.defaults::set-major-mode b 'tuatara.defaults::org-mode)
+                                              b))
       (true (org-faces-include f 1 "TODO" :org-todo)))))
 
 (defun org-plain-session (text)

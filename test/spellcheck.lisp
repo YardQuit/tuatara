@@ -230,11 +230,15 @@ each of them and at the end, the editor woken to redraw."
         (let ((file (namestring (merge-pathnames "note.org" dir)))
               (tuatara.defaults::*spellcheck-languages* '("en_US")))
           (alexandria:write-string-into-file (format nil "* Head~%Some teh text.~%~%** Sub~%  More wrnog here.~%~%") file)
-          (multiple-value-bind (f editor) (run-keys (spellcheck-keys "g e" "k" "g g") :file file :width 70 :height 8)
-            (declare (ignore editor))
-            (true (search "  Some teh" (tuatara.frontend.fake:fake-screen-line f 1)) "shown indented")
-            (is equal '("teh" "wrnog") (spelt-wrong f))
-            (false (search "could not be drawn" (tuatara.buffer:buffer-string (tuatara.buffer:find-buffer "*Messages*")))))
+          (let ((said-before (tuatara.buffer:buffer-size (tuatara.command::messages-buffer))))
+            (multiple-value-bind (f editor) (run-keys (spellcheck-keys "g e" "k" "g g") :file file :width 70 :height 8)
+              (declare (ignore editor))
+              (true (search "  Some teh" (tuatara.frontend.fake:fake-screen-line f 1)) "shown indented")
+              (is equal '("teh" "wrnog") (spelt-wrong f))
+              ;; nothing failed to draw in this session, whatever sessions before it said
+              (false (search "could not be drawn"
+                             (let ((messages (tuatara.command::messages-buffer)))
+                               (tuatara.buffer:buffer-string messages :start (min said-before (tuatara.buffer:buffer-size messages))))))))
           ;; the window's first row an empty line under a headline, as after g e in a longer note
           (multiple-value-bind (f editor)
               (run-keys (list (lambda ()

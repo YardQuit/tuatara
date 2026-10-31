@@ -23,8 +23,8 @@
   (uiop:run-program (list* "git" "-C" (namestring dir) arguments) :output :string :ignore-error-status t))
 
 (defun git-buffer-named (prefix)
-  "The buffer whose name begins with PREFIX, when there is one."
-  (find-if (lambda (b) (uiop:string-prefix-p prefix (tuatara.buffer:buffer-name b))) tuatara.buffer:*buffers*))
+  "The buffer the test running made whose name begins with PREFIX, when there is one."
+  (find-if (lambda (b) (uiop:string-prefix-p prefix (tuatara.buffer:buffer-name b))) (test-buffers)))
 
 (define-test (git look-ended-in-time)
   ;; a repository whose settings take in a named pipe leaves git waiting: the gutter's and rimu's looks end it
@@ -195,9 +195,9 @@
       (kill-buffers-visiting dir))))
 
 (defun git-status-here ()
-  "The status buffer of the session, when there is one."
+  "The status buffer the test running made, when there is one."
   (find-if (lambda (b) (typep (tuatara.modes:buffer-major-mode b) 'tuatara.defaults::git-status-mode))
-           tuatara.buffer:*buffers*))
+           (test-buffers)))
 
 (defun git-state-here ()
   "The state of the repository the session's status last read, or NIL."
