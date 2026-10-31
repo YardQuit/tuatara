@@ -151,14 +151,20 @@ if [ "$named" = 1 ]; then
 fi
 rm -rf "$work"
 
-# the rest of the sources, the grammars as tools/grammars.sh left them (patched
-# where syntax/patches/ says); a grammar a grammar requires lives in its node_modules/
+# the rest of the sources, each grammar exactly at its pinned commit (the
+# patches of syntax/patches/ go with Tuatara's sources, applied as the build
+# does); a grammar a grammar requires lives in its node_modules/
 git archive --prefix=tuatara-sources/tuatara/ HEAD | tar -x -C "$pack"
 git -C build/terminal-sources archive --prefix=tuatara-sources/ghostty/ HEAD | tar -x -C "$pack"
 while IFS=$'\t' read -r name url commit licence subpath; do
   [ "$name" = tree-sitter-cli ] && continue
   mkdir -p "$top/grammars/$name"
-  tar -C "build/grammar-sources/$name" --exclude=.git --exclude=node_modules -cf - . | tar -x -C "$top/grammars/$name"
+  if [ "$(git -C "build/grammar-sources/$name" rev-parse -q --verify "HEAD^{commit}")" != \
+       "$(git -C "build/grammar-sources/$name" rev-parse -q --verify "$commit^{commit}")" ]; then
+    echo "tools/release.sh: build/grammar-sources/$name is not at the commit syntax/grammars.tsv pins: run tools/grammars.sh" >&2
+    exit 1
+  fi
+  git -C "build/grammar-sources/$name" archive HEAD | tar -x -C "$top/grammars/$name"
 done < <(grep -v '^#' syntax/grammars.tsv | grep -v '^[[:space:]]*$')
 cat > "$top/README" <<EOF
 The sources of Tuatara $(sed -n 's/^ *:version "\(.*\)"$/\1/p' tuatara.asd) ($(git rev-parse --short=7 HEAD)) and of what its
@@ -167,8 +173,9 @@ compiled into the program, each under the licence in its folder), ghostty/
 (the terminal library, MIT, with simdutf in its pkg/; Highway, Wuffs and
 uucode, which it compiles in too, are fetched by its build.zig.zon and are
 not in it, their licences in the release's terminal/licenses/), and grammars/, tree-sitter and each grammar at the commit
-tuatara/syntax/grammars.tsv names, under the licence it names there, patched
-as tuatara/syntax/patches/ says. tuatara/HACKING.org says how to build it.
+tuatara/syntax/grammars.tsv names, under the licence it names there, which the
+build patches as tuatara/syntax/patches/ says. tuatara/HACKING.org says how to
+build it.
 EOF
 tar -C "$pack" -cf - tuatara-sources | zstd -19 -T0 -q -f -o "$root/build/release/tuatara-sources.tar.zst"
 echo "$wanted" > "$stamp"

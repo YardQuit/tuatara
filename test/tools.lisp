@@ -317,3 +317,97 @@ and the Quicklisp folder."
                       "d98426109258b266e1e92358c5f11716d2e8f638"))
       (false (find orphan rows :key #'third :test #'string=) "~a is on no branch or tag" orphan))))
 
+(defun grammar-build-output (script directory)
+  "What bash prints running SCRIPT in DIRECTORY with tools/grammar-build.sh sourced, standard error with it."
+  (uiop:run-program (list "bash" "-c" (format nil ". '~a'~%~a" (tools-script "grammar-build.sh") script))
+                    :directory directory :output :string :error-output :output :ignore-error-status t))
+
+(defun write-test-file (directory name text)
+  "Write TEXT to NAME under DIRECTORY, its folders made."
+  (let ((path (merge-pathnames name directory)))
+    (ensure-directories-exist path)
+    (with-open-file (o path :direction :output :if-exists :supersede) (write-string text o))
+    path))
+
+(define-test (tools grammar-inputs-are-what-is-compiled)
+  ;; what compiling a grammar reads: its parser and scanner and the headers
+  ;; they include from its repository (a relative path too), not the
+  ;; system's; a header changed, or one added where an include finds it,
+  ;; changes the hash
+  (with-test-directory (directory)
+    (write-test-file directory "src/parser.c" (format nil "#include \"tree_sitter/parser.h\"~%"))
+    (write-test-file directory "src/scanner.c" (format nil "#include <stdio.h>~%#include \"../common/scan.h\"~%"))
+    (write-test-file directory "src/tree_sitter/parser.h" (format nil "int a;~%"))
+    (write-test-file directory "common/scan.h" (format nil "int b;~%"))
+    (write-test-file directory "README" "not compiled")
+    (is equal '("common/scan.h" "src/parser.c" "src/scanner.c" "src/tree_sitter/parser.h")
+        (uiop:split-string (string-trim '(#\Newline) (grammar-build-output "grammar_inputs \"$PWD\" \"$PWD/src\"" directory))
+                           :separator '(#\Newline)))
+    (flet ((hash () (string-trim '(#\Newline) (grammar-build-output "grammar_inputs_hash \"$PWD\" \"$PWD/src\"" directory))))
+      (let ((first (hash)))
+        (is = 64 (length first))
+        (write-test-file directory "README" "still not compiled")
+        (is string= first (hash) "a file not compiled leaves it")
+        (write-test-file directory "common/scan.h" (format nil "int c;~%"))
+        (isnt string= first (hash) "a header changed changes it")))))
+
+(define-test (tools grammar-checkout-fetched-once-and-checked)
+  ;; a grammar pinned by a tag object is fetched once, not again on each build;
+  ;; a checkout changed, or with a file added, is refused, and so is one whose
+  ;; inputs hash otherwise than recorded
+  (with-test-directory (directory)
+    (let* ((repo (merge-pathnames "repo/" directory))
+           (out (grammar-build-output
+                 (format nil "set -e
+git init -q '~a'; cd '~:*~a'
+git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m one
+git -c user.name=t -c user.email=t@example.invalid tag -a -m v1 v1
+tag=$(git rev-parse v1)
+cd '~a'
+fetch_grammar \"$PWD/g\" 'file://~a' \"$tag\"
+touch g/.git/fetched-once
+fetch_grammar \"$PWD/g\" 'file://~a' \"$tag\"
+[ -f g/.git/fetched-once ] && echo kept
+echo 'x  g' > recorded
+grammar_checked g \"$PWD/g\" \"$PWD/recorded\" x && echo clean
+touch g/added
+grammar_checked g \"$PWD/g\" \"$PWD/recorded\" x || echo refused-added
+rm g/added
+grammar_checked g \"$PWD/g\" \"$PWD/recorded\" y || echo refused-hash"
+                         (uiop:native-namestring repo) (uiop:native-namestring directory)
+                         (uiop:native-namestring repo) (uiop:native-namestring repo))
+                 directory)))
+      (true (search "kept" out) "~a" out)
+      (true (search "clean" out))
+      (true (search "refused-added" out))
+      (true (search "refused-hash" out)))))
+
+(define-test (tools grammar-source-check-stops-on-a-pin-off-branches)
+  ;; the check before a bump stops on a pin on no branch or tag of its
+  ;; repository, and passes one on a branch
+  (with-test-directory (directory)
+    (let ((repo (uiop:native-namestring (merge-pathnames "repo/" directory)))
+          (tools (merge-pathnames "tools/" directory)))
+      (ensure-directories-exist tools)
+      (uiop:copy-file (tools-script "check-grammar-sources.sh") (merge-pathnames "check-grammar-sources.sh" tools))
+      (let ((commits (uiop:split-string
+                      (string-trim '(#\Newline)
+                                   (bash-output (format nil "set -e
+git init -q '~a'; cd '~:*~a'
+c() { git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m \"$1\"; }
+c one; git rev-parse HEAD
+git checkout -q -b gone; c lost; git rev-parse HEAD
+git checkout -q -; git branch -q -D gone" repo)))
+                      :separator '(#\Newline))))
+        (flet ((check (commit)
+                 (write-test-file directory "syntax/grammars.tsv" (format nil "g	file://~a	~a	MIT~%" repo commit))
+                 (multiple-value-bind (out error status)
+                     (uiop:run-program (list "bash" (uiop:native-namestring (merge-pathnames "check-grammar-sources.sh" tools)))
+                                       :output :string :error-output nil :ignore-error-status t)
+                   (declare (ignore error))
+                   (values status out))))
+          (multiple-value-bind (status out) (check (first commits))
+            (is = 0 status "~a" out))
+          (multiple-value-bind (status out) (check (second commits))
+            (is = 1 status)
+            (true (search "on no branch or tag" out))))))))

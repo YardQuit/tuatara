@@ -44,6 +44,19 @@ with =curl= and no token (sixty questions an hour); it needs =jq=.
 the desktop when the list changes (=tools/toolbox-setup.sh= asks whether to,
 and does not unless you say yes), and =--remove= stops it.
 
+Before a grammar's pin in =syntax/grammars.tsv= moves, and at each
+period-check, =tools/check-grammar-sources.sh [NAME...]= checks where each
+grammar comes from, changing nothing: it stops on a repository renamed or
+moved to another owner (judge the new home first) and on a pin on no branch
+or tag; it reports archived repositories and those with no commit for two
+years; and for each pin moved since the last commit it writes what changed
+in what is compiled to =build/grammar-check/NAME.diff=, the scanner read by
+hand before the bump goes in. =tools/grammars.sh= compiles a grammar only from
+a checkout of its commit with nothing changed, and only when what it compiles
+hashes as =syntax/grammar-inputs.sha256= records; once the difference is read,
+=tools/grammars.sh --record NAME= records the new hash. A grammar whose parser
+is generated again runs its =grammar.js= in bubblewrap, with no network.
+
 * Building and running
 
 #+begin_example
