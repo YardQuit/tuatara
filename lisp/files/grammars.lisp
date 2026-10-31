@@ -90,24 +90,37 @@ meanwhile), made again only when the list has changed."
                 (setf *grammar-answers-entries* entries
                       *grammar-answers-read* table)))))))
 
+(defun user-grammar-names ()
+  "The names of the grammars you added (TUATARA.SYNTAX:USER-GRAMMAR-FILE): each
+NAME.so in the folder of grammars you add whose name Tuatara has no grammar of."
+  (loop for path in (ignore-errors (directory (merge-pathnames "*.so" (tuatara.syntax:user-grammar-directory))))
+        for name = (pathname-name path)
+        when (and (tuatara.syntax:grammar-name-p name) (tuatara.syntax:user-grammar-file name))
+          collect name))
+
 (defun grammars-on-table ()
   "A table holding the name of each grammar on: those of the languages
 *GRAMMARS-ON* names (each language's own grammar, which the languages made
 from it share, and a name that is a grammar's), and of those turned on when
-asked. Worked out again only when the setting, the languages or the answers
-change."
+asked; :USER for a grammar you added, on only while its file is the one
+turned on (USER-GRAMMAR-TRUSTED-P), and never among the common ones. Worked
+out again only when the setting, the languages or the answers change."
   (let ((seen *grammars-on-table*)
         (answers (grammar-answers)))
     (if (and seen (eq (first seen) *grammars-on*) (eq (second seen) *languages*) (eq (third seen) answers))
         (cdddr seen)
         (let ((table (make-hash-table :test 'equal))
-              (setting *grammars-on*))
-          (flet ((turn-on (name)
-                   (let ((language (find-language name)))
-                     (setf (gethash (string-downcase (string name)) table) t)
-                     (when language (setf (gethash (language-grammar language) table) t)))))
+              (setting *grammars-on*)
+              (added (user-grammar-names)))
+          (flet ((turn-on (name &optional common)
+                   (let* ((language (find-language name))
+                          (grammar (if language (language-grammar language) (string-downcase (string name))))
+                          (user (member grammar added :test #'string=)))
+                     (unless (and common user)
+                       (setf (gethash (string-downcase (string name)) table) (if user :user t)
+                             (gethash grammar table) (if user :user t))))))
             (dolist (entry (setting-list '*grammars-on* setting))
-              (cond ((eq entry :common) (mapc #'turn-on *common-grammar-languages*))
+              (cond ((eq entry :common) (dolist (name *common-grammar-languages*) (turn-on name t)))
                     ((or (symbolp entry) (stringp entry)) (turn-on entry))))
             (maphash (lambda (name answer) (when (eq answer :on) (turn-on name))) answers))
           (setf *grammars-on-table* (list* setting *languages* answers table))
@@ -115,8 +128,70 @@ change."
 
 (defun grammar-on-p (language)
   "True when LANGUAGE's grammar may read text: it is on (*GRAMMARS-ON*, or
-turned on when asked)."
-  (and (gethash (language-grammar language) (grammars-on-table)) t))
+turned on when asked), and when it is one you added, its file is the one
+turned on (USER-GRAMMAR-TRUSTED-P)."
+  (let* ((grammar (language-grammar language))
+         (on (gethash grammar (grammars-on-table))))
+    (if (eq on :user)
+        (user-grammar-trusted-p grammar)
+        (and on t))))
+
+(defvar *user-grammar-sums-kept* 200
+  "How many sums of grammars you added, as they were turned on, are remembered.")
+
+(defun print-user-grammar-sum (entry)
+  "The line of the list of sums of grammars you added for ENTRY, (NAME . SUM)."
+  (format nil "~a~c~a" (car entry) #\Tab (cdr entry)))
+
+(defun parse-user-grammar-sum (line)
+  "The entry (NAME . SUM) a LINE of the list of sums of grammars you added
+writes, or NIL for a line that is none."
+  (let ((tab (position #\Tab line)))
+    (and tab (plusp tab) (= 64 (- (length line) tab 1))
+         (cons (subseq line 0 tab) (subseq line (1+ tab))))))
+
+(define-state-list *user-grammar-sums* "user-grammars" 'parse-user-grammar-sum 'print-user-grammar-sum
+  '*user-grammar-sums-kept* :path-of #'car)
+
+(defvar *user-grammar-seen* (make-hash-table :test 'equal :synchronized t)
+  "For each grammar you added, (STAMP SUM SAID): its file as last looked at,
+its SHA-256 then, and whether its change was said.")
+
+(defun user-grammar-sum (name)
+  "The SHA-256 of the file of NAME, a grammar you added, summed again only when
+the file has changed; NIL when it cannot be read."
+  (let* ((path (tuatara.syntax:user-grammar-file name))
+         (stamp (and path (state-file-stamp (tuatara.io:native path))))
+         (seen (gethash name *user-grammar-seen*)))
+    (cond ((null stamp) nil)
+          ((and seen (equal (first seen) stamp)) (second seen))
+          (t (let ((sum (file-sha256 (tuatara.io:native path))))
+               (setf (gethash name *user-grammar-seen*) (list stamp sum nil))
+               sum)))))
+
+(defun record-user-grammar (name)
+  "Keep the SHA-256 of the file of NAME, a grammar you added, as the one
+turned on: from now on it is used while its file is that one."
+  (let ((sum (user-grammar-sum name)))
+    (when sum (state-list-put *user-grammar-sums* (list (cons name sum))))
+    sum))
+
+(defun user-grammar-trusted-p (name)
+  "True when the file of NAME, a grammar you added, is the one turned on: its
+SHA-256 as when it was first turned on (kept now, when it never was).
+Changed since, it is refused, said once, until it is turned on again."
+  (let ((sum (user-grammar-sum name))
+        (kept (cdr (state-list-find *user-grammar-sums* name))))
+    (cond ((null sum) nil)
+          ((null kept) (record-user-grammar name) t)
+          ((string= sum kept) t)
+          (t (let ((seen (gethash name *user-grammar-seen*)))
+               (unless (third seen)
+                 (setf (third seen) t)
+                 (message "The ~a grammar in ~a has changed since you turned it on: it stays off until you turn it on again (~a)"
+                          name (abbreviated-path (namestring (tuatara.syntax:user-grammar-directory)))
+                          (substitute-command-keys "\\[turn-on-grammar]"))))
+             nil))))
 
 (defun language-words (language)
   "LANGUAGE named for a person: the mode-line name of its first mode, else its own name."
@@ -125,8 +200,13 @@ turned on when asked)."
         (string-downcase (symbol-name (language-name language))))))
 
 (defun note-grammar-answer (language on)
-  "Keep the answer ON (true for on) for LANGUAGE's grammar, between sessions as well."
+  "Keep the answer ON (true for on) for LANGUAGE's grammar, between sessions as
+well; turned on, a grammar you added is kept as its file is now."
   (let ((name (string-downcase (symbol-name (language-name language)))))
+    (when (and on (tuatara.syntax:user-grammar-file (language-grammar language)))
+      (record-user-grammar (language-grammar language))
+      (let ((seen (gethash (language-grammar language) *user-grammar-seen*)))
+        (when seen (setf (third seen) nil))))
     (state-list-put *grammar-answers* (list (cons name on)))
     (let ((table (make-hash-table :test 'equalp)))
       (maphash (lambda (k v) (setf (gethash k table) v)) (grammar-answers))
@@ -159,7 +239,7 @@ on and parses the buffers in it, n keeps it off and says how to turn it on
 later; any other key, or \\`C-g', is \"not now\": not asked again in this
 session, and nothing kept."
   (let* ((words (language-words language))
-         (key (handler-case (read-key (format nil "Turn on the ~a grammar, to colour and parse it? (y or n) " words) :fresh t)
+         (key (handler-case (read-key (format nil "Turn on the ~a grammar? (y or n) " words) :fresh t)
                 (quit () nil)))
          (answer (and key (not (tuatara.frontend:key-ctrl key)) (not (tuatara.frontend:key-meta key))
                       (characterp (tuatara.frontend:key-base key))
@@ -267,3 +347,8 @@ in later sessions too, and no file asks to turn it on again;
       (if (grammar-on-p language)
           (message "The ~a grammar stays on: *grammars-on* names it" (language-words language))
           (message "The ~a grammar is off" (language-words language))))))
+
+(defun user-grammar-allowed-p (name)
+  "True when NAME, a grammar you added, may be loaded: it is on, and its file
+is the one turned on (TUATARA.SYNTAX:*USER-GRAMMAR-FUNCTION*)."
+  (and (eq (gethash name (grammars-on-table)) :user) (user-grammar-trusted-p name)))

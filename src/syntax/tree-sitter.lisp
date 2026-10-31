@@ -167,16 +167,38 @@ and nothing elsewhere."
   (and (stringp name) (<= 1 (length name) 64)
        (every (lambda (c) (or (char<= #\a c #\z) (char<= #\0 c #\9) (char= c #\_) (char= c #\-))) name)))
 
+(defun user-grammar-file (name)
+  "The file of the grammar NAME when it is one you added, in the folder of
+grammars you add (USER-GRAMMAR-DIRECTORY), Tuatara having none of that
+name; else NIL."
+  (let ((path (find-grammar-file (format nil "~a.so" name))))
+    (and path (user-grammar-path-p path) path)))
+
+(defun user-grammar-path-p (path)
+  "True when PATH, a real path, is in the folder of grammars you add."
+  (let ((folder (user-grammar-directory)))
+    (and (uiop:subpathp path (or (probe-file folder) folder)) t)))
+
+(defvar *user-grammar-function* nil
+  "A function of the name of a grammar you added, true when it may be loaded
+now (it is on, and its file is the one turned on); NIL, and none may.")
+
 (defun find-grammar (name)
   "The grammar called NAME (a string such as \"rust\"), loaded the first time it
 is asked for; NIL when there is none, or NAME cannot name one (GRAMMAR-NAME-P).
 A grammar that could not be asked for, the program parsing having ended, is
-asked for again next time."
+asked for again next time. A grammar you added (USER-GRAMMAR-FILE) is loaded
+only when *USER-GRAMMAR-FUNCTION* allows it, and asked about again next time
+when not."
   (when (grammar-name-p name)
     (let ((known (gethash name *grammars*)))
       (if known
           (and (grammar-p known) known)
-          (let ((grammar (and (find-grammar-file (format nil "~a.so" name)) (load-grammar name))))
+          (let* ((file (find-grammar-file (format nil "~a.so" name)))
+                 (refused (and file (user-grammar-path-p file)
+                               (not (and *user-grammar-function* (funcall *user-grammar-function* name)))))
+                 (grammar (cond (refused :unknown)
+                                (file (load-grammar name)))))
             (unless (eq grammar :unknown)
               (setf (gethash name *grammars*) (or grammar :missing)))
             (and (grammar-p grammar) grammar))))))

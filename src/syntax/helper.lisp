@@ -28,9 +28,22 @@
 grammars; when empty, grammars/ beside the program, then the source tree's
 build/grammars/.")
 
+(defun user-grammar-directory ()
+  "The folder of the grammars you add yourself: tuatara/grammars/ in your data
+folder ($XDG_DATA_HOME, ~/.local/share/ unless set), each NAME.so with its
+rules in rules/, indents/, textobjects/, injections/, locals/ and tags/ beside
+it, as Tuatara's own syntax/ has them."
+  (uiop:xdg-data-home "tuatara/grammars/"))
+
 (defun grammar-directories ()
-  "The directories searched for the program that parses and the grammars."
-  (or *grammar-directories* (tuatara.runtime:resource-directories "grammars/" "build/grammars/")))
+  "The directories searched for the program that parses and the grammars:
+Tuatara's own (*GRAMMAR-DIRECTORIES* when set, else grammars/ beside the
+program, then the source tree's build/grammars/), then the folder of the
+grammars you add (USER-GRAMMAR-DIRECTORY), whose grammar of a name Tuatara has
+is never taken."
+  (let ((own (or *grammar-directories* (tuatara.runtime:resource-directories "grammars/" "build/grammars/")))
+        (user (user-grammar-directory)))
+    (if (member user own :test #'equal) own (append own (list user)))))
 
 (defun foreign-string (pointer &optional length)
   "The UTF-8 text of LENGTH octets at the foreign POINTER, as a string; without

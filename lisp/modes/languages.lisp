@@ -44,34 +44,41 @@ the same way."
                             collect (or (read-query directory other (cons name seen)) ""))))
           :simple-calls t))))
 
+(defun read-kind-query (kind name)
+  "The text of the rules of KIND (as SYNTAX-DIRECTORY names kinds) called NAME:
+Tuatara's own, syntax/KIND/NAME.scm, else those of a grammar you added,
+KIND/NAME.scm in the folder of grammars you add; NIL when there are none."
+  (or (read-query (syntax-directory kind) name)
+      (read-query (merge-pathnames (format nil "~a/" kind) (tuatara.syntax:user-grammar-directory)) name)))
+
 (defun read-rules (name)
   "The text of the colouring rules NAME (a grammar's or a language's name), from
-syntax/rules/NAME.scm, or NIL when there are none."
-  (read-query (syntax-directory "rules") name))
+syntax/rules/NAME.scm (READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "rules" name))
 
 (defun read-indents (name)
-  "The text of the indentation rules for NAME, from syntax/indents/NAME.scm, or NIL when there are none."
-  (read-query (syntax-directory "indents") name))
+  "The text of the indentation rules for NAME, from indents/NAME.scm (READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "indents" name))
 
 (defun read-textobjects (name)
   "The text of the rules for selecting functions, types, parameters and
-comments in NAME, from syntax/textobjects/NAME.scm, or NIL when there are none."
-  (read-query (syntax-directory "textobjects") name))
+comments in NAME, from textobjects/NAME.scm (READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "textobjects" name))
 
 (defun read-injections (name)
   "The text of the rules for text in other languages in NAME, from
-syntax/injections/NAME.scm, or NIL when there are none."
-  (read-query (syntax-directory "injections") name))
+injections/NAME.scm (READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "injections" name))
 
 (defun read-locals (name)
-  "The text of the rules for local names in NAME, from syntax/locals/NAME.scm,
-or NIL when there are none."
-  (read-query (syntax-directory "locals") name))
+  "The text of the rules for local names in NAME, from locals/NAME.scm
+\(READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "locals" name))
 
 (defun read-tags (name)
   "The text of the rules naming the definitions and headings in NAME, from
-syntax/tags/NAME.scm, or NIL when there are none."
-  (read-query (syntax-directory "tags") name))
+tags/NAME.scm (READ-KIND-QUERY), or NIL when there are none."
+  (read-kind-query "tags" name))
 
 (defstruct (language (:constructor make-language (name doc grammar modes rules indents indent textobjects
                                                   injections injection-names locals definitions tags))
@@ -191,7 +198,9 @@ chosen for it."
 (defmacro define-language (name doc &key grammar modes (indent 4) more-textobjects injection-names definitions queries)
   "Define language NAME (of code or of text, such as Markdown), documented by
 DOC, parsed with the tree-sitter grammar GRAMMAR (the name of its file, rust
-for rust.so) and edited in the major modes MODES. Its colouring rules are
+for rust.so: Tuatara's own, or one you added to the folder of grammars you
+add, ~/.local/share/tuatara/grammars/, its rules beside it in rules/,
+indents/ and the rest) and edited in the major modes MODES. Its colouring rules are
 read from syntax/rules/GRAMMAR.scm, and its indentation rules, if it has
 them, from syntax/indents/GRAMMAR.scm, one level being INDENT columns. The rules for
 selecting its functions, types, parameters and comments are read from
@@ -736,7 +745,8 @@ a text left alone be parsed afresh (SYNTAX-REFRESH-TICK)."
         tuatara.syntax:*helper-ended-function* 'report-helper-ended
         tuatara.syntax:*helper-refused-function* 'report-no-sandbox-for-grammars
         tuatara.syntax:*helper-in-use-function* 'buffer-shown-p
-        tuatara.syntax:*must-not-wait-function* 'on-editor-thread-p)
+        tuatara.syntax:*must-not-wait-function* 'on-editor-thread-p
+        tuatara.syntax:*user-grammar-function* 'user-grammar-allowed-p)
   ;; the helpers all share started now, in the background: the first start
   ;; looks for the sandbox, which may take a moment
   (sb-thread:make-thread (lambda () (ignore-errors (tuatara.syntax:rules-helper) (tuatara.syntax:shared-helper)))

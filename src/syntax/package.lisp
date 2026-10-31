@@ -13,7 +13,7 @@
            ;; tree-sitter: grammars, parsing, queries
            #:find-grammar #:grammar-pending-p #:grammar #:grammar-p #:grammar-name #:grammar-symbols #:syntax-helper-program
            #:*helper* #:*parsing-buffer* #:text-key #:forget-text-faults #:with-own-helper #:buffer-helper #:buffer-helper-soon #:shared-helper #:rules-helper #:forget-buffer-helper #:helper-memory #:*syntax-helper-memory* #:*syntax-helper-wait* #:*syntax-helper-shared-function* #:*helper-ended-function* #:*helper-refused-function* #:*helper-in-use-function* #:*must-not-wait-function* #:helper-parsing #:helper-kind #:helper #:helper-p #:helper-alive #:helper-shared #:helper-ended #:stop-helpers #:tree #:tree-p #:parser #:parser-p
-           #:*grammar-directories* #:grammar-directories #:forget-grammars
+           #:*grammar-directories* #:grammar-directories #:forget-grammars #:user-grammar-directory #:user-grammar-file #:grammar-name-p #:*user-grammar-function*
            #:make-parser #:delete-parser #:parse-rope #:delete-tree #:edit-tree #:tree-has-error-p
            #:compile-query #:query #:query-p #:query-grammar #:query-captures #:query-properties
            #:query-not-answered #:query-error #:query-error-kind #:query-error-line #:query-error-text #:query-error-grammar

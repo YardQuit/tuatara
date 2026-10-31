@@ -40,7 +40,7 @@ it is NIL, whatever *SENTENCE-END-DOUBLE-SPACE* says."
 
 (defparameter *api*
   '(;; defining commands, modes, keys, faces, settings and background work
-    tuatara.command:define-command tuatara.modes:define-major-mode define-face define-package-setting
+    tuatara.command:define-command tuatara.modes:define-major-mode define-language define-face define-package-setting
     tuatara.command:define-key tuatara.command:define-keys tuatara.command:label-keys tuatara.modes:mode-keymap
     tuatara.runtime:define-job-words tuatara.command:substitute-command-keys commands-for-mode buttons-in-mode
     tuatara.modes:fundamental-mode special-mode text-mode org-mode org-agenda-mode
