@@ -64,7 +64,7 @@ the octets below END are read."
             do (let ((b (at i)))
                  (cond
                    ((member b '(32 9 10 12 13)) (incf i))
-                   ((= b 59) (setf i (or (position 10 octets :start i :end n) n)))              ; ;
+                   ((= b 59) (setf i (or (tuatara.text:octets-line-end-position octets i n) n)))              ; ;
                    ((and (= b 35) (= (at (1+ i)) 124))                                   ; #| |#
                     (setf i (nested-comment-end #'at i n)))
                    ((= b 40) (push (or prefix i) opens) (setf prefix nil) (incf i))    ; (

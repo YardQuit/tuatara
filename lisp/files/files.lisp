@@ -319,20 +319,21 @@ safely."
   (and (tuatara.io:safe-visit-p buffer) "Safe"))
 
 (defun files-mode-line (editor buffer)
-  "Mode line function: CRLF for a buffer whose lines end as Windows ends them, Counting lines while a large file's lines
-are counted, the saves running (this buffer's first), and what has become of
+  "Mode line function: CRLF for a buffer whose lines end as Windows ends them,
+CR for one whose lines end with a carriage return alone, Counting lines while
+a large file's lines are counted, the saves running (this buffer's first), and what has become of
 this buffer's file on disk."
   (declare (ignore editor))
   (let ((saves (sort (copy-list (tuatara.io:saves-running)) #'<
                      :key (lambda (job) (if (eq (tuatara.io:save-job-buffer job) buffer) 0 1))))
         (state (case (tuatara.io:file-disk-state buffer)
                  (:changed "Changed on disk") (:deleted "Deleted on disk") (:stale "Stale, read-only")))
-        (crlf (buffer-crlf-p buffer))
+        (ending (case (tuatara.buffer:buffer-line-ending buffer) (:crlf "CRLF") (:cr "CR")))
         (following (eq (tuatara.buffer:buffer-local buffer :follow-file) :on))
         (counting (tuatara.io:index-job-of buffer)))
-    (when (or saves state crlf following counting)
+    (when (or saves state ending following counting)
       (format nil "~{~a~^  ~}"
-              (append (and crlf (list "CRLF"))
+              (append (and ending (list ending))
                       (and following (list "Following"))
                       (and counting (list (format nil "Counting lines ~d%" (tuatara.io:index-progress counting))))
                       (mapcar (lambda (job)

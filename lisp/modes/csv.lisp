@@ -83,7 +83,7 @@ leaves the whole with RETURN, whose value the form then has; else NIL."
 and pipe occurs most often outside quotes in the first line (up to 64 KB);
 comma when none does. True as a second value when one does."
   (let* ((reach (min (tuatara.text:rope-bytes rope) 65536))
-         (end (or (tuatara.text:rope-find-octet rope 10 :end reach) reach))
+         (end (or (tuatara.text:rope-find-line-end rope :end reach) reach))
          (counts (list (cons 44 0) (cons 59 0) (cons 9 0) (cons 124 0)))
          (quoted nil))
     (do-csv-octets (b at quoted) (rope 0 end)
@@ -148,7 +148,7 @@ it has none."
 (defun first-line-touched-p (rope batch)
   "True when BATCH, the change that made ROPE, touched its first line."
   (or (tuatara.text:batch-swap batch)
-      (let ((first-end (or (tuatara.text:rope-find-octet rope 10) (tuatara.text:rope-bytes rope))))
+      (let ((first-end (or (tuatara.text:rope-find-line-end rope) (tuatara.text:rope-bytes rope))))
         (some (lambda (edit) (<= (tuatara.text:edit-start edit) first-end)) (tuatara.text:batch-edits batch)))))
 
 (defun csv-note-change (buffer batch)
@@ -252,7 +252,7 @@ start of the text when that is within +CSV-SCAN-LIMIT+ octets, or the start
 of the first line within them, taken to begin a record."
   (cond (known known)
         ((<= line-start +csv-scan-limit+) 0)
-        (t (let ((newline (tuatara.text:rope-find-octet rope 10 :start (- line-start +csv-scan-limit+) :end line-start)))
+        (t (let ((newline (tuatara.text:rope-find-line-end rope :start (- line-start +csv-scan-limit+) :end line-start)))
              (if newline (1+ newline) line-start)))))
 
 (defun record-starts-between (rope anchor line-start)
@@ -261,14 +261,20 @@ values, the last line start at or before LINE-START outside quotes, which
 begins the record holding that line, and the record starts met every
 +CSV-RECORD-CHECKPOINT+ octets on the way, the last first."
   (declare (type fixnum anchor line-start))
-  (let ((start anchor) (quoted nil) (found '()) (checkpoint (+ anchor +csv-record-checkpoint+)))
+  (let ((start anchor) (quoted nil) (found '()) (checkpoint (+ anchor +csv-record-checkpoint+))
+        ;; a carriage return outside quotes just read: a line end unless a newline comes next
+        (return-before nil))
     (declare (type fixnum start checkpoint))
-    (do-csv-octets (b at quoted) (rope anchor line-start)
-      (when (and (= b 10) (not quoted))
-        (setf start (1+ at))
-        (when (>= start checkpoint)
-          (push start found)
-          (setf checkpoint (+ start +csv-record-checkpoint+)))))
+    (flet ((line-ended (next)
+             (setf start next)
+             (when (>= start checkpoint)
+               (push start found)
+               (setf checkpoint (+ start +csv-record-checkpoint+)))))
+      (do-csv-octets (b at quoted) (rope anchor line-start)
+        (when (and return-before (/= b 10)) (line-ended at))
+        (setf return-before (and (= b 13) (not quoted)))
+        (when (and (= b 10) (not quoted)) (line-ended (1+ at))))
+      (when return-before (line-ended line-start)))
     (values start found)))
 
 (defun unchanged-before (version now)
@@ -332,10 +338,17 @@ not ended within them ends with its first line."
   (declare (type fixnum start))
   (let* ((size (tuatara.text:rope-bytes rope))
          (stop (min size (+ start +csv-scan-limit+)))
-         (quoted nil))
+         (quoted nil)
+         ;; a carriage return outside quotes just read: a line end unless a newline comes next
+         (return-before nil))
     (do-csv-octets (b at quoted) (rope start stop)
+      (when (and return-before (/= b 10))
+        (return-from csv-record-end (values (1- at) at)))
+      (setf return-before (and (= b 13) (not quoted)))
       (when (and (= b 10) (not quoted))
         (return-from csv-record-end (values at (1+ at)))))
+    (when (and return-before (= stop size))
+      (return-from csv-record-end (values (1- size) size)))
     (if (= stop size)
         (values size size)
         (let ((line-end (tuatara.text:rope-line-end rope start)))

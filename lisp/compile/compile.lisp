@@ -795,7 +795,7 @@ not end well; then the compile asked for meanwhile, if any, starts."
       (when (and (live-buffer-p buffer) (eq run (tuatara.buffer:buffer-local buffer 'compile-run)))
         (let* ((size (tuatara.buffer:buffer-size buffer))
                (open (and (> size (compile-run-base run))
-                          (/= 10 (tuatara.text:rope-octet (tuatara.buffer:buffer-text buffer) (1- size))))))
+                          (not (tuatara.text:rope-line-start-p (tuatara.buffer:buffer-text buffer) size)))))
           (add-compile-output buffer (list (tuatara.text:string-octets (format nil "~:[~;~%~]~%~a~%" open words))))
           (unless well
             (note-output-line run (+ size (if open 2 1)) (tuatara.text:string-octet-length words) :error nil))))

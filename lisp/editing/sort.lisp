@@ -97,25 +97,22 @@ COMMAND was not run. Refused when search filters hide any of those lines
 
 ;;; Lines of octets
 
-(defun count-newlines (octets start end)
-  "How many newline octets OCTETS holds from START below END."
-  (declare (type tuatara.text:octets octets) (type fixnum start end) (optimize speed))
-  (loop for i of-type fixnum from start below end count (= (aref octets i) 10)))
-
 (defun scan-lines (octets crlf)
   "The lines of OCTETS, which hold whole lines: three fixnum vectors of each
-line's start, the end of its text (before its newline, and in a CRLF buffer
-before a carriage return ahead of that) and the start of the line after."
+line's start, the end of its text (before the octet that ends it, and in a
+CRLF buffer before a carriage return ahead of a newline) and the start of
+the line after."
   (declare (type tuatara.text:octets octets))
   (let* ((size (length octets))
-         (n (+ (count-newlines octets 0 size) (if (and (plusp size) (/= (aref octets (1- size)) 10)) 1 0)))
+         (n (+ (tuatara.text:octets-line-ends octets 0 size)
+               (if (and (plusp size) (not (tuatara.text:octets-line-end-p octets (1- size) size))) 1 0)))
          (starts (make-array n :element-type 'fixnum))
          (ends (make-array n :element-type 'fixnum))
          (nexts (make-array n :element-type 'fixnum))
          (p 0) (k 0))
     (declare (type fixnum size p k))
     (loop while (< p size)
-          do (let* ((newline (or (loop for i of-type fixnum from p below size when (= (aref octets i) 10) return i) size))
+          do (let* ((newline (or (tuatara.text:octets-line-end-position octets p size) size))
                     (text-end (if (< newline size) (tuatara.text:line-text-end octets p newline crlf) newline))
                     (next (min size (1+ newline))))
                (declare (type fixnum newline text-end next))
@@ -422,14 +419,14 @@ after its last; blank lines between them are not in any."
 
 (defun page-records (octets)
   "The pages of OCTETS: a list of (START END), each starting after the
-newlines that begin it and ending just after the form feed at the start of a
+line ends that begin it and ending just after the form feed at the start of a
 line that ends it, or at the end."
   (let ((records '()) (p 0) (size (length octets)))
     (loop while (< p size)
-          do (loop while (and (< p size) (= (aref octets p) 10)) do (incf p))
+          do (loop while (and (< p size) (tuatara.text:octets-line-end-p octets p size)) do (incf p))
              (when (< p size)
                (let ((end (loop for i from p below size
-                                when (and (= (aref octets i) 12) (or (= i 0) (= (aref octets (1- i)) 10)) (> i p))
+                                when (and (= (aref octets i) 12) (or (= i 0) (tuatara.text:octets-line-end-p octets (1- i) size)) (> i p))
                                   return (1+ i)
                                 finally (return size))))
                  (push (list p end) records)
@@ -586,9 +583,7 @@ DIRECTORY and return the RUN; NIL when JOB was stopped first."
             (with-scratch-file (fd directory)
               (let ((writer (tuatara.io:make-writer fd))
                     (header (tuatara.text:make-octets +record-header+))
-                    (line-ends (make-array (length starts) :element-type '(unsigned-byte 2))))
-                (dotimes (i (length starts))
-                  (setf (aref line-ends i) (- (aref nexts i) (aref ends i))))
+                    (line-ends (line-end-codes octets ends nexts)))
                 (loop for r across order
                       do (let* ((s (aref starts r)) (e (aref ends r))
                                 (number (if numbers (aref numbers r) 0d0)))
@@ -684,16 +679,35 @@ stopped. The runs' files are mapped for the merge and let go after."
             (when (run-mapping run) (tuatara.text:close-mapping (run-mapping run)))
             (when (run-fd run) (ignore-errors (sb-posix:close (run-fd run))))))))))
 
+(defun line-end-code (octets end next)
+  "The code of the end of a line of OCTETS whose text ends at END, the next
+line starting at NEXT (SCAN-LINES), for WRITE-KEPT-LINE-END: 0 for none, 1
+for a newline, 2 for a carriage return and a newline, 3 for a carriage
+return alone."
+  (declare (type tuatara.text:octets octets) (type fixnum end next))
+  (case (- next end)
+    (0 0)
+    (1 (if (= 13 (aref octets end)) 3 1))
+    (t 2)))
+
+(defun line-end-codes (octets ends nexts)
+  "The LINE-END-CODE of each line of OCTETS, whose texts end at ENDS and the
+lines after start at NEXTS (SCAN-LINES), as a vector of 2-bit codes."
+  (let ((codes (make-array (length ends) :element-type '(unsigned-byte 2))))
+    (dotimes (i (length ends) codes)
+      (setf (aref codes i) (line-end-code octets (aref ends i) (aref nexts i))))))
+
 (defun write-kept-line-end (writer code crlf)
-  "Write to WRITER the end a line had, by CODE, the octets between its text's
-end and the next line's start (SCAN-LINES): none for 0, a newline for 1, and
-for 2 a carriage return and a newline when CRLF is true, else a newline."
+  "Write to WRITER the end a line had, by CODE (LINE-END-CODE): none for 0, a
+newline for 1, for 2 a carriage return and a newline when CRLF is true, else
+a newline, and a carriage return for 3."
   (let ((newline (if crlf
                      (load-time-value (coerce #(13 10) 'tuatara.text:octets) t)
                      (load-time-value (coerce #(10) 'tuatara.text:octets) t))))
     (case code
       (0 nil)
       (1 (tuatara.io:writer-octets writer newline (1- (length newline)) (length newline)))
+      (3 (tuatara.io:writer-octets writer (load-time-value (coerce #(13) 'tuatara.text:octets) t) 0 1))
       (t (tuatara.io:writer-octets writer newline 0 (length newline))))))
 
 (defun sort-on-disk (job rope start end key reverse crlf fold directory)
@@ -834,7 +848,7 @@ when JOB was stopped."
                    (let ((octets (tuatara.text:rope-octets rope :start (first piece) :end (second piece))))
                      (multiple-value-bind (starts line-ends nexts) (scan-lines octets crlf)
                        (declare (ignore starts))
-                       (push (map '(vector (unsigned-byte 2)) #'- nexts line-ends) all))))))
+                       (push (line-end-codes octets line-ends nexts) all))))))
          (slot 0))
     (with-scratch-file (fd directory)
       (let ((writer (tuatara.io:make-writer fd)))

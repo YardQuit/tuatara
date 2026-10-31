@@ -502,11 +502,11 @@ CRLF) and where the line after it starts. FROM is a line's start at or before
 AT, from which the text is read: a line holding many matches is read once."
   (declare (type fixnum at from))
   (let* ((total (tuatara.text:rope-bytes rope))
-         (first (tuatara.text:rope-find-octet rope 10 :start from))
+         (first (tuatara.text:rope-find-line-end rope :start from))
          (start from) (newline first))
     (when (and first (< first at))
-      (setf start (1+ (or (tuatara.text:rope-find-octet-backward rope 10 :start (1+ first) :end at) first))
-            newline (tuatara.text:rope-find-octet rope 10 :start at)))
+      (setf start (1+ (or (tuatara.text:rope-find-line-end-backward rope :start (1+ first) :end at) first))
+            newline (tuatara.text:rope-find-line-end rope :start at)))
     (if newline
         (values start
                 (tuatara.text:rope-line-text-end rope start newline crlf)
@@ -592,7 +592,7 @@ after: when the last stretch's last match runs past its end, (END . REACH)."
                    (when progress (sb-ext:atomic-incf (car progress) (max 0 (- high told))))
                    (unless ends
                      (setf units (+ (tuatara.text:rope-count-newlines rope low high)
-                                    (if (and (< low high) (= high total) (/= 10 (tuatara.text:rope-octet rope (1- high)))) 1 0))))
+                                    (if (and (< low high) (= high total) (not (tuatara.text:rope-line-start-p rope high))) 1 0))))
                    (incf looked units)
                    (if hide
                        (progn (runs-turned-round runs first low high) (incf count (- units matched)))
@@ -792,28 +792,30 @@ first HEADER records, ending as ENDS says (RECORDS-START), to its end."
   "What to hide of ROPE (TUATARA.DISPLAY:HIDE-RANGES) so that only its first
 HEADER records (RECORDS-START, ENDS as it takes it) and the lines of RUNS
 \(LINES-MATCHING) are shown: from the
-newline ending each line shown to the one ending the last line hidden after
-it, from the carriage return before each when CRLF; the lines hidden at the
-very start, before any line shown, from the start to the first line shown.
-O(runs)."
+line end of each line shown to the one ending the last line hidden after
+it, from the carriage return before a newline when CRLF; the lines hidden at
+the very start, before any line shown, from the start to the first line
+shown. O(runs)."
   (let* ((total (tuatara.text:rope-bytes rope))
-         (cr (if crlf 1 0))
          (out (make-array (+ 2 (length runs)) :element-type 'fixnum :fill-pointer 0))
          (shown-end (records-start rope header ends)))
-    (flet ((hide (from to)
-             ;; the lines from FROM, a line's start, to TO, the end of the last of them
-             (let ((start (max 0 (- from 1 cr))))
-               (when (< start to) (vector-push start out) (vector-push to out)))))
+    (labels ((text-end-before (at)
+               ;; where the text of the line ending just before AT, a line's start, ends
+               (if (plusp at) (tuatara.text:rope-line-text-end rope 0 (1- at) crlf) 0))
+             (hide (from to)
+               ;; the lines from FROM, a line's start, to TO, the end of the last of them
+               (let ((start (text-end-before from)))
+                 (when (< start to) (vector-push start out) (vector-push to out)))))
       (loop for i from 0 below (length runs) by 2
             do (when (< shown-end (aref runs i))
                  (if (zerop shown-end)
                      ;; no line shown before these: they go with their line breaks
                      (hide 0 (aref runs i))
-                     (hide shown-end (- (aref runs i) 1 cr))))
+                     (hide shown-end (text-end-before (aref runs i)))))
                (setf shown-end (aref runs (1+ i))))
       (when (< shown-end total)
-        (hide shown-end (if (and (plusp shown-end) (= 10 (tuatara.text:rope-octet rope (1- total))))
-                            (- total 1 cr)
+        (hide shown-end (if (and (plusp shown-end) (tuatara.text:rope-line-start-p rope total))
+                            (text-end-before total)
                             total))))
     (coerce out '(simple-array fixnum (*)))))
 

@@ -70,7 +70,8 @@ else T.
 Complexity: O(END - START), little more than finding the newlines."
   (let ((size (tuatara.text:rope-bytes rope))
         (block (make-array 65536 :element-type '(unsigned-byte 8)))
-        ;; octets of the marker so far on the line, -1 for a line that is none, 8 after a carriage return
+        ;; octets of the marker so far on the line, -1 for a line that is none, 8 after a carriage
+        ;; return after a marker, -2 after one on a line that is none
         (column 0) (kind 0) (line start))
     (declare (type fixnum size column kind line start end) (type tuatara.text:octets block)
              (dynamic-extent block) (optimize speed))
@@ -85,10 +86,18 @@ Complexity: O(END - START), little more than finding the newlines."
                             (cond ((= octet 10)
                                    (when (>= column +conflict-marker-length+) (found))
                                    (setf column 0 line (+ low i 1)))
+                                  ((or (= column -2) (= column 8))
+                                   ;; the carriage return before, no newline after it, ended the line:
+                                   ;; this octet is looked at again as the next line's first
+                                   (when (= column 8) (found))
+                                   (setf column 0 line (+ low i))
+                                   (decf i))
                                   ((minusp column)
                                    ;; no marker on this line: on to its end
-                                   (let ((newline (position 10 block :start i :end n)))
-                                     (setf i (1- (or newline n)))))
+                                   (if (= octet 13)
+                                       (setf column -2)
+                                       (let ((newline (position-if (lambda (b) (or (= b 10) (= b 13))) block :start i :end n)))
+                                         (setf i (1- (or newline n))))))
                                   ((zerop column)
                                    (if (member octet '(60 61 62 124))
                                        (setf kind octet column 1)
@@ -132,11 +141,10 @@ the character it is made of (CONFLICT-MAP-MARKERS)."
   (let ((size (tuatara.text:rope-bytes rope))
         (octet (char-code kind)))
     (flet ((octet (i) (and (< i size) (tuatara.text:rope-octet rope i))))
-      (and (or (zerop at) (eql 10 (octet (1- at))))
+      (and (or (zerop at) (= (1- at) (tuatara.text:rope-line-end rope (1- at))))
            (loop for i from at below (+ at +conflict-marker-length+) always (eql octet (octet i)))
            (let ((after (octet (+ at +conflict-marker-length+))))
-             (or (null after) (= after 10)
-                 (and (= after 13) (member (octet (+ at +conflict-marker-length+ 1)) '(nil 10)))
+             (or (null after) (= after 10) (= after 13)
                  (and (= after 32) (char/= kind #\=))))))))
 
 (defun conflict-places (buffer conflict)

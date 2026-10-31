@@ -438,7 +438,7 @@ nothing is."
                (values (tuatara.text:merge-ranges
                         (sort (append (mapcar (lambda (span)
                                                 (cons (car span)
-                                                      (if (eql (char-before-position b (cdr span)) #\Newline)
+                                                      (if (member (char-before-position b (cdr span)) '(#\Newline #\Return))
                                                           (tuatara.buffer:buffer-forward-char b (cdr span) -1)
                                                           (cdr span))))
                                               banked)

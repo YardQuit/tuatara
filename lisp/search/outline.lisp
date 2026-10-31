@@ -151,7 +151,7 @@ megabytes, as a minified script has, is cut short.")
   "Where the line beginning at LINE-START in ROPE ends, or where it is cut
 short, *OUTLINE-LINE-LIMIT* octets on, at the start of a character."
   (let ((limit (min (tuatara.text:rope-bytes rope) (+ line-start *outline-line-limit*))))
-    (or (tuatara.text:rope-find-octet rope 10 :start line-start :end limit)
+    (or (tuatara.text:rope-find-line-end rope :start line-start :end limit)
         (loop for end downfrom limit above line-start
               when (tuatara.text:char-boundary-p rope end) return end
               finally (return line-start)))))

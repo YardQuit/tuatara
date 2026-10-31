@@ -368,8 +368,8 @@ output written a megabyte at a time."
                      (incf lines)
                      ;; the line's end from the text read when it holds it, else looked up
                      (setf line-end (let ((hit (and (<= window-start s) (< s window-end)
-                                                    (position 10 window :start (- s window-start)
-                                                                        :end (- window-end window-start)))))
+                                                    (tuatara.text:octets-line-end-position window (- s window-start)
+                                                                                           (- window-end window-start) nil))))
                                       (if hit (+ window-start hit) (tuatara.text:rope-line-end rope s)))))
                    (unless all (setf allowed (next-line-start-after rope e s))))
                  (setf (rewrite-piece-done piece) e)

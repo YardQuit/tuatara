@@ -223,14 +223,13 @@ While the lines of a large file are still being counted, they are read here,
 and the reading stops once there are more than CAP: the count is then more
 than CAP, not exact."
   (let* ((rope (tuatara.buffer:buffer-text buffer))
-         (tail (if (and (> end start) (/= 10 (tuatara.text:rope-octet rope (1- end)))) 1 0)))
+         (tail (if (and (> end start) (not (tuatara.text:rope-line-start-p rope end))) 1 0)))
     (if (tuatara.text:rope-indexed-p rope)
         (values (+ (- (tuatara.text:byte->line rope end) (tuatara.text:byte->line rope start)) tail) t)
-        (let ((lines 0) (pos start) (block (make-array 65536 :element-type '(unsigned-byte 8))))
+        (let ((lines 0) (pos start))
           (loop while (and (< pos end) (<= lines cap))
                 do (let ((to (min end (+ pos 65536))))
-                     (tuatara.text:rope-copy-into rope pos to block 0)
-                     (incf lines (count 10 block :end (- to pos)))
+                     (incf lines (tuatara.text:rope-count-newlines rope pos to))
                      (setf pos to)))
           (values (+ lines tail) (>= pos end))))))
 

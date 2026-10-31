@@ -111,7 +111,7 @@ position."
            (comment-p (from)
              (loop for p from from
                    for octet = (at p)
-                   until (or (null octet) (= octet 10))
+                   until (or (null octet) (= octet 10) (= octet 13))
                    thereis (and (= octet 67) (word-at p "COMMENT")))))
     (case (at line)
       (42 (let ((after (loop for p from line while (eql (at p) 42) finally (return p))))
@@ -152,10 +152,14 @@ window at a time, on the stack. Complexity: O(END - START)."
                        (:todo (push line todo-lines))
                        (:code (push line code-lines))
                        (t (push (list line kind commented) headlines))))
-                   (let ((newline (position 10 window :start (- line low) :end (- high low))))
+                   (let ((newline (let ((at (tuatara.text:octets-line-end-position window (- line low) (- high low))))
+                                    ;; a carriage return ending the window ends no line a newline follows
+                                    (and at (not (and (= at (- high low 1)) (= 13 (aref window at)) (< high end)
+                                                      (= 10 (tuatara.text:rope-octet rope high))))
+                                         at))))
                      (unless newline
                        ;; the line goes on past the window: the next begins after it
-                       (let ((next (and (< high end) (tuatara.text:rope-find-octet rope 10 :start high :end end))))
+                       (let ((next (and (< high end) (tuatara.text:rope-find-line-end rope :start high :end end))))
                          (setf low (if next (1+ next) end))
                          (return)))
                      (setf line (+ low newline 1))
@@ -213,10 +217,10 @@ change touched are read when TOUCHED says what is known of the rest
 that changed it. As a second value, true when it holds a #+TODO: line."
   (let* ((from (if touched
                    (let ((at (+ start (third touched))))
-                     (if (> at start) (1+ (or (tuatara.text:rope-find-octet-backward rope 10 :start start :end at) (1- start))) start))
+                     (if (> at start) (1+ (or (tuatara.text:rope-find-line-end-backward rope :start start :end at) (1- start))) start))
                    start))
          (to (if touched
-                 (let ((newline (tuatara.text:rope-find-octet rope 10 :start (min end (+ start (fourth touched))) :end end)))
+                 (let ((newline (tuatara.text:rope-find-line-end rope :start (min end (+ start (fourth touched))) :end end)))
                    (if newline (1+ newline) end))
                  end)))
     (multiple-value-bind (headlines todo-lines code-lines) (org-scan-parts rope from to)
@@ -369,7 +373,7 @@ read again."
                        for start = (org-part-start parts i)
                        do (dolist (offset (org-part-todo-lines part))
                             (let* ((line (+ start offset))
-                                   (end (or (tuatara.text:rope-find-octet rope 10 :start line) (tuatara.text:rope-bytes rope))))
+                                   (end (or (tuatara.text:rope-find-line-end rope :start line) (tuatara.text:rope-bytes rope))))
                               ;; a CR LF line's return not one of its words
                               (write-line (string-right-trim '(#\Return) (tuatara.text:rope-string rope :start line :end end)) out)))))))
     (org-todo-keywords-of lines)))
@@ -458,7 +462,7 @@ ORG-VIEW-BYTE)."
   "The text of BUFFER from the octet FROM below TO, a part of it, parsed with
 the TODO keywords KEYWORDS: (TREE TEXT RETURNS), as ORG-PART's PARSE has it."
   (let ((raw (tuatara.buffer:buffer-string buffer :start from :end to)))
-    (multiple-value-bind (text returns) (if (buffer-crlf-p buffer) (org-strip-returns raw) (values raw nil))
+    (multiple-value-bind (text returns) (if (buffer-crlf-p buffer) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
       (let ((tree (org-parse text :todo-keywords keywords)))
         (org-warm-src-languages (org-src-language-names tree))
         (list tree text returns)))))
@@ -767,7 +771,7 @@ parse and the characters of the text), and the parts parsed here."
   (let ((keywords (org-snapshot-keywords snapshot)))
     (when (org-snapshot-whole snapshot)
       (let ((raw (let ((whole (org-snapshot-whole snapshot))) (if (stringp whole) whole (tuatara.text:rope-string whole)))))
-        (multiple-value-bind (text returns) (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values raw nil))
+        (multiple-value-bind (text returns) (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
           (let ((tree (org-parse text :todo-keywords keywords)))
             (return-from org-assemble
               (values tree text returns (org-whole-places tree text returns (org-snapshot-entries snapshot))))))))
@@ -789,7 +793,7 @@ parse and the characters of the text), and the parts parsed here."
                                                       (destructuring-bind (rope from to) source
                                                         (tuatara.text:rope-string rope :start from :end to)))))
                                          (multiple-value-bind (text part-returns)
-                                             (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values raw nil))
+                                             (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
                                            (values (org-parse text :todo-keywords keywords) text 0 (length text) part-returns)))))
                               (push (list text from to) pieces)
                               (loop for r across (or part-returns #()) do (push (+ offset r) returns))
@@ -895,7 +899,7 @@ a new one."
                 (let* ((start (org-part-start parts index))
                        (lines (loop for offset in (org-part-code-lines part)
                                     collect (let* ((line (+ start offset))
-                                                   (end (or (tuatara.text:rope-find-octet rope 10 :start line)
+                                                   (end (or (tuatara.text:rope-find-line-end rope :start line)
                                                             (tuatara.text:rope-bytes rope))))
                                               (string-trim '(#\Space #\Tab #\Return)
                                                            (tuatara.text:rope-string rope :start line :end end)))))

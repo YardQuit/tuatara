@@ -261,7 +261,7 @@ part of the data or show as text."
             (tuatara.buffer:buffer-insert
              buffer size
              (format nil "~:[~;~%~]~@[~a ~]LocalWords: ~a~%"
-                     (and (plusp size) (char/= (tuatara.buffer:buffer-char-at buffer (1- size)) #\Newline))
+                     (and (plusp size) (not (member (tuatara.buffer:buffer-char-at buffer (1- size)) '(#\Newline #\Return))))
                      prefix word))))))
   t)
 

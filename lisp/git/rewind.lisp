@@ -128,7 +128,7 @@ repository at TOP when it is renamed in what is staged; NIL when it is not."
 INDEX of REVISIONS (GIT-REWIND-FILE-LOG) left it, OCTETS, point at the start
 of LINE (0 the first, the last there is when it has fewer); a file whose name
 gives no mode takes the one its first line gives (#!/bin/sh)."
-  (let ((first-line (tuatara.text:octets-string octets :end (or (position 10 octets :end (min (length octets) 512))
+  (let ((first-line (tuatara.text:octets-string octets :end (or (tuatara.text:octets-line-end-position octets 0 (min (length octets) 512))
                                                                 (min (length octets) 512)))))
     (setf (tuatara.buffer:buffer-local buffer 'git-rewind-revisions) revisions
           (tuatara.buffer:buffer-local buffer 'git-rewind-at) index

@@ -163,7 +163,7 @@ newline counts as gone to when point ends at its end."
         ;; lines ran out: to the end of the text, which counts as a line gone
         ;; when point moved to the end of one not ended by a newline
         (setf p (tuatara.buffer:buffer-end b))
-        (when (and (/= p from) (/= 10 (tuatara.text:rope-octet (tuatara.buffer:buffer-text b) (1- p))))
+        (when (and (/= p from) (not (tuatara.text:rope-line-start-p (tuatara.buffer:buffer-text b) p)))
           (decf short)))
       (setf (tuatara.buffer:buffer-point b) p)
       (if (minusp n) (- short) short))))

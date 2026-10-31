@@ -323,8 +323,9 @@ car turns true."
                      (let* ((whole (or (< got (length buffer)) (>= (+ offset got) size)))
                             ;; the piece: up to its last line end before what is read ahead
                             (newline (and (not whole)
-                                          (or (position 10 buffer :end (max 0 (min got (- (length buffer) ahead))) :from-end t)
-                                              (position 10 buffer :end got :from-end t))))
+                                          (or (tuatara.text:octets-line-end-position-backward
+                                               buffer 0 (max 0 (min got (- (length buffer) ahead))) got)
+                                              (tuatara.text:octets-line-end-position-backward buffer 0 got nil))))
                             (growing (< (length buffer) limit)))
                        (if (and (not whole) (null newline) growing)
                            (setf buffer (grown-octets buffer limit))
@@ -345,7 +346,7 @@ car turns true."
                                                                          inside))
                                        (push candidate found)
                                        (incf count))
-                                     (incf lines-before (count 10 buffer :end end))
+                                     (incf lines-before (tuatara.text:octets-line-ends buffer 0 end got))
                                      (incf offset end)
                                      (setf carry (and reach (> reach end) (- reach end))))))))))))
             (ignore-errors (sb-posix:close fd))))))

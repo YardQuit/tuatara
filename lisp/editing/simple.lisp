@@ -91,9 +91,11 @@ one or none (FIXUP-WHITESPACE-AT), point left at the last join."
       (unless (> bol bound) (return))
       (goto bol)
       ;; at the start of the text, or of the part shown: nothing above to join
-      (unless (and (> bol (tuatara.buffer:buffer-start buffer)) (eql (tuatara.buffer:buffer-char-at buffer (1- bol)) #\Newline))
+      (unless (and (> bol (tuatara.buffer:buffer-start buffer))
+                   (member (tuatara.buffer:buffer-char-at buffer (1- bol)) '(#\Newline #\Return)))
         (return))
-      (let ((start (if (and (> bol 1) (eql (tuatara.buffer:buffer-char-at buffer (- bol 2)) #\Return))
+      (let ((start (if (and (> bol 1) (eql (tuatara.buffer:buffer-char-at buffer (1- bol)) #\Newline)
+                            (eql (tuatara.buffer:buffer-char-at buffer (- bol 2)) #\Return))
                        (- bol 2)
                        (1- bol))))
         (tuatara.buffer:buffer-delete buffer start bol)
@@ -330,7 +332,7 @@ shown alone."
         (when (plusp left)
           (let ((size (tuatara.buffer:buffer-end buffer)))
             (setf p size)
-            (unless (and (plusp size) (eql (tuatara.buffer:buffer-char-at buffer (1- size)) #\Newline))
+            (unless (and (plusp size) (member (tuatara.buffer:buffer-char-at buffer (1- size)) '(#\Newline #\Return)))
               (tuatara.buffer:buffer-insert buffer size (tuatara.buffer:buffer-newline buffer))
               (setf p (tuatara.buffer:buffer-end buffer))
               (decf left))
@@ -643,6 +645,8 @@ car turns true."
          (ending nil)
          ;; since the last line end, only blanks: a blank line ends a sentence
          (line-blank t)
+         ;; a carriage return just seen: a line end unless a newline comes next
+         (return-before nil)
          ;; the octets read, three more for those of a character a piece cut, carried to the next
          (piece (make-array (+ 3 (min *count-piece* (max 1 (- end start)))) :element-type '(unsigned-byte 8)))
          (carried 0) (counted 0)
@@ -654,7 +658,12 @@ car turns true."
                     (and (>= i 0) (>= i (- chars (length ring))) (schar ring (mod i (length ring)))))))
     (declare (type fixnum lines sentences words chars carried counted left))
     (labels ((sentence-over () (when in-sentence (incf sentences)) (setf in-sentence nil ending nil))
+             (line-over ()
+               (when line-blank (sentence-over))
+               (setf line-blank t))
              (see (char)
+               (when (and return-before (char/= char #\Newline)) (line-over))
+               (setf return-before (char= char #\Return))
                (setf (schar ring (mod chars (length ring))) char)
                (incf chars)
                (let ((word (word-char-p char)))
@@ -670,9 +679,7 @@ car turns true."
                                (:blank (setf ending :blank))
                                (t (setf ending nil))))))
                    (:blank (if blank (sentence-over) (setf ending nil))))
-                 (cond ((char= char #\Newline)
-                        (when line-blank (sentence-over))
-                        (setf line-blank t))
+                 (cond ((char= char #\Newline) (line-over))
                        (blank)
                        (t
                         (setf line-blank nil in-sentence t)
@@ -690,6 +697,8 @@ car turns true."
                           (tuatara.text:rope-copy-into rope at (+ at n) piece carried)
                           (loop for k from carried below filled
                                 do (let ((octet (aref piece k)))
+                                     ;; a carriage return no newline follows ends a line too
+                                     (when (and (eql last-octet 13) (/= octet 10)) (incf lines))
                                      (setf last-octet octet)
                                      (when (= octet 10) (incf lines))))
                           ;; a character begun at the end may go on in the next piece

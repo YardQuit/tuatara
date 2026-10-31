@@ -1142,11 +1142,11 @@ made a string."
              (if (oddp n) (kill-join twice kill) twice)))))
 
 (defun kill-ends-line-p (kill)
-  "True when KILL ends with a newline."
+  "True when KILL ends with a line end: a newline, or a carriage return."
   (if (stringp kill)
-      (and (plusp (length kill)) (char= (char kill (1- (length kill))) #\Newline))
+      (and (plusp (length kill)) (member (char kill (1- (length kill))) '(#\Newline #\Return)))
       (and (plusp (tuatara.text:rope-bytes kill))
-           (= 10 (tuatara.text:rope-octet kill (1- (tuatara.text:rope-bytes kill)))))))
+           (member (tuatara.text:rope-octet kill (1- (tuatara.text:rope-bytes kill))) '(10 13)))))
 
 (defun kill-text (text &key (append (kill-command-p (editor-last-command *editor*))) (prepend nil))
   "Put TEXT on the kill ring, a string, or a rope for a kill too large for the
@@ -1271,15 +1271,29 @@ hide were left out of it (LEFT-OUT-NOTE)."
                    (write-char #\Return out))
                  (write-char c out)))))
 
+(defun cr-newlines (text)
+  "TEXT with each newline made a carriage return, one that comes after a
+carriage return taken away."
+  (if (not (find #\Newline text))
+      text
+      (with-output-to-string (out)
+        (loop for i from 0 below (length text)
+              for c = (char text i)
+              do (cond ((char/= c #\Newline) (write-char c out))
+                       ((not (and (plusp i) (char= (char text (1- i)) #\Return))) (write-char #\Return out)))))))
+
 (defun text-for-buffer (kill buffer)
   "KILL, text to put into BUFFER (from the kill ring, a template, a file),
 with BUFFER's line ends: where BUFFER's lines end with a carriage return and
-a newline, a newline alone given a carriage return before it; elsewhere, the
-carriage return before a newline taken away. A kill kept as a rope, too
-large for the system clipboard, goes in as it is."
+a newline, a newline alone given a carriage return before it; where they end
+with a carriage return alone, each newline made one; elsewhere, the carriage
+return before a newline taken away. A kill kept as a rope, too large for the
+system clipboard, goes in as it is."
   (cond ((not (stringp kill)) kill)
-        ((buffer-crlf-p buffer) (crlf-newlines kill))
-        (t (lf-newlines kill))))
+        (t (case (tuatara.buffer:buffer-line-ending buffer)
+             (:crlf (crlf-newlines kill))
+             (:cr (cr-newlines kill))
+             (t (lf-newlines kill))))))
 
 (define-command yank ()
   "Insert the most recently killed text at point, or what another program

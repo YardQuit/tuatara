@@ -305,7 +305,7 @@ only blanks from the start of its line, to that start."
          (line (tuatara.buffer:buffer-line-start buffer position))
          (after (skip-blanks buffer position :octets '(32 9))))
     (cond ((and (/= position line)
-                (eql (tuatara.buffer:buffer-char-at buffer after) #\Newline))
+                (member (tuatara.buffer:buffer-char-at buffer after) '(#\Newline #\Return)))
            (next-line-start buffer position))
           ((and (/= position line) (= line (skip-blanks buffer position :backward t :octets '(32 9))))
            line)
@@ -449,7 +449,7 @@ follows."
   (if (line-start-p buffer position)
       position
       (let ((p (skip-blanks buffer position :octets '(32 9))))
-        (if (or (eql (tuatara.buffer:buffer-char-at buffer p) #\Newline) (comment-marker-at-p buffer p))
+        (if (or (member (tuatara.buffer:buffer-char-at buffer p) '(#\Newline #\Return)) (comment-marker-at-p buffer p))
             (next-line-start buffer p)
             p))))
 

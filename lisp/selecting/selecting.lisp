@@ -142,7 +142,7 @@ narrowed buffer, the lines of the part shown, cut at its edges."
         (if visible
             (values (tuatara.display:visible-line-start buffer low :hidden nil) (line-after buffer last))
             (let* ((rope (tuatara.buffer:buffer-text buffer))
-                   (newline (tuatara.text:rope-find-octet rope 10 :start last)))
+                   (newline (tuatara.text:rope-find-line-end rope :start last)))
               (values (tuatara.text:rope-line-start rope low) (if newline (1+ newline) (tuatara.text:rope-bytes rope)))))
       (values (tuatara.buffer:within-narrowing buffer from) (tuatara.buffer:within-narrowing buffer to)))))
 
@@ -272,7 +272,7 @@ a rectangle too: only the lines shown are copied."
              (copy-region-text b start end)
              ;; whole lines, the last with no line end: copied with one, to be pasted as lines
              (when (and lines (= end (tuatara.buffer:buffer-size b))
-                        (/= 10 (tuatara.text:rope-octet (tuatara.buffer:buffer-text b) (1- end))))
+                        (not (tuatara.text:rope-line-start-p (tuatara.buffer:buffer-text b) end)))
                (kill-text (string #\Newline) :append t))
              (setf (tuatara.buffer:buffer-mark-active-p b) nil)
              (line-selection-clear))

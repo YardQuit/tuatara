@@ -418,7 +418,7 @@ safely or the list is opened safely."
                  (hex-view-on buffer))
                 ((not (or (tuatara.io:safe-visit-p (tuatara.display:window-buffer (rimu-preview-list-window state)))
                           (ignore-errors (visit-safely-reason path))))
-                 (let ((first-line (tuatara.text:octets-string octets :end (or (position 10 octets :end (min (length octets) 512))
+                 (let ((first-line (tuatara.text:octets-string octets :end (or (tuatara.text:octets-line-end-position octets 0 (min (length octets) 512))
                                                                                (min (length octets) 512)))))
                    (ignore-errors (set-major-mode buffer (mode-for-file path (string-right-trim '(#\Return) first-line)))))))
               (setf (tuatara.buffer:buffer-local buffer :read-only) t

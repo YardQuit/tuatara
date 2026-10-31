@@ -47,19 +47,19 @@ Complexity: O(the octets read)."
                      for octet = (aref window i)
                      do (ecase state
                           (:start (case octet
-                                    ((10 32 9))
+                                    ((10 13 32 9))
                                     (35 (setf state :keyword matched 1))
                                     (t (setf state :skip))))
-                          (:keyword (cond ((= octet 10) (setf state :start))
+                          (:keyword (cond ((member octet '(10 13)) (setf state :start))
                                           ((char-equal (code-char octet) (char keyword matched))
                                            (when (= (incf matched) (length keyword))
                                              (setf state :value
                                                    value (make-array 16 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))))
                                           (t (setf state :skip))))
-                          (:value (if (= octet 10)
+                          (:value (if (member octet '(10 13))
                                       (progn (take) (setf state :start))
                                       (vector-push-extend octet value)))
-                          (:skip (when (= octet 10) (setf state :start))))))
+                          (:skip (when (member octet '(10 13)) (setf state :start))))))
       (when (eq state :value) (take)))
     words))
 
@@ -134,9 +134,9 @@ and LAST_REPEAT with the time; NIL nothing.")
 
 (defun org-strip-returns (string)
   "STRING with the carriage return before each newline left out, as a note
-whose lines end with CR LF is read, and where: two values, the text and the
-places in it of the newlines that lost one (a vector in order), or NIL when
-none did."
+whose lines end with CR LF is read, and each carriage return that ends a
+line alone read as a newline: two values, the text and the places in it of
+the newlines that lost one (a vector in order), or NIL when none did."
   (if (not (find #\Return string))
       (values string nil)
       (let ((out (make-string (length string)))
@@ -144,17 +144,30 @@ none did."
             (j 0) (n (length string)))
         (dotimes (i n)
           (let ((c (char string i)))
-            (if (and (char= c #\Return) (< (1+ i) n) (char= (char string (1+ i)) #\Newline))
-                (vector-push-extend j returns)
-                (progn (setf (char out j) c) (incf j)))))
+            (cond ((and (char= c #\Return) (< (1+ i) n) (char= (char string (1+ i)) #\Newline))
+                   (vector-push-extend j returns))
+                  ((char= c #\Return) (setf (char out j) #\Newline) (incf j))
+                  (t (setf (char out j) c) (incf j)))))
         (values (subseq out 0 j)
                 (and (plusp (length returns)) (coerce returns '(simple-array fixnum (*))))))))
+
+(defun lone-returns-as-newlines (string)
+  "STRING with each carriage return that no newline follows, which ends a
+line, made a newline: as long as STRING, every character where it was."
+  (if (not (find #\Return string))
+      string
+      (let ((out (copy-seq string)))
+        (dotimes (i (length out) out)
+          (when (and (char= (char out i) #\Return)
+                     (not (and (< (1+ i) (length out)) (char= (char out (1+ i)) #\Newline))))
+            (setf (char out i) #\Newline))))))
 
 (defun org-buffer-text (buffer &key (start 0) (end (tuatara.buffer:buffer-size buffer)))
   "The text Org reads of BUFFER from octet START below END, all of it unless
 they are given: in a buffer whose lines end with a carriage return and a
-newline, each return before a newline left out."
-  (let ((string (tuatara.buffer:buffer-string buffer :start start :end end)))
+newline, each return before a newline left out; a carriage return that ends
+a line alone read as a newline."
+  (let ((string (lone-returns-as-newlines (tuatara.buffer:buffer-string buffer :start start :end end))))
     (if (buffer-crlf-p buffer) (lf-newlines string) string)))
 
 (defun org-line-head (buffer position &optional (octets 512))
@@ -260,7 +273,7 @@ NIL for a text the parser cannot read."
                        (destructuring-bind (rope start end) source
                          (ignore-errors (tuatara.text:rope-string rope :start start :end end))))))
           (when raw
-            (multiple-value-bind (text returns) (if crlf (org-strip-returns raw) (values raw nil))
+            (multiple-value-bind (text returns) (if crlf (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
               (let ((tree (ignore-errors (org-parse text :todo-keywords keywords))))
                 (and tree (list tree text returns nil)))))))))
 

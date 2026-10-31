@@ -170,7 +170,7 @@ comment runs over it, and return SCAN."
                    (case b
                      ((32 9 10 12 13) (incf i))
                      (59                                                        ; ; to the line's end
-                      (loop while (and (< i size) (/= (at i) 10)) do (incf i)))
+                      (loop while (and (< i size) (/= (at i) 10) (/= (at i) 13)) do (incf i)))
                      (40
                       (push (make-lisp-frame i (or prefix i)) stack)
                       (setf prefix nil)
@@ -685,7 +685,7 @@ octets back: then the start of the first line within it."
                     (if (plusp position) (lisp-text-start rope (1- position) *lisp-indent-reach*) 0))))
     (cond ((and start (<= (- position start) *lisp-indent-reach*)) start)
           ((<= position *lisp-indent-reach*) 0)
-          (t (let ((newline (tuatara.text:rope-find-octet rope 10 :start (- position *lisp-indent-reach*) :end position)))
+          (t (let ((newline (tuatara.text:rope-find-line-end rope :start (- position *lisp-indent-reach*) :end position)))
                (if newline (1+ newline) position))))))
 
 (defparameter *lisp-line-head* 256
