@@ -163,3 +163,146 @@ more than one octet in it, and once with its lines ending in CR LF."
         (true row)
         (true (loop for (nil face) in (org-row-faces f row) never (eq (if (listp face) (first face) face) :org-level-1)))
         (true (org-faces-include f (- row 2) "* Heading 19" :org-level-1))))))
+
+(defun org-node-full-data (node)
+  "NODE and everything under it as data, every slot and property (a
+headline's title objects too), to tell two parses apart."
+  (list (tuatara.defaults::org-node-type node) (tuatara.defaults::org-node-begin node) (tuatara.defaults::org-node-end node)
+        (tuatara.defaults::org-node-contents-begin node) (tuatara.defaults::org-node-contents-end node)
+        (tuatara.defaults::org-node-post-blank node) (tuatara.defaults::org-node-post-affiliated node)
+        (loop for (key value) on (tuatara.defaults::org-node-properties node) by #'cddr
+              unless (eq key :children-vector)
+                collect key and collect (if (eq key :title) (mapcar #'org-node-full-data value) value))
+        (mapcar #'org-node-full-data (tuatara.defaults::org-node-children node))))
+
+(defun org-parts-random-edits (buffer pieces)
+  "Make one batch of one to three random edits in BUFFER, each putting one of PIECES somewhere."
+  (let* ((rope (tuatara.buffer:buffer-text buffer))
+         (size (tuatara.text:rope-bytes rope))
+         (edits (sort (loop repeat (1+ (random 3))
+                            collect (let* ((start (tuatara.text:rope-char-start rope (random (1+ size))))
+                                           (end (if (zerop (random 3))
+                                                    (tuatara.text:rope-char-start rope (min size (+ start (random 12))))
+                                                    start)))
+                                      (tuatara.text:make-edit start end (tuatara.text:string-octets (nth (random (length pieces)) pieces)))))
+                      #'< :key #'tuatara.text:edit-start)))
+    (tuatara.buffer:buffer-edit buffer (coerce (loop with last = -1
+                                                     for e in edits
+                                                     when (> (tuatara.text:edit-start e) last)
+                                                       collect e and do (setf last (tuatara.text:edit-end e)))
+                                               'vector))))
+
+(define-test (org-internals whole-parse-made-of-parts)
+  ;; the whole parse commands read, made of the parts' parses, is the parse of the whole text, node for node,
+  ;; and where its text lost its carriage returns as they are: after each of many changes, CR LF too
+  (let ((*random-state* (sb-ext:seed-random-state 2027))
+        (tuatara.defaults::*org-parse-at-once* most-positive-fixnum)
+        (pieces (list "* " "** " "*" "*	" " " (string #\Newline) (format nil "~%* New~%") (format nil "#+TODO: NEXT | DONE~%")
+                      "NEXT " "COMMENT " "é" "x" (format nil "~%~%") ":END:" (format nil "~%:PROPERTIES:~%:ID: 1~%:END:~%")
+                      "#+begin_src" (format nil "~%#+end_src~%") "[[a][b]] *bold* "))
+        (compared 0))
+    (dolist (entry (org-parts-corpus))
+      (destructuring-bind (text . crlf) entry
+        (let ((buffer (org-parts-buffer text crlf)))
+          (unwind-protect
+               (dotimes (step 60)
+                 (when (plusp step)
+                   (if crlf
+                       ;; lines kept ending in CR LF: no newline typed alone
+                       (org-parts-random-edits buffer (list "* " "x" "é" "*" " " (format nil "~c~%* N~c~%" #\Return #\Return)))
+                       (org-parts-random-edits buffer pieces)))
+                 (when (or (evenp step) (= step 59))
+                   (multiple-value-bind (tree tree-text) (tuatara.defaults::org-buffer-tree buffer)
+                     (multiple-value-bind (whole returns) (tuatara.defaults::org-strip-returns (tuatara.buffer:buffer-string buffer))
+                       (incf compared)
+                       (is string= whole tree-text)
+                       (is equal (org-node-full-data (tuatara.defaults::org-parse whole)) (org-node-full-data tree))
+                       (when crlf
+                         (is equalp returns (tuatara.defaults::org-state-returns (tuatara.defaults::org-buffer-state buffer)))
+                         (is equalp returns (tuatara.defaults::org-parts-returns buffer)))))))
+            (tuatara.buffer:kill-buffer buffer)))))
+    (true (< 600 compared))))
+
+(define-test (org-internals blocks-key-follows-the-blocks)
+  ;; what language servers see of a note is worked out again when its blocks change, not for text typed elsewhere
+  (let ((buffer (org-parts-buffer (format nil "* A~%Prose here.~%#+begin_src python~%x = 1~%#+end_src~%* B~%More prose.~%") nil)))
+    (unwind-protect
+         (flet ((key () (tuatara.defaults::org-blocks-key buffer))
+                (insert (at text) (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit at at (tuatara.text:string-octets text))))))
+           (let ((before (key)))
+             (insert 6 "Words ")
+             (insert (search "More" (tuatara.buffer:buffer-string buffer)) "Even ")
+             (is equal before (key))
+             (insert (search "python" (tuatara.buffer:buffer-string buffer)) "r")
+             (false (equal before (key)))
+             (let ((again (key)))
+               (insert (search "#+end_src" (tuatara.buffer:buffer-string buffer)) "x")
+               (false (equal again (key))))))
+      (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals large-part-typed-in-without-lag)
+  ;; typing in a note of one large part (no headlines): its parse in the background is put off while typing goes
+  ;; on, not made again for each key, so that the garbage of each key stays small; it is parsed once typing pauses
+  (let* ((text (with-output-to-string (out)
+                 (dotimes (i 6000) (format out "- item ~d with *bold* and a [[https://x.org][link]]~%" i))))
+         (middle (1+ (position #\Newline text :start (floor (length text) 2))))
+         (before 0) (consed 0) (view nil))
+    (labels ((buffer () (session-buffer tuatara.command:*editor*))
+             (settled () (loop repeat 400 until (let ((v (tuatara.defaults::org-view-at (buffer) middle))) (and v (tuatara.defaults::org-view-current v)))
+                               do (sleep 0.01))))
+      (run-keys (append (list "M-x o r g - m o d e RET"
+                              (lambda () (setf (tuatara.buffer:buffer-point (buffer)) middle))
+                              "i x" :tick #'settled
+                              (lambda () (setf before (tuatara.bench::bytes-consed))))
+                        ;; fifty keys a second
+                        (loop repeat 40 append (list "y" (lambda () (sleep 0.02))))
+                        (list (lambda () (setf consed (- (tuatara.bench::bytes-consed) before)))
+                              (lambda () (sleep 0.3)) :tick #'settled
+                              (lambda () (setf view (tuatara.defaults::org-view-at (buffer) middle)))
+                              "C-g"))
+                :text text :width 100 :height 30))
+    ;; each key's parse was 6 MB of garbage
+    (true (< (/ consed 40) 300000) "~:d octets for each key" (round consed 40))
+    (true (tuatara.defaults::org-view-current view))))
+
+(define-test (org-internals whole-parse-after-a-change-parses-the-part)
+  ;; the whole parse a command reads, after a key typed in a large note, parses only the part typed in:
+  ;; the whole text was parsed again, 1.9 s for 10 MB
+  (let* ((one (format nil "* Heading~%Some *bold* text and a [[https://x.org][link]].~%- an item~%~%"))
+         (text (with-output-to-string (out) (loop repeat 6000 do (write-string one out))))
+         (buffer (org-parts-buffer text nil))
+         (parsed 0)
+         (parse (fdefinition 'tuatara.defaults::org-parse)))
+    (unwind-protect
+         (let ((tuatara.defaults::*org-parse-at-once* most-positive-fixnum))
+           (tuatara.defaults::org-buffer-tree buffer)
+           (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit 200000 200000 (tuatara.text:string-octets "x"))))
+           (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text &rest arguments)
+                                                                     (incf parsed (length text))
+                                                                     (apply parse text arguments))))
+             (multiple-value-bind (tree whole) (tuatara.defaults::org-buffer-tree buffer)
+               (true tree)
+               (is = (1+ (length text)) (length whole))))
+           (true (< 0 parsed 1000) "~:d characters parsed" parsed))
+      (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals returns-found-again-for-the-part-changed)
+  ;; where a CR LF note's text lost its carriage returns, after a change: found again in the part changed, not
+  ;; in the whole text
+  (let* ((one (format nil "* Heading~c~%Some text.~c~%~c~%" #\Return #\Return #\Return))
+         (text (with-output-to-string (out) (loop repeat 20000 do (write-string one out))))
+         (buffer (org-parts-buffer text t))
+         (read 0)
+         (find (fdefinition 'tuatara.defaults::org-returns-in-rope)))
+    (unwind-protect
+         (progn
+           (tuatara.defaults::org-returns-of buffer)
+           (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit 200000 200000 (tuatara.text:string-octets "x"))))
+           (with-functions-replaced ((tuatara.defaults::org-returns-in-rope
+                                      (lambda (rope &rest arguments &key (start 0) (end (tuatara.text:rope-bytes rope)))
+                                        (incf read (- end start))
+                                        (apply find rope arguments))))
+             (is equalp (nth-value 1 (tuatara.defaults::org-strip-returns (tuatara.buffer:buffer-string buffer)))
+                 (tuatara.defaults::org-returns-of buffer)))
+           (true (< read 1000) "~:d octets read" read))
+      (tuatara.buffer:kill-buffer buffer))))

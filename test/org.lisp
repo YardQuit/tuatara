@@ -408,8 +408,10 @@ signs, not indented, drawers open."
         (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults :buffer buffer)
         (is >= 1 most)
         ;; the last text typed is parsed in the end
-        (loop repeat 300 until (zerop (parsers)) do (sleep 0.05))
-        (true (tuatara.defaults::org-view-current (tuatara.defaults::org-view-at buffer 0)))
+        ;; parsed again once typing has paused
+        (true (loop repeat 300
+                    thereis (tuatara.defaults::org-view-current (tuatara.defaults::org-view-at buffer 0))
+                    do (sleep 0.05)))
         (tuatara.buffer:buffer-mark-saved buffer)
         (tuatara.buffer:kill-buffer buffer)))))
 

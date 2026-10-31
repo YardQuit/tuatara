@@ -114,19 +114,21 @@ commented subtrees left out; from its text before there is one."
 (defun org-block-doc-specs (buffer)
   "What servers see of BUFFER when it is a note with source blocks of a
 language a server knows: for each such language, its blocks, as
-*LSP-DOC-SPEC-FUNCTIONS* has them; NIL for any other buffer. Worked out once
-for each parse of the note."
+*LSP-DOC-SPEC-FUNCTIONS* has them; NIL for any other buffer. Worked out from
+the note's parse once for each change of what its blocks are (ORG-BLOCKS-KEY),
+not again for text typed elsewhere."
   (when (and (typep (buffer-major-mode buffer) 'org-mode) (tuatara.buffer:buffer-file buffer))
-    (let ((tree (org-buffer-tree buffer))
+    (let ((key (org-blocks-key buffer))
           (kept (tuatara.buffer:buffer-local buffer 'org-block-specs)))
-      (if (and tree (eq tree (car kept)))
+      (if (and kept (equal key (car kept)))
           (cdr kept)
           (let ((specs (loop for language in (org-blocks-languages buffer)
                              collect (let ((language language))
                                        (list language (org-blocks-uri buffer language)
                                              (lambda (b) (org-blocks-shadow b language)))))))
-            (when tree
-              (setf (tuatara.buffer:buffer-local buffer 'org-block-specs) (cons tree specs)))
+            ;; kept only when read from the parse of the text as it is now
+            (when (and (org-buffer-tree buffer) (org-parse-current-p buffer))
+              (setf (tuatara.buffer:buffer-local buffer 'org-block-specs) (cons key specs)))
             specs)))))
 
 (defun org-blocks-visit (buffer)
