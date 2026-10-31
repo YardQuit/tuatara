@@ -365,7 +365,7 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
           (handler-case (progn (tuatara.defaults::run-git root writing) (false t "~s ran" writing))
             (tuatara.io:writing-refused (e)
               (true (search "is an evidence folder (*evidence-folders*: " (princ-to-string e)) "~s" writing)
-              (true (search (format nil " git ~a " (first writing)) (princ-to-string e))))))
+              (true (uiop:string-prefix-p (format nil "git ~a is not run: " (first writing)) (princ-to-string e))))))
         (is string= "changed meanwhile by another program" (file-text (merge-pathnames "evidence/kept.txt" dir)))
         ;; reading runs
         (multiple-value-bind (octets ok) (tuatara.defaults::run-git root '("status" "--porcelain"))
@@ -758,3 +758,48 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
       (tuatara.defaults::evidence-rules)
       (true (sb-thread:thread-alive-p tuatara.defaults::*evidence-keeper*)))
     (true (member 'tuatara.defaults::evidence-saved sb-ext:*init-hooks*))))
+
+(define-test (evidence saved-as-out-of-evidence)
+  ;; a file of evidence saved as a file elsewhere: the buffer visits that file, safely still, writable, no longer marked Evidence
+  (with-case-folder (root evidence work)
+    (with-fresh-recent-files
+      (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
+        (let ((a (concatenate 'string evidence "a.txt"))
+              (copy (concatenate 'string work "a-copy.txt")))
+          (multiple-value-bind (f editor)
+              (run-keys (format nil "C-x C-f C-a C-k ~a RET C-x C-w C-a C-k ~a RET" (key-string a) (key-string copy))
+                        :width 700 :height 12)
+            (let ((b (tuatara.display:window-buffer (tuatara.command:editor-window editor))))
+              (is string= copy (tuatara.io:native (tuatara.buffer:buffer-file b)))
+              (false (tuatara.defaults::buffer-evidence b))
+              ;; still what the evidence held: opened safely, but no longer read-only
+              (true (tuatara.io:safe-visit-p b))
+              (false (tuatara.buffer:buffer-local b :read-only))
+              (false (find-if (lambda (row) (search " Evidence " row)) (last-screen-rows f)))))
+          (is string= "kept as found" (file-text a))
+          (is string= "kept as found" (file-text copy)))))))
+
+(define-test (evidence git-refused-in-one-sentence)
+  ;; holding evidence never trusts a repository for git; a refused write is said in one sentence
+  (with-case-folder (root evidence work)
+    (scratch-repository root)
+    (put-file (concatenate 'string work "notes.txt") "notes")
+    (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
+      (wait-for-evidence-links)
+      (false (tuatara.defaults::project-trusted-p root))
+      (true (tuatara.frontend.fake:fake-frame-showing
+             (run-keys "C-x g" :file (concatenate 'string work "notes.txt") :width 400 :height 20)
+             "is not trusted: "))
+      (false (find-if (lambda (b) (eq (type-of (tuatara.defaults::buffer-major-mode b)) 'tuatara.defaults::git-status-mode))
+                      tuatara.buffer:*buffers*))
+      (handler-case (progn (tuatara.defaults::run-git root '("checkout" "--" ".")) (false t))
+        (tuatara.io:writing-refused (e)
+          (let ((words (princ-to-string e)))
+            (true (uiop:string-prefix-p "git checkout is not run: " words) "~a" words)
+            (true (search "is an evidence folder (*evidence-folders*: " words))
+            (false (search "Could not" words))))))))
+
+(define-test (evidence read-directory-path-in-the-api)
+  ;; every question taking :writing is a name packages may use
+  (dolist (name '("READ-PATH" "READ-FILE-PATH" "READ-DIRECTORY-PATH" "READ-NATIVE-PATH" "READ-NEW-NATIVE-PATH"))
+    (is eq :external (nth-value 1 (find-symbol name :tuatara)) "~a" name)))

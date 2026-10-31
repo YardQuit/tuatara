@@ -132,6 +132,13 @@ and archive with no file to write."
             ((string= command "archive") (or (given "-o") (some (lambda (word) (uiop:string-prefix-p "--output" word)) more)))
             (t t)))))
 
+(define-condition git-refused (tuatara.io:writing-refused) ()
+  (:report (lambda (c stream)
+             (format stream "git ~a is not run: ~a"
+                     (tuatara.io:file-system-error-operation c) (tuatara.io:file-system-error-reason c))))
+  (:documentation "Git not run, its command named as the operation, for it would write where nothing
+is written (CHECK-GIT-WRITING)."))
+
 (defun check-git-writing (directory arguments &optional environment)
   "Signal TUATARA.IO:WRITING-REFUSED, the folder named, when git run with
 ARGUMENTS in DIRECTORY and ENVIRONMENT would write in a place nothing is
@@ -146,8 +153,17 @@ from the setting (FOLDER-HOLDS-EVIDENCE-P); returns those words then, for
 its hooks to be left out (RUN-GIT-PROGRAM). Nothing is looked at while no
 place is refused."
   (when (tuatara.io:writing-refused-anywhere-p)
-    (let* ((words (git-command-words arguments))
-           (doing (format nil "run git ~a in" (or (first words) ""))))
+    (handler-case (check-git-places directory arguments environment)
+      (git-refused (e) (error e))
+      (tuatara.io:writing-refused (e)
+        (error 'git-refused :operation (or (first (git-command-words arguments)) "")
+                            :path (tuatara.io:file-system-error-path e)
+                            :reason (tuatara.io:file-system-error-reason e))))))
+
+(defun check-git-places (directory arguments environment)
+  "CHECK-GIT-WRITING's looks, refusing in the words of a write refused."
+  (let* ((words (git-command-words arguments))
+         (doing (format nil "run git ~a in" (or (first words) ""))))
       (multiple-value-bind (here git-dir work-tree) (git-places directory arguments environment)
         (let ((top (or work-tree (ignore-errors (repository-top here)))))
           (dolist (place (remove nil (list git-dir top)))
@@ -161,7 +177,7 @@ place is refused."
             (let ((holding (folder-holds-evidence-p top)))
               (when (and holding (git-writes-work-tree-p arguments))
                 (error 'tuatara.io:writing-refused :operation doing :path top :reason holding))
-              holding)))))))
+              holding))))))
 
 (defun git-argument-places (word)
   "The paths a word given to git may name: the word itself, what follows its

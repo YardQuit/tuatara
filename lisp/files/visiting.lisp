@@ -848,7 +848,6 @@ and a place among the files visited lately that opens it as usual. Point,
 changes not saved and undo stay as they are. A file of evidence
 \(*EVIDENCE-FOLDERS*) stays opened safely."
   (let* ((b (current-buffer))
-         (mode (buffer-major-mode b))
          (evidence (buffer-evidence b)))
     (cond
       ((not (tuatara.io:safe-visit-p b))
@@ -857,16 +856,24 @@ changes not saved and undo stay as they are. A file of evidence
        (message "~a stays opened safely: ~a" (tuatara.buffer:buffer-name b)
                 (evidence-visit-reason (tuatara.io:native (tuatara.buffer:buffer-file b)))))
       (t
-       (let ((chosen (not (eq (type-of mode) 'fundamental-mode))))
-         (tuatara.io:end-safe-visit b)
-         (when chosen
-           ;; the mode stays as it is set up, its language now parsed
-           (let ((language (mode-language mode)))
-             (when language (start-parsing b language))))
-         (dolist (f tuatara.buffer:*find-file-functions*)
-           (unless (and chosen (eq f 'set-auto-mode)) (funcall f b)))
-         (message "~a is open as usual now~:[~;; read-only, since you may not write it~]"
-                  (tuatara.buffer:buffer-name b) (tuatara.buffer:buffer-local b :read-only)))))))
+       (visit-as-usual b)
+       (message "~a is open as usual now~:[~;; read-only, since you may not write it~]"
+                (tuatara.buffer:buffer-name b) (tuatara.buffer:buffer-local b :read-only))))))
+
+(defun visit-as-usual (b)
+  "Have B, visiting its file safely, visit it as usual from now on: editable
+when you may write the file, with what \\[find-file] gives a file (its
+major mode, or the one chosen meanwhile, version control, a place among the
+files visited lately)."
+  (let* ((mode (buffer-major-mode b))
+         (chosen (not (eq (type-of mode) 'fundamental-mode))))
+    (tuatara.io:end-safe-visit b)
+    (when chosen
+      ;; the mode stays as it is set up, its language now parsed
+      (let ((language (mode-language mode)))
+        (when language (start-parsing b language))))
+    (dolist (f tuatara.buffer:*find-file-functions*)
+      (unless (and chosen (eq f 'set-auto-mode)) (funcall f b)))))
 
 (define-command read-only-mode ()
   "Make the current buffer read-only, or editable again if it is; with a

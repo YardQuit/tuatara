@@ -63,7 +63,7 @@ it is NIL, whatever *SENTENCE-END-DOUBLE-SPACE* says."
     tuatara.command:read-string tuatara.command:finish-minibuffer tuatara.command:quit tuatara.command:completing-read tuatara.command:completing-read-value tuatara.command:make-candidate tuatara.command:yes-or-no-p*
     tuatara.command:complete-in-minibuffer
     read-date tuatara.dates:read-date-text
-    read-path read-file-path read-native-path read-new-native-path read-whole-number tuatara.command:wait-interruptibly tuatara.command:wait-until-interruptibly
+    read-path read-file-path read-directory-path read-native-path read-new-native-path read-whole-number tuatara.command:wait-interruptibly tuatara.command:wait-until-interruptibly
     tuatara.command:first-line tuatara.text:one-line
     ;; telling what has just happened, on the desktop and in *Notifications*
     notify

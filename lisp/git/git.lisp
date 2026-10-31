@@ -103,7 +103,9 @@ work that only reads."
    (lambda (job)
      (let* ((result '())
             (said (catch 'git-failed
-                    (setf result (multiple-value-list (funcall work job)))
+                    (handler-case (setf result (multiple-value-list (funcall work job)))
+                      ;; refused for evidence: said as it is, in one sentence
+                      (git-refused (e) (throw 'git-failed (princ-to-string e))))
                     nil)))
        (if said
            (setf (git-job-said job) said

@@ -66,6 +66,7 @@ buffer opened safely keeps showing its text as it is), and run
          (let ((name (tuatara.io:native-file-name (tuatara.buffer:buffer-file buffer))))
            (unless (string= name (tuatara.buffer:buffer-name buffer))
              (setf (tuatara.buffer:buffer-name buffer) (tuatara.buffer:unique-buffer-name name)))
+           (saved-out-of-evidence buffer)
            (take-mode-of-name buffer)))
        (message "Wrote ~a~:[~*~; (~a in ~,1f s)~]" (escape-controls (abbreviated-path (tuatara.io:save-job-target job)))
                 (> seconds *save-wait*) (octets-words (tuatara.io:save-job-total job)) seconds)
@@ -73,6 +74,18 @@ buffer opened safely keeps showing its text as it is), and run
          (dolist (f *after-save-functions*) (funcall f buffer))))
       ((:stopped :failed) (message "~a" (tuatara.runtime:job-ending-words job))))
     (setf *saves-as* (remove job *saves-as*))))
+
+(defun saved-out-of-evidence (buffer)
+  "When BUFFER, opened safely for being evidence, has just been saved as a
+file outside every evidence folder: it stays opened safely, what it holds
+being the evidence's still, but may be changed now when you may write the
+new file; \\[end-safe-visit] opens it as usual. Said so."
+  (when (shiftf (tuatara.buffer:buffer-local buffer :saved-from-evidence) nil)
+    (when (and (tuatara.io:safe-visit-p buffer) (null (buffer-evidence buffer)))
+      (setf (tuatara.buffer:buffer-local buffer :read-only)
+            (not (tuatara.io:writable-p (tuatara.buffer:buffer-file buffer))))
+      (message "~a is a copy out of evidence: still opened safely, and may be changed; \\[end-safe-visit] opens it as usual"
+               (tuatara.buffer:buffer-name buffer)))))
 
 (defun take-mode-of-name (buffer)
   "Give BUFFER the major mode the name of its file calls for, but for a name
@@ -158,6 +171,10 @@ wait: it saves the buffer itself once ready."
                      thereis (eq :later (handler-case (funcall function buffer)
                                           (error (e) (tuatara.runtime:debug-report :error "before saving ~a, ~a: ~a" name function e) nil)))))
          (return-from save-buffer-with-care nil))
+       ;; saved as a file out of evidence, it may be changed once written (SAVED-OUT-OF-EVIDENCE)
+       (when as
+         (setf (tuatara.buffer:buffer-local buffer :saved-from-evidence)
+               (and (tuatara.io:safe-visit-p buffer) (buffer-evidence buffer) t)))
        (let ((job (handler-case (tuatara.io:start-save buffer :path file :force as)
                     (tuatara.io:file-changed-on-disk ()
                       (if (yes-or-no-p* (format nil "~a changed on disk since it was read; overwrite it with this buffer?"

@@ -758,17 +758,18 @@ echo area and *Messages*, the first time only."
 
 (defun buffer-evidence (buffer)
   "The evidence folder BUFFER's file is in, or NIL, worked out once for each
-reading of *EVIDENCE-FOLDERS* (EVIDENCE-PATH-P): what the mode line asks on
-every redisplay. NIL at once when the setting names no folder."
+file it visits and reading of *EVIDENCE-FOLDERS* (EVIDENCE-PATH-P): what the
+mode line asks on every redisplay; a buffer saved as a file elsewhere is
+told of its new one. NIL at once when the setting names no folder."
   (when *evidence-folders*
     (let ((file (tuatara.buffer:buffer-file buffer))
           (kept (tuatara.buffer:buffer-local buffer :evidence)))
       (when file
         (evidence-rules)
-        (if (and kept (eql (car kept) *evidence-generation*))
-            (cdr kept)
+        (if (and kept (eql (first kept) *evidence-generation*) (equal (second kept) file))
+            (cddr kept)
             (let ((folder (ignore-errors (evidence-path-p (tuatara.io:native file)))))
-              (setf (tuatara.buffer:buffer-local buffer :evidence) (cons *evidence-generation* folder))
+              (setf (tuatara.buffer:buffer-local buffer :evidence) (list* *evidence-generation* file folder))
               folder))))))
 
 (defun evidence-mode-line (editor buffer)
