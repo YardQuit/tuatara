@@ -1,0 +1,13 @@
+diff --git a/src/scanner.c b/src/scanner.c
+index 4fa4930..6a82573 100644
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -140,6 +140,8 @@ unsigned tree_sitter_koka_external_scanner_serialize(void *payload,
+   // use it when deserializing, and desirable so we don't have to think about
+   // struct layout rules.
+   struct scanner *scanner = payload;
++  if (sizeof(struct scanner) + sizeof(int) * scanner->stack_len > TREE_SITTER_SERIALIZATION_BUFFER_SIZE)
++    return 0;
+   memcpy(buffer, scanner, sizeof(struct scanner));
+   memcpy(buffer + sizeof(struct scanner), scanner->stack,
+          sizeof(int) * scanner->stack_len);
