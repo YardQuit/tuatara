@@ -277,8 +277,12 @@ terminal. Returns the buffer's text."
 (define-test (line-endings deletions-take-a-line-end-whole)
   ;; in a buffer of newlines, a carriage return before a newline shows, but the two end one
   ;; line: a deletion or kill that would part them takes both, so the lines join
-  (dolist (case (list (list "C-d" 2) (list "C-k" 2) (list "DEL" 3) (list "C-w" 2 1) (list "d" 2 nil t)))
+  (dolist (case (list (list "C-d" 2) (list "C-k" 2) (list "DEL" 3) (list "C-w" 3 2) (list "d" 2 nil t)))
     (destructuring-bind (keys point &optional mark modal) case
       (is string= "ab" (ending-session (cr "a|~%b") :lf (list keys) :point point :mark mark :modal modal) "~a" keys)))
   ;; joining lines takes both too
-  (is string= "a b" (ending-session (cr "a|~%b") :lf '("M-^") :point 3)))
+  (is string= "a b" (ending-session (cr "a|~%b") :lf '("M-^") :point 3))
+  ;; a selection ending between the two leaves the line end: in a buffer of newlines the
+  ;; newline, in one of CR LF line ends the pair, taken back before the carriage return
+  (is string= (format nil "~%cd~%") (ending-session (cr "ab|~%cd~%") :lf '("C-w") :point 3 :mark 0))
+  (is string= (cr "a|~%cd|~%") (ending-session (cr "ab|~%cd|~%") :crlf '("C-w") :point 3 :mark 1)))
