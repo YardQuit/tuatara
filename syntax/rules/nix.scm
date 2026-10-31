@@ -4,7 +4,7 @@
 ;
 ; The colouring rules for nix: runtime/queries/nix/highlights.scm of
 ; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; unchanged below this notice but where a comment says what was changed.
 
 ; tree-sitter highlighting resolves in .scm order. For a given byte
 ; offset, the last matching capture wins. This file is ordered from
@@ -20,7 +20,8 @@
 ; Comments ------------------------------------------------------------
 
 (comment) @comment
-(doc_comment) @comment.documentation
+; changed: the grammar of nix-community, kept up, has no node of its own for a comment of documentation: such a comment is a comment; it read (doc_comment) @comment.documentation
+
 
 ; Keywords ------------------------------------------------------------
 

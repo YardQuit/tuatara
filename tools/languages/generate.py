@@ -429,6 +429,10 @@ QUERY_FIXES = {
          '((word) @punctuation.special.separator\n  (#eq? @punctuation.special.separator "&"))',
          'the ampersand between the columns of a table has a meaning of its own, and themes leave delimiters plain; the sparse style colours it too'),
     ],
+    ('nix', 'highlights'): [
+        ('(doc_comment) @comment.documentation', '',
+         'the grammar of nix-community, kept up, has no node of its own for a comment of documentation: such a comment is a comment'),
+    ],
     ('sway', 'textobjects'): [RUST_TEST],
     ('cairo', 'textobjects'): [RUST_TEST],
 }

@@ -45,7 +45,7 @@ perl	https://github.com/tree-sitter-perl/tree-sitter-perl	72a08a496a23212f238024
 sql	https://github.com/DerekStride/tree-sitter-sql	851e9cb257ba7c66cc8c14214a31c44d2f1e954e	MIT
 make	https://github.com/alemuller/tree-sitter-make	a4b9187417d6be349ee5fd4b6e77b4172c6827dd	MIT
 cmake	https://github.com/uyha/tree-sitter-cmake	c7b2a71e7f8ecb167fad4c97227c838439280175	MIT
-nix	https://github.com/numtide/tree-sitter-nix	70f34e95e30b7ebcc40815d4385d68576c4a15cd	MIT
+nix	https://github.com/nix-community/tree-sitter-nix	37500eb28efff87b07af3df45e37d5726429b03a	MIT
 diff	https://github.com/tree-sitter-grammars/tree-sitter-diff	2520c3f934b3179bb540d23e0ef45f75304b5fed	MIT
 git-config	https://github.com/the-mikedavis/tree-sitter-git-config	0fbc9f99d5a28865f9de8427fb0672d66f9d83a5	MIT
 gitignore	https://github.com/shunsambongi/tree-sitter-gitignore	f4685bf11ac466dd278449bcfe5fd014e94aa504	MIT
