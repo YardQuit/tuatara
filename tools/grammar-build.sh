@@ -62,6 +62,7 @@ generate_parser() {
     exit 1
   fi
   rm -rf "$copy"; mkdir -p "$copy"
+  rm -f "$dir/src/parser.c"
   (cd "$dir" && tar --exclude=.git --exclude='node_modules/*/.git' -cf - .) | tar -x -C "$copy"
   rm -f "$copy/src/parser.c"
   if ! (cd "$copy" && bwrap --unshare-all --die-with-parent --new-session --clearenv \
