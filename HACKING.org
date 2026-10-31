@@ -57,6 +57,14 @@ hashes as =syntax/grammar-inputs.sha256= records; once the difference is read,
 =tools/grammars.sh --record NAME= records the new hash. A grammar whose parser
 is generated again runs its =grammar.js= in bubblewrap, with no network.
 
+=tools/fuzz-grammars.sh [NAME...]= fuzzes grammars with tree-sitter's fuzzer
+on their own test corpus and Tuatara's samples, the pin of a grammar moved
+only once it passes. =tools/fuzz-grammars.sh --hostile [-n ROUNDS] [NAME...]=
+builds each grammar with a scanner (or those named) with AddressSanitizer and
+UndefinedBehaviorSanitizer, its patches applied, and parses texts made to be
+hard on a scanner (=tools/grammar-hostile.c=); it needs the compilers'
+sanitizer libraries (=libasan=, =libubsan=). Its logs are in =build/fuzz/=.
+
 * Building and running
 
 #+begin_example
