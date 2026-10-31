@@ -66,19 +66,24 @@ generate_parser() {
   (cd "$dir" && tar --exclude=.git --exclude='node_modules/*/.git' -cf - .) | tar -x -C "$copy"
   rm -f "$copy/src/parser.c"
   if ! (cd "$copy" && bwrap --unshare-all --die-with-parent --new-session --clearenv \
+          --tmpfs /tmp --proc /proc --dev /dev --setenv HOME /tmp --setenv PATH /usr/bin \
           --ro-bind /usr /usr --symlink usr/lib64 /lib64 --symlink usr/lib /lib --symlink usr/bin /bin \
           --ro-bind "$cli" "$cli" --bind "$copy" "$copy" --chdir "$copy" \
-          --tmpfs /tmp --proc /proc --dev /dev --setenv HOME /tmp --setenv PATH /usr/bin \
           -- "$cli" generate --js-runtime native) > "$dir.generate.log" 2>&1 || [ ! -f "$copy/src/parser.c" ]; then
     cat "$dir.generate.log" >&2
     rm -rf "$copy"
     echo "The parser of $dir could not be generated from its grammar.js: nothing is compiled." >&2
     exit 1
   fi
+  # only plain files within the copy, reached through no link: a link the
+  # program made (src, src/tree_sitter or the file) would read one of the host
+  local real top
+  top="$(realpath -- "$copy")"
   for file in parser.c grammar.json node-types.json tree_sitter/parser.h tree_sitter/alloc.h tree_sitter/array.h; do
-    if [ -f "$copy/src/$file" ] && [ ! -L "$copy/src/$file" ]; then
+    real="$(realpath -e -- "$copy/src/$file" 2>/dev/null)" || continue
+    if [ "$real" = "$top/src/$file" ] && [ -f "$real" ] && [ ! -L "$copy/src/$file" ]; then
       mkdir -p "$(dirname "$dir/src/$file")"
-      cp -- "$copy/src/$file" "$dir/src/$file"
+      cp -- "$real" "$dir/src/$file"
     fi
   done
   rm -rf "$copy"
@@ -219,7 +224,7 @@ run_shut_in() {
   bwrap --unshare-all --die-with-parent --new-session --clearenv \
         --setenv HOME /tmp --setenv PATH /usr/bin \
         --setenv ASAN_OPTIONS "${ASAN_OPTIONS:-}" --setenv UBSAN_OPTIONS "${UBSAN_OPTIONS:-}" \
+        --tmpfs /tmp --proc /proc --dev /dev \
         --ro-bind /usr /usr --symlink usr/lib64 /lib64 --symlink usr/lib /lib --symlink usr/bin /bin \
-        --ro-bind "$readable" "$readable" --bind "$writable" "$writable" \
-        --tmpfs /tmp --proc /proc --dev /dev --chdir "$writable" -- "$@"
+        --ro-bind "$readable" "$readable" --bind "$writable" "$writable" --chdir "$writable" -- "$@"
 }

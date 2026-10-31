@@ -494,3 +494,22 @@ touch y && echo wrote-scratch; echo \"secret=${SECRET:-none}\"'"
       (false (search "wrote-sources" out) "~a" out)
       (true (search "wrote-scratch" out) "~a" out)
       (true (search "secret=none" out) "~a" out))))
+
+(define-test (tools generated-parser-taken-through-no-link)
+  ;; what generating a parser leaves in the copy is taken back only as plain
+  ;; files within it: a link the program made, to a folder or a file of the
+  ;; host, brings nothing back
+  (with-test-directory (directory)
+    (let* ((repo (uiop:native-namestring (merge-pathnames "g/" directory)))
+           (host (uiop:native-namestring (merge-pathnames "host/" directory)))
+           (cli (uiop:native-namestring (merge-pathnames "fake-tree-sitter" directory))))
+      (write-test-file directory "host/parser.c" "int host_secret;")
+      (write-test-file directory "fake-tree-sitter"
+                       (format nil "#!/bin/bash~%rm -rf src~%ln -s '~a' src~%" (string-right-trim "/" host)))
+      (sb-posix:chmod cli #o755)
+      (let ((out (grammar-build-output
+                  (format nil "git init -q '~a'; cd '~:*~a'; mkdir -p src
+( generate_parser '~:*~a' '~a' ) 2>/dev/null
+grep -qs host_secret src/parser.c && echo took-host || echo took-nothing" repo cli)
+                  directory)))
+        (true (search "took-nothing" out) "~a" out)))))
