@@ -1431,12 +1431,38 @@ fold or unfold the section, as in every list in sections."
                   (unless (tuatara.io:safe-visit-p buffer)
                     (conflict-look-through buffer :tell t :go t))))
                ((and (visit-path path) hunk)
-                (goto-shown (current-buffer) (tuatara.buffer:buffer-goto-line (current-buffer) (1- (git-hunk-line hunk (fifth entry)))))))))
+                (goto-shown (current-buffer) (git-line-start (current-buffer) (git-hunk-line hunk (fifth entry))))))))
       (:commit (git-show-commit top (second entry)))
       (:stash (git-show-stash top (second entry)))
       (:submodule (git-show-status (concatenate 'string top (string-right-trim "/" (second entry)) "/")))
       (:section (toggle-list-section (current-buffer) (second entry)))
       (t (message "No file or commit on this line")))))
+
+(defun git-line-of (buffer position)
+  "The line of BUFFER holding POSITION as git numbers lines (1 the first),
+by newlines alone: a carriage return that no newline follows ends a line in
+the editor, but not in git's patches. Complexity: O(POSITION)."
+  (let ((rope (tuatara.buffer:buffer-text buffer)) (count 0))
+    (tuatara.text:with-octet-block (block 65536)
+      (loop for at from 0 below position by 65536
+            do (let ((n (tuatara.text:rope-copy-into rope at (min position (+ at 65536)) block)))
+                 (incf count (count 10 block :end n)))))
+    (1+ count)))
+
+(defun git-line-start (buffer line)
+  "Where the line LINE (1 the first) of BUFFER as git numbers lines begins
+\(GIT-LINE-OF): after its LINE - 1st newline; the end of the text when it has
+fewer. Complexity: O(the octets before it)."
+  (let* ((rope (tuatara.buffer:buffer-text buffer)) (size (tuatara.text:rope-bytes rope)) (left (1- line)))
+    (if (< left 1)
+        0
+        (tuatara.text:with-octet-block (block 65536)
+          (loop for at from 0 below size by 65536
+                do (let ((n (tuatara.text:rope-copy-into rope at (min size (+ at 65536)) block)))
+                     (loop for i from 0 below n
+                           when (and (= 10 (aref block i)) (zerop (decf left)))
+                             do (return-from git-line-start (+ at i 1))))
+                finally (return size))))))
 
 (defun git-file-hunk (how)
   "Stage (HOW :STAGE) or unstage (:UNSTAGE) the hunk of the current file at
@@ -1444,7 +1470,7 @@ point, as git has the file on disk, in the background."
   (let* ((buffer (current-buffer))
          (file (tuatara.buffer:buffer-file buffer))
          (top (and file (git-top-said buffer)))
-         (line (1+ (tuatara.buffer:buffer-line-number buffer (tuatara.buffer:buffer-point buffer)))))
+         (line (git-line-of buffer (tuatara.buffer:buffer-point buffer))))
     (cond ((null top))
           ((tuatara.buffer:buffer-modified-p buffer) (message "Save it first: git takes the hunk from the file on disk"))
           ((git-trusted-p top)

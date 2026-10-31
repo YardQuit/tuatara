@@ -459,6 +459,39 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
         (false (search "L2" (git-output dir "diff" "--cached")))
         (true (search "L2" (git-output dir "diff")))))))
 
+(define-test (git stage-hunk-in-a-file-of-lone-returns)
+  ;; in a file whose carriage returns end lines alone, git counts lines by newlines: the
+  ;; hunk staged is git's at point's line, never the one at the editor's line of that number
+  (with-test-directory (dir)
+    (scratch-repository dir)
+    (flet ((text (first last)
+             (format nil "~a~%~{~a~%~}" (substitute #\Return #\| first) (append (loop for i from 2 to 11 collect (format nil "l~d" i)) (list last)))))
+      (put-file (merge-pathnames "a.txt" dir) (text "h|h|h|h|h|h|h|h" "l12"))
+      (git-output dir "commit" "-q" "-am" "Lone returns")
+      (put-file (merge-pathnames "a.txt" dir) (text "H|h|h|h|h|h|h|h" "L12")))
+    (let ((tuatara.defaults::*modal-editing* nil)
+          (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+          (visit (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (native-in dir "a.txt")))))
+      ;; l5, the editor's 12th line and git's 5th, is no change
+      (let ((f (auto-save-session (list visit "M-< C-s l 5 RET M-x g i t - s t a g e - h u n k RET"
+                                        (list :until (asking-said "left to stage")))
+                                  :width 120)))
+        (true (tuatara.frontend.fake:fake-frame-showing f "No change at line 5 left to stage"))
+        (is string= "" (git-output dir "diff" "--cached")))
+      (tuatara.buffer:kill-buffer (git-buffer-named "a.txt"))
+      ;; L12, git's 12th line, stages its hunk alone
+      (let ((f (auto-save-session (list visit "M-< C-s L 1 2 RET M-x g i t - s t a g e - h u n k RET"
+                                        (list :until (lambda () (search "L12" (git-output dir "diff" "--cached")))))
+                                  :width 120)))
+        (true (tuatara.frontend.fake:fake-frame-showing f "Staged the hunk at line 12"))
+        (false (search "H" (git-output dir "diff" "--cached")))
+        (true (search (format nil "+H~ch" #\Return) (git-output dir "diff")))))))
+
+(defun asking-said (words)
+  "A function true once the echo area says something holding WORDS."
+  (lambda () (let ((message (tuatara.command:editor-message tuatara.command:*editor*)))
+               (and message (search words message)))))
+
 (defun asking (prompt)
   "A function true while the editor asks a question whose prompt holds PROMPT."
   (lambda ()
