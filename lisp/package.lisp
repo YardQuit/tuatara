@@ -12,7 +12,7 @@
   (:import-from #:tuatara.io #:octets-integer #:octets-signed #:octets-words #:directory-name)
   (:import-from #:tuatara.io #:fd-octets #:crc32 #:zip-octets #:zip-entries #:zip-entry-octets #:inflate #:zip-error
                 #:*zip-largest-entry* #:*zip-largest-ratio*)
-  (:import-from #:tuatara.buffer #:buffer-crlf-p)
+  (:import-from #:tuatara.buffer #:buffer-crlf-p #:lf-newlines #:crlf-newlines #:cr-newlines #:text-for-buffer)
   (:import-from #:tuatara.runtime #:foreign-library-p #:foreign-call #:jobs-of)
   (:import-from #:tuatara.display #:next-tab-stop)
   (:import-from #:tuatara.text #:word-char-p #:name-char-p #:number-formatter)

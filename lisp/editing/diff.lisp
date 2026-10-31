@@ -12,16 +12,17 @@
 (in-package #:tuatara.defaults)
 
 (defun hash-lines-into (octets end hash open hashes &optional (avail end))
-  "Go on hashing lines (FNV-1a, the octet that ends each left out:
-TUATARA.TEXT:LINE-END-OCTET-P) through OCTETS below END from HASH, pushing the
-hash of each line ended on HASHES; the text goes on to AVAIL, so that a
+  "Go on hashing lines (FNV-1a, with the octets that end each:
+TUATARA.TEXT:LINE-END-OCTET-P, so that a line ended by a carriage return
+alone is another than the same line ended by a newline) through OCTETS below
+END from HASH, pushing the hash of each line ended on HASHES; the text goes on to AVAIL, so that a
 carriage return at END - 1 ends a line unless the octet at END is a newline.
 Returns the hash and whether a line is open, to go on with in the next octets."
   (declare (type (simple-array (unsigned-byte 8) (*)) octets) (type fixnum end avail)
            (type (unsigned-byte 64) hash))
   (loop with start of-type fixnum = 0
         for newline = (tuatara.text:octets-line-end-position octets start end avail)
-        do (setf hash (tuatara.text:octets-hash octets :start start :end (or newline end) :hash hash))
+        do (setf hash (tuatara.text:octets-hash octets :start start :end (if newline (1+ newline) end) :hash hash))
            (unless newline
              (return (values hash (or open (< start end)))))
            (vector-push-extend (ldb (byte 62 0) hash) hashes)
@@ -34,8 +35,8 @@ away at the end is a line changed."
   (ldb (byte 62 0) (logxor hash #x2545F4914F6CDD1D)))
 
 (defun line-hashes (octets)
-  "A hash of each line of OCTETS (FNV-1a over its octets, the octet that ends
-it left out), as a fixnum vector; a last line without a line end counts."
+  "A hash of each line of OCTETS (FNV-1a over its octets and those that end
+it), as a fixnum vector; a last line without a line end counts."
   (declare (type tuatara.text:octets octets))
   (let ((hashes (make-array 1024 :element-type 'fixnum :adjustable t :fill-pointer 0)))
     (multiple-value-bind (hash open) (hash-lines-into octets (length octets) +fnv-offset+ nil hashes)

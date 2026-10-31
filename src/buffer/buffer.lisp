@@ -1169,6 +1169,78 @@ is shared: it must not be changed."
     (:cr (load-time-value (string #\Return) t))
     (t (load-time-value (string #\Newline) t))))
 
+(defun unjoined-line-ends (buffer at text)
+  "TEXT, a string to put in BUFFER at AT, its line ends made never to join a
+line end there into one: a newline it begins with, after a carriage return
+that ends a line alone, would make the two one line end, and so would a
+carriage return it ends with, before a newline that ends a line alone. The
+newlines it begins with are then carriage returns, as the line end before
+them, and the carriage returns it ends with newlines, as the one after:
+TEXT ends as many lines as it has line ends. TEXT itself when nothing
+joins."
+  (let* ((rope (buffer-text buffer))
+         (size (tuatara.text:rope-bytes rope))
+         (before (and (plusp at) (tuatara.text:rope-octet rope (1- at))))
+         (after (and (< at size) (tuatara.text:rope-octet rope at)))
+         (n (length text)))
+    (if (zerop n)
+        text
+        (let ((out text))
+          (when (and (eql before 13) (not (eql after 10)) (char= (char text 0) #\Newline))
+            (setf out (copy-seq out))
+            (loop for i from 0 below n while (char= (char out i) #\Newline) do (setf (char out i) #\Return)))
+          (when (and (eql after 10) (not (eql before 13)) (char= (char out (1- n)) #\Return))
+            (when (eq out text) (setf out (copy-seq out)))
+            (loop for i from (1- n) downto 0 while (char= (char out i) #\Return) do (setf (char out i) #\Newline)))
+          out))))
+
+(defun lf-newlines (text)
+  "TEXT with each carriage return that comes before a newline taken away."
+  (if (not (find #\Return text))
+      text
+      (with-output-to-string (out)
+        (loop for i from 0 below (length text)
+              for c = (char text i)
+              unless (and (char= c #\Return) (< (1+ i) (length text)) (char= (char text (1+ i)) #\Newline))
+                do (write-char c out)))))
+
+(defun crlf-newlines (text)
+  "TEXT with a carriage return put before each newline that has none."
+  (if (not (find #\Newline text))
+      text
+      (with-output-to-string (out)
+        (loop for i from 0 below (length text)
+              for c = (char text i)
+              do (when (and (char= c #\Newline) (not (and (plusp i) (char= (char text (1- i)) #\Return))))
+                   (write-char #\Return out))
+                 (write-char c out)))))
+
+(defun cr-newlines (text)
+  "TEXT with each newline made a carriage return, one that comes after a
+carriage return taken away."
+  (if (not (find #\Newline text))
+      text
+      (with-output-to-string (out)
+        (loop for i from 0 below (length text)
+              for c = (char text i)
+              do (cond ((char/= c #\Newline) (write-char c out))
+                       ((not (and (plusp i) (char= (char text (1- i)) #\Return))) (write-char #\Return out)))))))
+
+(defun text-for-buffer (kill buffer &optional at)
+  "KILL, text to put into BUFFER (from the kill ring, a template, a file),
+with BUFFER's line ends: where BUFFER's lines end with a carriage return and
+a newline, a newline alone given a carriage return before it; where they end
+with a carriage return alone, each newline made one; elsewhere, the carriage
+return before a newline taken away. Given AT, where it goes, no line end of
+its edges joins one there (UNJOINED-LINE-ENDS). A kill kept as
+a rope, too large for the system clipboard, goes in as it is."
+  (cond ((not (stringp kill)) kill)
+        (t (let ((text (case (buffer-line-ending buffer)
+                         (:crlf (crlf-newlines kill))
+                         (:cr (cr-newlines kill))
+                         (t (lf-newlines kill)))))
+             (if at (unjoined-line-ends buffer at text) text)))))
+
 (defun detect-line-ending (rope &key (start 0) (end (tuatara.text:rope-bytes rope)))
   "How the lines of ROPE's text from START below END end, judged by its first
 line end in its first 64 KB: :CRLF when it is a newline a carriage return

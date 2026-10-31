@@ -63,8 +63,9 @@ the first, the rest left blank below it."
     (when (plusp extra)
       ;; the blank lines go after the cursor, which stays where it is
       (let ((p (point)))
-        (tuatara.buffer:buffer-insert b p (with-output-to-string (out)
-                                            (dotimes (i extra) (write-string (tuatara.buffer:buffer-newline b) out)))
+        (tuatara.buffer:buffer-insert b p (tuatara.buffer:unjoined-line-ends
+                                           b p (with-output-to-string (out)
+                                                 (dotimes (i extra) (write-string (tuatara.buffer:buffer-newline b) out))))
                                       :group t)
         (goto p)))
     (tuatara-insert)))
@@ -82,10 +83,11 @@ blank above it."
     (char-motion -1)
     (indent-typed-line b :group t)
     (when (plusp extra)
-      (tuatara.buffer:buffer-insert b (tuatara.buffer:buffer-line-start b (point))
-                                    (with-output-to-string (out)
-                                      (dotimes (i extra) (write-string (tuatara.buffer:buffer-newline b) out)))
-                                    :group t)
+      (let ((at (tuatara.buffer:buffer-line-start b (point))))
+        (tuatara.buffer:buffer-insert b at (tuatara.buffer:unjoined-line-ends
+                                            b at (with-output-to-string (out)
+                                                   (dotimes (i extra) (write-string (tuatara.buffer:buffer-newline b) out))))
+                                      :group t))
       (move-to-line-end))
     (tuatara-insert)))
 

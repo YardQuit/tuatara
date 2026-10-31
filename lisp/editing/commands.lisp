@@ -852,9 +852,10 @@ comments (see *INDENT-NEW-LINES*)."
           (tuatara.buffer:buffer-delete b start p)
           (goto start)
           (setf trimmed t))))
-    (goto (tuatara.buffer:buffer-insert b (point) (let ((line-end (tuatara.buffer:buffer-newline b)))
-                                                    (with-output-to-string (out)
-                                                      (loop repeat n do (write-string line-end out))))
+    (goto (tuatara.buffer:buffer-insert b (point) (tuatara.buffer:unjoined-line-ends
+                                                   b (point) (let ((line-end (tuatara.buffer:buffer-newline b)))
+                                                               (with-output-to-string (out)
+                                                                 (loop repeat n do (write-string line-end out)))))
                                         :group trimmed))
     (indent-typed-line b :group t)))
 
@@ -1015,11 +1016,15 @@ key pressed again deletes."
 
 (define-command delete-backward-char ()
   "Delete the character before point (with a count, that many): of a letter
-with accents, the last accent alone, of an emoji with a skin tone, the tone.
-Typing and deleting one after another undo together. Text a fold hides is
-not deleted unseen: the fold is shown instead, and the key pressed again
-deletes."
-  (let* ((b (current-buffer)) (p (point)) (start (tuatara.buffer:buffer-forward-char b p (- (prefix)))))
+with accents, the last accent alone, of an emoji with a skin tone, the tone;
+of a carriage return and a newline, both, which end one line. Typing and
+deleting one after another undo together. Text a fold hides is not deleted
+unseen: the fold is shown instead, and the key pressed again deletes."
+  (let* ((b (current-buffer)) (p (point))
+         (start (tuatara.buffer:buffer-forward-char b p (- (prefix))))
+         (start (if (and (< 0 start p) (tuatara.text:rope-crlf-p (tuatara.buffer:buffer-text b) (1- start)))
+                    (1- start)
+                    start)))
     (unless (and (null (prefix-argument))
                  (some (lambda (f) (funcall f b)) *delete-backward-functions*))
       (when (< start p)
@@ -1244,56 +1249,11 @@ hide were left out of it (LEFT-OUT-NOTE)."
           (message "Copied ~a, kept where it is (too large for the system clipboard)~a"
                    (octets-words (kill-size kill)) (left-out-note left-out))))))
 
-(defun lf-newlines (text)
-  "TEXT with each carriage return that comes before a newline taken away."
-  (if (not (find #\Return text))
-      text
-      (with-output-to-string (out)
-        (loop for i from 0 below (length text)
-              for c = (char text i)
-              unless (and (char= c #\Return) (< (1+ i) (length text)) (char= (char text (1+ i)) #\Newline))
-                do (write-char c out)))))
-
 (defun search-count (needle text &key (end (length text)))
   "How many times NEEDLE stands in TEXT below END, none overlapping."
   (loop with start = 0
         for at = (search needle text :start2 start :end2 end)
         while at count t do (setf start (+ at (length needle)))))
-
-(defun crlf-newlines (text)
-  "TEXT with a carriage return put before each newline that has none."
-  (if (not (find #\Newline text))
-      text
-      (with-output-to-string (out)
-        (loop for i from 0 below (length text)
-              for c = (char text i)
-              do (when (and (char= c #\Newline) (not (and (plusp i) (char= (char text (1- i)) #\Return))))
-                   (write-char #\Return out))
-                 (write-char c out)))))
-
-(defun cr-newlines (text)
-  "TEXT with each newline made a carriage return, one that comes after a
-carriage return taken away."
-  (if (not (find #\Newline text))
-      text
-      (with-output-to-string (out)
-        (loop for i from 0 below (length text)
-              for c = (char text i)
-              do (cond ((char/= c #\Newline) (write-char c out))
-                       ((not (and (plusp i) (char= (char text (1- i)) #\Return))) (write-char #\Return out)))))))
-
-(defun text-for-buffer (kill buffer)
-  "KILL, text to put into BUFFER (from the kill ring, a template, a file),
-with BUFFER's line ends: where BUFFER's lines end with a carriage return and
-a newline, a newline alone given a carriage return before it; where they end
-with a carriage return alone, each newline made one; elsewhere, the carriage
-return before a newline taken away. A kill kept as a rope, too large for the
-system clipboard, goes in as it is."
-  (cond ((not (stringp kill)) kill)
-        (t (case (tuatara.buffer:buffer-line-ending buffer)
-             (:crlf (crlf-newlines kill))
-             (:cr (cr-newlines kill))
-             (t (lf-newlines kill))))))
 
 (define-command yank ()
   "Insert the most recently killed text at point, or what another program
@@ -1302,7 +1262,7 @@ rectangle killed or copied with \\[kill-region] or \\[kill-ring-save] goes in
 as a block. The mark is left at its start, the mark before on the mark ring."
   (take-in-clipboard)
   (let* ((kill (first (editor-kill-ring *editor*)))
-         (text (and kill (text-for-buffer kill (current-buffer)))))
+         (text (and kill (text-for-buffer kill (current-buffer) (point)))))
     (cond ((eq (nth-value 1 (kill-parts kill)) :block)
            (funcall 'paste-rows-at-point (kill-parts kill)))
           (text

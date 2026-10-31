@@ -186,3 +186,88 @@
       (is equal '(1) (starts "b\\rc"))))
   ;; lines sorted with the line ends staying where they were
   (is string= (cr "a|b~%c|") (session-text (nth-value 1 (run-keys "C-x h M-x s o r t - l i n e s RET" :text (cr "c|b~%a|"))))))
+
+(defun ending-session (text ending parts &key (point 0) mode)
+  "Run an editor session on a scratch buffer holding TEXT, its lines ending as
+ENDING says (:LF, :CRLF or :CR), point at POINT, in MODE when given, with
+PARTS typed: each a key string, or (:PASTE TEXT) for text pasted into the
+terminal. Returns the buffer's text."
+  (let ((f (tuatara.frontend.fake:make-fake-frontend :width 80 :height 10)))
+    (let ((scratch (tuatara.buffer:find-buffer "*scratch*")))
+      (when scratch (tuatara.buffer:kill-buffer scratch)))
+    (let ((b (tuatara.buffer:make-buffer "*scratch*" :text text)))
+      (setf (tuatara.buffer:buffer-local b :line-ending) ending
+            (tuatara.buffer:buffer-point b) point)
+      (when mode (tuatara.defaults::set-major-mode b mode)))
+    (dolist (part parts)
+      (if (consp part)
+          (tuatara.frontend.fake:fake-queue-event f (tuatara.frontend:make-event :paste :text (second part)))
+          (queue-test-keys f (list part))))
+    (session-text (without-grammar-questions
+                    (let ((tuatara.defaults::*modal-editing* nil))
+                      (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
+                                                    :buffer (tuatara.buffer:find-buffer "*scratch*")))))))
+
+(define-test (line-endings commands-join-no-line-ends)
+  (flet ((lines (text) (tuatara.text:rope-lines (tuatara.text:string->rope text))))
+    ;; RET and C-o at a line's start after a carriage return alone: a line more, never a CR LF made
+    (is string= (cr "a||b") (ending-session (cr "a|b") :lf '("RET") :point 2))
+    (is string= (cr "a||b") (ending-session (cr "a|b") :lf '("C-o") :point 2))
+    ;; RET at the end of a line ended by a newline, in a buffer of carriage returns: a newline
+    (is = 2 (lines (ending-session (format nil "a~%b") :cr '("RET") :point 1)))
+    ;; text yanked or pasted that would join a line end there takes its kind
+    (let ((b (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "join") :text (cr "a|b~%c"))))
+      (unwind-protect
+           (progn (is string= (cr "|x") (tuatara.buffer:text-for-buffer (format nil "~%x") b 2))
+                  (is string= (format nil "x~%") (tuatara.buffer:text-for-buffer (cr "x|") b 3))
+                  (is string= (format nil "~%x") (tuatara.buffer:text-for-buffer (format nil "~%x") b 1)))
+        (tuatara.buffer:kill-buffer b)))
+    ;; text pasted into the terminal takes the buffer's line ends as a yank does: CR LF into a
+    ;; buffer of carriage returns is one carriage return
+    (is string= (cr "ax|y|b") (ending-session "ab" :cr (list (list :paste (format nil "x~c~%y~c~%" #\Return #\Return))) :point 1))
+    ;; DEL after a carriage return and a newline in a buffer of newlines takes both: the lines join
+    (is string= "ab" (ending-session (cr "a|~%b") :lf '("DEL") :point 3))))
+
+(define-test (line-endings line-ends-of-each-line-kept)
+  ;; text put back by lines tells a line ended by a carriage return from one ended by a newline
+  (let ((b (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "lines") :text (cr "a|b~%"))))
+    (unwind-protect
+         (progn (true (plusp (tuatara.defaults::put-text-by-lines b (tuatara.buffer:buffer-text b) (format nil "a~%b~%"))))
+                (is string= (format nil "a~%b~%") (tuatara.buffer:buffer-string b)))
+      (tuatara.buffer:kill-buffer b)))
+  ;; a subtree moved keeps each of its lines' ends, in a buffer of each kind
+  (loop for (ending text moved) in (list (list :lf (cr "* A|body~%* B~%") (cr "* B~%* A|body~%"))
+                                         (list :crlf (cr "* A|~%x|y|~%* B|~%") (cr "* B|~%* A|~%x|y|~%"))
+                                         (list :cr (cr "* A~%body|* B|") (cr "* B|* A~%body|")))
+        do (is string= moved (ending-session text ending '("M-x o r g - m o v e - s u b t r e e - d o w n RET")
+                                             :mode 'tuatara.defaults::org-mode)
+               "~a" ending))
+  ;; a check of a rope sees a carriage return and its newline parted by an empty leaf
+  (let ((rope (tuatara.text::%make-rope (tuatara.text::make-branch
+                                         (vector (tuatara.text::make-leaf (tuatara.text:string-octets (cr "a|")))
+                                                 (tuatara.text::make-leaf (tuatara.text:make-octets 0))
+                                                 (tuatara.text::make-leaf (tuatara.text:string-octets (format nil "~%b"))))))))
+    (fail (tuatara.text:check-rope rope))))
+
+(define-test (line-endings tree-sitter-rows-by-newlines)
+  ;; tree-sitter counts rows by newlines alone: the points of its edits too, a carriage
+  ;; return before a newline in the text or at an insert's end ending no row
+  (let ((rope (tuatara.text:string->rope (cr "x = 1|y = 2~%z = 3"))))
+    (is equal '(0 . 6) (tuatara.syntax::point-at rope 6))
+    (is equal '(1 . 1) (tuatara.syntax::point-at rope 13))
+    (is equal '(0 . 8) (tuatara.syntax::point-after '(0 . 6) (tuatara.text:string-octets (cr "a|"))))
+    (is equal '(1 . 0) (tuatara.syntax::point-after '(0 . 6) (tuatara.text:string-octets (cr "a|~%"))))))
+
+(define-test (line-endings plain-reading-without-returns)
+  ;; a text without a carriage return is searched with the pattern as written, quicker and the
+  ;; same there; one with a carriage return, by the line rule; its nodes say which in O(1)
+  (let* ((scanner (tuatara.syntax:compile-regex "^\\d+$"))
+         (plain-rope (tuatara.text:string->rope (format nil "12~%ab~%34~%")))
+         (cr-rope (tuatara.text:string->rope (cr "12|ab~%34~%"))))
+    (false (tuatara.text:rope-holds-return-p plain-rope))
+    (true (tuatara.text:rope-holds-return-p cr-rope))
+    (false (tuatara.text:rope-holds-return-p (tuatara.text:rope-delete cr-rope 2 3)))
+    (isnt eq scanner (tuatara.syntax::scanner-for-rope scanner plain-rope))
+    (is eq scanner (tuatara.syntax::scanner-for-rope scanner cr-rope))
+    (is equal '(0 6) (map 'list #'first (tuatara.syntax:regex-search-all plain-rope scanner)))
+    (is equal '(0 6) (map 'list #'first (tuatara.syntax:regex-search-all cr-rope scanner)))))

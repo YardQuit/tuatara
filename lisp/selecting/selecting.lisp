@@ -322,7 +322,9 @@ instead, and the key pressed again pastes."
                        (setf (tuatara.buffer:buffer-mark-active-p b) nil)
                        (line-selection-clear)
                        (goto (if after (aref after 0) start)))))
-                  (t (goto (tuatara.buffer:buffer-insert b (point) copies)))))))))
+                  (t (goto (tuatara.buffer:buffer-insert b (point) (if (stringp copies)
+                                                                         (tuatara.buffer:unjoined-line-ends b (point) copies)
+                                                                         copies))))))))))
 
 ;;; Lines
 

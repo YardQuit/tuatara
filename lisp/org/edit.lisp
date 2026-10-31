@@ -49,15 +49,62 @@ with it; NIL before the first headline."
   "The headlines beside HEADLINE, under the same parent (TREE's top for the first level), in order."
   (org-child-headlines (or (org-node-parent headline) tree)))
 
+(defun org-line-ends-kept (buffer start end text)
+  "TEXT, Org's text for BUFFER's octets START below END as an edit leaves it,
+each newline ending a line, with the line ends BUFFER had there: a line of
+TEXT that was a line there ends as it ended (a newline, a carriage return
+and a newline, or a carriage return alone), however the lines moved; a line
+changed ends as the line in its place ended, when there are as many lines as
+before; a new one as BUFFER makes lines (BUFFER-NEWLINE), a carriage return
+it came with before its newline left out. So no line end the
+edit did not make changes, in a file of one kind of line end or of several."
+  (let* ((old (tuatara.buffer:buffer-string buffer :start start :end end))
+         (crlf (buffer-crlf-p buffer))
+         ;; the lines there as Org reads them, each (TEXT . END): in a CRLF buffer a
+         ;; carriage return before a newline belongs to the end, elsewhere to the text
+         (old-lines (let ((lines '()) (from 0) (n (length old)))
+                      (loop for i from 0 below n
+                            do (let ((c (char old i)))
+                                 (cond ((char= c #\Newline)
+                                        (if (and crlf (> i from) (char= (char old (1- i)) #\Return))
+                                            (push (cons (subseq old from (1- i)) (coerce '(#\Return #\Newline) 'string)) lines)
+                                            (push (cons (subseq old from i) (string #\Newline)) lines))
+                                        (setf from (1+ i)))
+                                       ((and (char= c #\Return) (not (and (< (1+ i) n) (char= (char old (1+ i)) #\Newline))))
+                                        (push (cons (subseq old from i) (string #\Return)) lines)
+                                        (setf from (1+ i))))))
+                      (nreverse lines)))
+         (new-lines (uiop:split-string text :separator '(#\Newline)))
+         (ended (butlast new-lines))
+         (same-count (= (length ended) (length old-lines)))
+         (by-text (make-hash-table :test 'equal))
+         (newline (tuatara.buffer:buffer-newline buffer)))
+    (loop for (line . ending) in (reverse old-lines) do (push ending (gethash line by-text)))
+    ;; lines found again first, each taking an end of its own text in order
+    (let ((endings (loop for line in ended
+                         collect (let ((queue (gethash line by-text)))
+                                   (when queue
+                                     (setf (gethash line by-text) (rest queue))
+                                     (first queue))))))
+      (with-output-to-string (out)
+        (loop for line in ended
+              for ending in endings
+              for (nil . there) in (if same-count old-lines (make-list (length ended)))
+              do (if (or ending there)
+                     (progn (write-string line out) (write-string (or ending there) out))
+                     ;; a new line ends as the buffer's do, a carriage return it came with left out
+                     (progn (write-string (string-right-trim '(#\Return) line) out) (write-string newline out))))
+        (write-string (car (last new-lines)) out)))))
+
 (defun org-replace-chars (buffer from to text &key point)
   "Put TEXT in place of BUFFER's characters FROM below TO (of its parse), one
 step to undo, and point at the character POINT (of the text after) when given.
-In a buffer whose lines end with a carriage return and a newline, each
-newline of TEXT goes in as both, so that its line ends stay one kind."
+Each line keeps the line end it had (ORG-LINE-ENDS-KEPT), a new one taking
+the buffer's own."
   (let* ((returns (org-returns-of buffer))
          (start (org-char->byte buffer from returns))
          (end (org-char->byte buffer to returns)))
-    (tuatara.buffer:buffer-replace buffer start end (text-for-buffer text buffer))
+    (tuatara.buffer:buffer-replace buffer start end (org-line-ends-kept buffer start end text))
     (when point
       (setf (tuatara.buffer:buffer-point buffer) (org-char->byte buffer point)))))
 

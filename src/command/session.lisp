@@ -139,12 +139,9 @@ terminal, which hands it to the program in it), that function takes it."
     (let ((handler (tuatara.buffer:buffer-local buffer :paste-handler)))
       (cond (handler (funcall handler buffer text))
             ((plusp (length text))
-             (let ((newline (tuatara.buffer:buffer-newline buffer)))
+             (let ((at (tuatara.buffer:buffer-point buffer)))
                (setf (tuatara.buffer:buffer-point buffer)
-                     (tuatara.buffer:buffer-insert buffer (tuatara.buffer:buffer-point buffer)
-                                                   (if (string= newline (string #\Newline))
-                                                       text
-                                                       (cl-ppcre:regex-replace-all (string #\Newline) text newline))))))))))
+                     (tuatara.buffer:buffer-insert buffer at (tuatara.buffer:text-for-buffer text buffer at)))))))))
 
 (defparameter *slow-frame* 30
   "The milliseconds drawing a frame may take before debug mode reports it.")

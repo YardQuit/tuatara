@@ -128,7 +128,7 @@ program (the desktop's primary selection); the mark at its start."
     (mouse-set-point)
     (let ((p (point)))
       (push-mark)
-      (goto (tuatara.buffer:buffer-insert (current-buffer) p (text-for-buffer text (current-buffer)))))))
+      (goto (tuatara.buffer:buffer-insert (current-buffer) p (text-for-buffer text (current-buffer) p))))))
 
 (defun send-to-primary-selection ()
   "Make the text selected in the current buffer the desktop's primary

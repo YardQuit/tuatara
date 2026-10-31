@@ -210,7 +210,7 @@ every line it takes in, in the background when it holds more than
   "Insert a line end after point, point staying before it; with a count, that
 many line ends. The new line is not indented."
   (let ((n (insert-count)) (b (current-buffer)) (p (point)))
-    (tuatara.buffer:buffer-insert b p (repeated-text (tuatara.buffer:buffer-newline b) n))
+    (tuatara.buffer:buffer-insert b p (tuatara.buffer:unjoined-line-ends b p (repeated-text (tuatara.buffer:buffer-newline b) n)))
     (goto p)))
 
 (define-command back-to-indentation ()
@@ -337,7 +337,8 @@ shown alone."
               (setf p (tuatara.buffer:buffer-end buffer))
               (decf left))
             (when (plusp left)
-              (tuatara.buffer:buffer-insert buffer p (repeated-text (tuatara.buffer:buffer-newline buffer) left))
+              (tuatara.buffer:buffer-insert buffer p (tuatara.buffer:unjoined-line-ends
+                                                     buffer p (repeated-text (tuatara.buffer:buffer-newline buffer) left)))
               (setf p (tuatara.buffer:buffer-end buffer)))))
         p)
       (let ((p (tuatara.buffer:buffer-line-start buffer position)))
