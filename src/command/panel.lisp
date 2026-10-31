@@ -489,30 +489,40 @@ whole, its start never scrolled off the left."
                    (- width (length (completion-count-prefix editor)) (floor width 3)))))
 
 (defun prompt-broken (prompt width room)
-  "PROMPT, a question, as two values: the rows of WIDTH columns holding its
-start, broken between words, when it takes more than ROOM columns; and what
-of it is left for the last row, no more than ROOM (all of it when it fits)."
+  "PROMPT, a question, as three values: the rows of WIDTH columns holding its
+start, broken between words, when it takes more than ROOM columns; what of
+it is left for the last row, no more than ROOM (all of it when it fits);
+and where in PROMPT each of those rows begins."
   (if (<= (panel-columns prompt) room)
-      (values '() prompt)
-      (let ((rows '()) (start 0))
+      (values '() prompt '())
+      (let ((rows '()) (starts '()) (start 0))
         (loop while (> (panel-columns prompt :start start) room)
               do (let* ((limit (+ start (max 1 (columns-end (subseq prompt start) width))))
                         (break (or (position #\Space prompt :start (1+ start) :end limit :from-end t) limit)))
                    (push (subseq prompt start break) rows)
+                   (push start starts)
                    (setf start (min (length prompt) (if (and (< break (length prompt)) (char= (char prompt break) #\Space)) (1+ break) break)))))
-        (values (nreverse rows) (subseq prompt start)))))
+        (values (nreverse rows) (subseq prompt start) (nreverse starts)))))
+
+(defun spans-within (spans start end)
+  "Those of SPANS, each (START END FACE), that reach into START to END, cut
+to it and counted from START."
+  (loop for (from to face) in spans
+        when (and (> to start) (< from end))
+          collect (list (- (max from start) start) (- (min to end) start) face)))
 
 (defun key-question-pieces (editor)
   "While a question of one key waits in the echo area (READ-KEY), its prompt
 as PROMPT-BROKEN gives it: the rows over the echo row holding its start, when
 it is wider than the row, and what of it stays on the echo row, the cursor
-after it; else NIL and the message shown. A long question is so read whole,
-as the minibuffer's are."
+after it; else NIL and the message shown; as a third value, where in the
+message each of those rows begins. A long question is so read whole, as the
+minibuffer's are."
   (let ((text (or (editor-message editor) "")))
     (if (and *key-question* (echo-question-p editor))
         (let ((width (max 10 (1- (editor-width editor)))))
           (prompt-broken text width width))
-        (values '() text))))
+        (values '() text '()))))
 
 (defun panel-rows (editor)
   "The rows of the bottom panel as a list of (STRING FACE SPANS), and the
@@ -585,8 +595,14 @@ pending prefix key; else the echo row."
                               (key-hint-rows entries width (1- (key-hint-room editor)))))))
              (values (append rows (list (echo-row editor)))
                      (length rows))))
-          (t (let ((head (mapcar (lambda (text) (list text nil nil)) (key-question-pieces editor))))
-               (values (append head (list (echo-row editor))) (length head)))))))
+          (t (multiple-value-bind (rows last starts) (key-question-pieces editor)
+               (declare (ignore last))
+               ;; the start of a long question of one key, its keys coloured as on the echo row
+               (let* ((spans (and rows (text-spans (editor-message editor))))
+                      (head (loop for row in rows
+                                  for start in starts
+                                  collect (list row nil (spans-within spans start (+ start (length row)))))))
+                 (values (append head (list (echo-row editor))) (length head))))))))
 
 (defvar *show-completion-count* t
   "True to show before the prompt of a completing read the place of the

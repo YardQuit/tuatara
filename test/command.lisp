@@ -1004,6 +1004,24 @@ the terminal's reads and waits stood in for, with kitty's keyboard off."
                   (format nil "~{~a~^ ~}" (mapcar (lambda (line) (string-trim " " line)) screen))))
     (is equal '(#\y) (tuatara.frontend:key-spec answer))))
 
+(define-test (command long-key-question-keys-coloured)
+  ;; the keys named in the start of a long question of one key, on the rows above the
+  ;; echo row, are coloured as on the echo row
+  (let ((faces nil))
+    (run-keys (list (lambda ()
+                      (tuatara.command:read-key
+                       (tuatara.command:substitute-command-keys
+                        "\\`C-g' leaves the package pkg from /tmp/a-long-folder-name/that-matters/ alone; load it? (y or n) "
+                        :marks t)))
+                    (lambda ()
+                      (let ((f (tuatara.command::frame-frontend (tuatara.command::editor-frame tuatara.command:*editor*))))
+                        (setf faces (loop for row below 12
+                                          when (search "C-g leaves" (tuatara.frontend.fake:fake-screen-line f row))
+                                            append (mapcar #'third (aref (tuatara.frontend.fake:fake-spans f) row))))))
+                    "y")
+              :text "" :width 60 :height 12)
+    (true (member :help-key-binding faces))))
+
 (define-test (command moving-by-clusters)
   ;; a letter with its accent and an emoji with its skin tone are one character to move
   ;; over, to type beside and to delete; backspace takes off the last mark alone
