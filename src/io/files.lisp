@@ -1700,6 +1700,8 @@ the file itself is touched. Returns :DONE, or :STOPPED."
         (handler-case
             (unwind-protect
                  (progn
+                   ;; where the file opened really is, whatever names led to it meanwhile
+                   (check-writing target "write" :fd fd)
                    (if whole
                        (write-octets fd (tuatara.text:rope-octets rope) :path target)
                        (write-rope fd rope :path target :progress progress))
@@ -1711,6 +1713,9 @@ the file itself is touched. Returns :DONE, or :STOPPED."
                    (when sync (flush-fd fd target))
                    (when progress (funcall progress (tuatara.text:rope-bytes rope) (tuatara.text:rope-bytes rope))))
               (sb-posix:close fd))
+          (writing-refused (e)
+            (drop-backup)
+            (error e))
           (error (e)
             (when backup-fd (ignore-errors (sb-posix:close backup-fd)))
             (error 'file-system-error :operation "write" :path target
@@ -1730,9 +1735,12 @@ written: a symbolic link there, found first or put there while the file is
 written, is refused, never followed. MODE, a function of the permissions the
 file would have (a number, as #o644), gives those it gets instead. Returns the
 new stamp and the file written (a symlink's target), or :STOPPED when CANCEL
-stopped it with the file untouched."
+stopped it with the file untouched. Refused (WRITING-REFUSED) where nothing
+may be written, looked at again on the file opened when it is written in
+place."
   (let* ((target (if follow-links (resolve-links path) (expand-path path)))
-         (existing (path-stamp target :follow follow-links))
+         (existing (progn (check-writing target "save")
+                          (path-stamp target :follow follow-links)))
          (directory (parent-path target))
          (class (directory-class directory)))
     ;; a pseudo file changes as it is read: there is nothing to guard

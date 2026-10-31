@@ -1118,6 +1118,7 @@ writing. Where the file system has no unnamed files (NFS, FUSE, SMB and others),
 a named one removed at once, which comes to the same."
   (unless directory
     (error "This text is not written to a scratch file on disk (the text of an encrypted file): too large to work on in memory"))
+  (check-writing directory "make a scratch file in")
   (let ((dir (string-right-trim "/" (native directory))))
     (handler-case (sb-posix:open dir (logior +o-tmpfile+ sb-posix:o-rdwr) #o600)
       (sb-posix:syscall-error ()
@@ -1140,7 +1141,9 @@ again and an unnamed file named: looked at the first time it is asked."
   "A descriptor, open for writing, for a new file with no name yet in DIRECTORY
 with permissions MODE (less the umask), which NAME-UNNAMED-FILE can name once
 it is complete; NIL where the file system or the system cannot, for the caller
-to use a named file. A crash before it is named leaves nothing behind."
+to use a named file. A crash before it is named leaves nothing behind.
+Refused (WRITING-REFUSED) where nothing may be written."
+  (check-writing directory "create a file in")
   (when (proc-fd-available-p)
     (handler-case (sb-posix:open (string-right-trim "/" (native directory)) (logior +o-tmpfile+ sb-posix:o-wronly) mode)
       (sb-posix:syscall-error () nil))))
@@ -1212,10 +1215,60 @@ STAMP: the process runs as root, or as that owner and a member of that group."
              (or (= (sb-posix:getegid) (stamp-gid stamp))
                  (and (member (stamp-gid stamp) (process-groups)) t))))))
 
+;;; Places nothing is written in
+
+(define-condition writing-refused (file-system-error) ()
+  (:documentation "A file operation refused by the editor itself for where it
+would write, make, change or delete something (WRITING-REFUSAL)."))
+
+(defvar *writing-refusal-function* nil
+  "A function saying where the editor writes nothing, or NIL for nowhere:
+called with a path (a native name) where something is about to be written,
+made, renamed, changed or deleted, and the keywords :DIRFD, a descriptor of
+the folder it is in, and :FD, one of the thing itself, by which it is told
+where that really is; it returns in words why nothing may be written there,
+or NIL when it may. Called with NIL for a path, it returns true when it
+refuses any place at all. The evidence folders (*EVIDENCE-FOLDERS*) are
+refused so.")
+
+(defun writing-refusal (path &key dirfd fd)
+  "Why nothing may be written at PATH (a native name, or a pathname), in
+words, or NIL when it may: as *WRITING-REFUSAL-FUNCTION* says, by where PATH
+really leads, every link followed; with DIRFD, an open descriptor of the
+folder PATH is in, or FD, one of PATH itself, by where that really is now,
+whatever names lead there."
+  (let ((function *writing-refusal-function*))
+    (and function path (funcall function (native path) :dirfd dirfd :fd fd))))
+
+(defun writing-refused-anywhere-p ()
+  "True when the editor refuses to write in some place
+\(*WRITING-REFUSAL-FUNCTION*), so that what may reach one is looked at."
+  (let ((function *writing-refusal-function*))
+    (and function (funcall function nil) t)))
+
+(defun check-writing (path operation &key dirfd fd)
+  "Signal WRITING-REFUSED for OPERATION (a verb phrase, \"save\") on PATH when
+nothing may be written there (WRITING-REFUSAL, DIRFD and FD as it has them)."
+  (let ((why (writing-refusal path :dirfd dirfd :fd fd)))
+    (when why
+      (error 'writing-refused :operation operation :path (native path) :reason why))))
+
+(defun fd-real-path (fd)
+  "Where the file or folder open as FD really is, as a native name with every
+link followed (as the system names it in /proc/self/fd); NIL when it does not
+say, or the file has no name any more."
+  (let ((octets (link-octets +at-fdcwd+ (tuatara.text:string-octets (format nil "/proc/self/fd/~d" fd)))))
+    (when (and octets (plusp (length octets)) (= (aref octets 0) 47))
+      (let ((name (tuatara.text:octets-string octets)))
+        (unless (uiop:string-suffix-p name " (deleted)")
+          name)))))
+
 (defun writable-p (path)
   "True when this process may write PATH: the file's contents, or for a
-directory, files made and taken away in it."
-  (and (ignore-errors (sb-posix:access (native path) sb-posix:w-ok) t) t))
+directory, files made and taken away in it; never a place the editor writes
+nothing in (WRITING-REFUSAL)."
+  (and (ignore-errors (sb-posix:access (native path) sb-posix:w-ok) t)
+       (not (writing-refusal path))))
 
 (defvar *cache-directory* nil
   "The folder Tuatara keeps its cache in, in place of ~/.cache/tuatara/
@@ -1245,11 +1298,13 @@ be there already: while it is not, its drive not mounted, one of the same
 name in memory ($XDG_RUNTIME_DIR/tuatara/, gone when the computer stops) is
 used in its place and noted in *DIRECTORIES-IN-MEMORY*, so that nothing kept
 for it lands on another drive. A FILE-SYSTEM-ERROR when there is no such
-memory either."
+memory either, or when the folder is one nothing may be written in
+\(WRITING-REFUSED)."
   (let ((chosen (symbol-value setting)))
     (if (null chosen)
         (directory-pathname (ensure-private-directory standard))
         (let ((name (directory-name chosen)))
+          (check-writing name (format nil "keep files (~(~a~)) in" setting))
           (if (eq :directory (path-kind name))
               (directory-pathname name)
               (let ((memory (uiop:getenv-absolute-directory "XDG_RUNTIME_DIR")))
@@ -1358,7 +1413,9 @@ PATH, its name as the system has it ([Content_Types].xml too), made with MODE
 less the umask when it is new: into a new file beside it, renamed over it
 once written and put on disk, so that the file is always whole, the old
 contents or the new, after a power cut too; the new file taken away when it
-cannot be written whole (a full disk)."
+cannot be written whole (a full disk). Refused (WRITING-REFUSED) where
+nothing may be written."
+  (check-writing path "write")
   (let* ((name (native path))
          (temporary (format nil "~a.~d.~a.new" name (sb-posix:getpid) (random-name)))
          (octets (if (stringp contents) (tuatara.text:string-octets contents) contents))
@@ -1382,7 +1439,9 @@ END is given), as a new file at PATH, made with MODE from the start: readable
 by you alone and written by nothing again (0400) as standard. An error, and
 nothing written, when something is at PATH already, a link too; the new file
 taken away when it cannot be written whole (a full disk). With SYNC, it is
-on the disk before this returns (fsync). Returns PATH."
+on the disk before this returns (fsync). Returns PATH. Refused
+\(WRITING-REFUSED) where nothing may be written."
+  (check-writing path "write")
   (let* ((name (native path))
          (octets (if (stringp contents) (tuatara.text:string-octets contents) (coerce contents 'tuatara.text:octets)))
          (fd (sb-posix:open name (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl) mode)))
@@ -1399,9 +1458,11 @@ places in files): a lock file beside it, its name with .lock after it, so
 that one session at a time reads it, changes it and writes it back, and
 none loses what another wrote meanwhile. Returns what FUNCTION returns; NIL,
 FUNCTION not called, when another holds the lock for more than WAIT seconds
-or the lock file cannot be made, so that the editor is never held up."
-  (let ((fd (ignore-errors (sb-posix:open (concatenate 'string (native path) ".lock")
-                                          (logior sb-posix:o-rdwr sb-posix:o-creat) #o600))))
+or the lock file cannot be made, so that the editor is never held up; nor
+in a place nothing may be written in (WRITING-REFUSAL)."
+  (let ((fd (and (not (writing-refusal path))
+                 (ignore-errors (sb-posix:open (concatenate 'string (native path) ".lock")
+                                          (logior sb-posix:o-rdwr sb-posix:o-creat) #o600)))))
     (when fd
       (unwind-protect
            (when (tuatara.runtime:lock-fd fd :wait wait)

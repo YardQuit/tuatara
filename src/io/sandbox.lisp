@@ -555,10 +555,14 @@ and OVERLAYS, as SANDBOX-RUN has them, those that exist, a directory in
 another shown after it, so that both are seen; with the links at the root
 their paths go through (ROOT-LINK-ARGUMENTS). A directory a link leads to is
 shown where it is written too, so that a path through the link finds it. The
-root itself is never shown: the sandbox's root is its own."
+root itself is never shown: the sandbox's root is its own. A directory to
+write in that is, or holds, a place nothing may be written in is refused
+\(CHECK-TREE-WRITING)."
   (let ((mounts '()) (written '()))
     (flet ((add (entry how)
              (multiple-value-bind (source target) (sandbox-place entry)
+               (when (eq how :write)
+                 (check-tree-writing source "let a program write in"))
                (push (if (consp entry) (cdr entry) entry) written)
                ;; at its real place, and where it is written when a link leads there (~/scratch to /tmp/scratch)
                (dolist (place (remove-duplicates (list target (if (consp entry) target (root-resolved entry))) :test #'string=))

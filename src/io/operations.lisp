@@ -109,7 +109,15 @@ another file system."
 (defun rename-path (from to &key replace)
   "Give the file or directory at FROM the name TO, which may be in another
 directory of the same file system; a FILE-SYSTEM-ERROR when TO is there
-already, unless REPLACE, or when it is on another file system."
+already, unless REPLACE, or when it is on another file system. Refused
+\(WRITING-REFUSED) where nothing may be written: FROM, anything within it,
+or TO (CHECK-TREE-WRITING)."
+  (check-tree-writing from "rename")
+  (check-writing to "rename")
+  (rename-checked from to :replace replace))
+
+(defun rename-checked (from to &key replace)
+  "RENAME-PATH's work, once where it writes has been looked at."
   (if replace
       (with-path-sap (old from)
         (with-path-sap (new to)
@@ -122,12 +130,18 @@ already, unless REPLACE, or when it is on another file system."
 (defun ensure-directories (path)
   "Make the directories PATH needs, the one it names when it ends in /, else
 the one it is in, as ENSURE-DIRECTORIES-EXIST does, but with its name taken as
-it is: a [ or * in it is only a character."
+it is: a [ or * in it is only a character. Refused (WRITING-REFUSED) where
+nothing may be written, whether they are there or not: what they are made
+for is written there next."
+  (check-writing (if (uiop:string-suffix-p (native path) "/") (string-right-trim "/" (native path)) (parent-path path))
+                 "make the folder")
   (ensure-directories-exist (uiop:parse-native-namestring (native path))))
 
 (defun make-directory (path &optional (mode #o777))
   "Make the directory PATH, with MODE as your umask allows; a
-FILE-SYSTEM-ERROR when it cannot be made, as when a file of that name is there."
+FILE-SYSTEM-ERROR when it cannot be made, as when a file of that name is there;
+WRITING-REFUSED where nothing may be written."
+  (check-writing path "make the directory")
   (with-path-sap (name path)
     (check-call (sb-alien:alien-funcall
                  (sb-alien:extern-alien "mkdir" (function sb-alien:int sb-sys:system-area-pointer sb-alien:unsigned-int))
@@ -154,14 +168,18 @@ directory is in the way."
     name))
 
 (defun remove-file (path)
-  "Take away the name PATH of a file or a symbolic link (not where it leads)."
+  "Take away the name PATH of a file or a symbolic link (not where it leads);
+refused (WRITING-REFUSED) where nothing may be written."
+  (check-writing path "delete")
   (with-path-sap (name path)
     (check-call (sb-alien:alien-funcall (sb-alien:extern-alien "unlink" (function sb-alien:int sb-sys:system-area-pointer)) name)
                 "delete" path)))
 
 (defun touch-path (path)
   "Set the access and modification times of the file or directory at PATH to
-now; a symbolic link's own times, not those of where it leads."
+now; a symbolic link's own times, not those of where it leads. Refused
+\(WRITING-REFUSED) where nothing may be written."
+  (check-writing path "touch")
   (with-path-sap (name path)
     (check-call (sb-alien:alien-funcall
                  (sb-alien:extern-alien "utimensat" (function sb-alien:int sb-alien:int sb-sys:system-area-pointer
@@ -171,7 +189,9 @@ now; a symbolic link's own times, not those of where it leads."
 
 (defun make-symbolic-link (target path)
   "Make PATH a symbolic link leading to TARGET, a path as it is written in the
-link; a FILE-SYSTEM-ERROR when PATH is taken."
+link; a FILE-SYSTEM-ERROR when PATH is taken, WRITING-REFUSED where nothing
+may be written."
+  (check-writing path "make the link")
   (with-path-sap (to target)
     (with-path-sap (name path)
       (check-call (sb-alien:alien-funcall
@@ -184,7 +204,8 @@ link; a FILE-SYSTEM-ERROR when PATH is taken."
   "Give the file at FROM the second name PATH, on the same drive: one file,
 two names (a symbolic link at FROM gets a second name itself). A
 FILE-SYSTEM-ERROR when PATH is taken, FROM is a directory or the two are on
-different drives."
+different drives; WRITING-REFUSED where nothing may be written."
+  (check-writing path "make the link")
   (with-path-sap (old from)
     (with-path-sap (name path)
       (check-call (sb-alien:alien-funcall
@@ -240,16 +261,19 @@ a FILE-SYSTEM-ERROR when it is not a directory now, a symbolic link included."
             ((eql errno sb-posix:eperm) (open-entry dirfd name flags path))
             (t (fail "open" path errno))))))
 
-(defun call-with-parent (path function)
+(defun call-with-parent (path function &key writing)
   "Call FUNCTION with a descriptor of the directory PATH is in and PATH's own
-name in it (octets), the descriptor closed after."
+name in it (octets), the descriptor closed after. With WRITING, a verb
+phrase, refused (WRITING-REFUSED) when nothing may be written at PATH, told
+by where the directory opened really is."
   (multiple-value-bind (parent name) (path-folder-and-name (string-right-trim "/" (native path)))
     (let ((own (tuatara.text:string-octets name)))
       (when (or (zerop (length own)) (equalp own #(46)) (equalp own #(46 46)))
         (error 'file-system-error :operation "change" :path path :reason "it names no entry of a directory"))
       (let ((dirfd (handler-case (sb-posix:open parent (logior sb-posix:o-rdonly +o-directory+ +o-cloexec+))
                      (sb-posix:syscall-error (e) (fail "open" parent (sb-posix:syscall-errno e))))))
-        (unwind-protect (funcall function dirfd own)
+        (unwind-protect (progn (when writing (check-writing path writing :dirfd dirfd))
+                               (funcall function dirfd own))
           (sb-posix:close dirfd))))))
 
 (defun fd-entry-names (fd path)
@@ -362,7 +386,8 @@ holds part of it). What is not a regular file is refused unopened."
     (unwind-protect
          (call-with-parent to
            (lambda (to-dirfd to-name)
-             (copy-open-file in to-dirfd to-name (native from) (native to) :cancel cancel :progress progress)))
+             (copy-open-file in to-dirfd to-name (native from) (native to) :cancel cancel :progress progress))
+           :writing "copy")
       (sb-posix:close in))))
 
 (defun copy-to-free-name (from directory name &key cancel)
@@ -458,9 +483,11 @@ leaves is a hidden .tuatara-copy-... name."
                         (lambda (from-dirfd from-name)
                           (call-with-parent scratch
                             (lambda (to-dirfd to-name)
-                              (copy-entry-at from-dirfd from-name to-dirfd to-name (native from) scratch cancel progress skipped)))))))
+                              (copy-entry-at from-dirfd from-name to-dirfd to-name (native from) scratch cancel progress skipped))
+                            :writing "copy")))))
            (unless (and cancel (car cancel))
-             (rename-path scratch to)
+             (check-writing to "copy")
+             (rename-checked scratch to)
              (setf named t))
            (and named whole))
       (unless named (ignore-errors (delete-tree scratch))))))
@@ -495,8 +522,32 @@ directory with all in it. CANCEL, a cons, stops it between files. Nothing in
 it is followed when it is a symbolic link, even one put there while the
 deleting goes on: only what is in PATH is deleted."
   (when (and cancel (car cancel)) (return-from delete-tree nil))
-  (call-with-parent path (lambda (dirfd name) (delete-entry-at dirfd name (native path) cancel)))
+  (check-tree-writing path "delete")
+  (call-with-parent path (lambda (dirfd name) (delete-entry-at dirfd name (native path) cancel)) :writing "delete")
   t)
+
+(defun check-tree-writing (path operation)
+  "Signal WRITING-REFUSED for OPERATION on PATH when nothing may be written
+there, or, PATH being a folder, in any folder within it (WRITING-REFUSAL),
+each told by where it really is: a folder holding such a place is not
+deleted, moved or renamed as a whole. Links in it are not followed. Looks
+within PATH only while some place is refused (WRITING-REFUSED-ANYWHERE-P)."
+  (check-writing path operation)
+  (when (and (writing-refused-anywhere-p) (eq :directory (path-kind path :follow nil)))
+    (labels ((walk (dirfd name path depth)
+               (let ((fd (handler-case (open-directory-entry dirfd name path)
+                           (file-system-error () nil))))
+                 (when fd
+                   (unwind-protect
+                        (progn
+                          (check-writing path operation :fd fd)
+                          (check-tree-depth depth path)
+                          (dolist (entry (fd-entry-names fd path))
+                            (let ((stamp (statx-octets fd entry #x100)))
+                              (when (and stamp (eq :directory (stamp-kind stamp)))
+                                (walk fd entry (entry-path path entry) (1+ depth))))))
+                     (sb-posix:close fd))))))
+      (call-with-parent path (lambda (dirfd name) (walk dirfd name (string-right-trim "/" (native path)) 0))))))
 
 (defun move-path (from to &key cancel progress skipped)
   "Move FROM to the new name TO: a rename on one file system; on another, a
@@ -504,7 +555,9 @@ copy, FROM deleted only once all of it is copied. When the copy stopped or
 left something out (a named pipe, a socket, a device), FROM is left as it was,
 nothing of it under TO, and a FILE-SYSTEM-ERROR says so; SKIPPED as
 COPY-PATH-TREE has it."
-  (handler-case (rename-path from to)
+  (check-tree-writing from "move")
+  (check-writing to "move")
+  (handler-case (rename-checked from to)
     (file-system-error (e)
       (if (and (path-stamp from :follow nil)
                (not (path-stamp to :follow nil))
@@ -719,6 +772,7 @@ can put it back. Returns where it went; a FILE-SYSTEM-ERROR when there is no
 trash for it."
   (let* ((path (string-right-trim "/" (native path)))
          (base (native-file-name path)))
+    (check-tree-writing path "put in the trash")
     (multiple-value-bind (trash top) (trash-for path)
       (flet ((target (n) (path-join trash (format nil "files/~a" (trash-name base n)))))
         ;; the .trashinfo made first keeps the name for this file alone; a name taken
@@ -733,7 +787,7 @@ trash for it."
                                          (tuatara.dates:format-time "%FT%T" time)))
                              :path info)
             (sb-posix:close fd))
-          (handler-case (rename-path path (target n))
+          (handler-case (rename-checked path (target n))
             (error (e) (ignore-errors (remove-file info)) (error e)))
           (target n))))))
 
@@ -753,7 +807,9 @@ a function of N, is true. Each name is taken in one step, only when nothing
 has it, never through a link, so that no other program is given it
 meanwhile. Returns three values: a descriptor writing the file, its path and
 N. A FILE-SYSTEM-ERROR when it cannot be made for another reason than its
-name being taken, or 10,000 names are."
+name being taken, or 10,000 names are; WRITING-REFUSED where nothing may be
+written."
+  (check-writing (path-join directory (funcall name-of 1)) "make")
   (loop for n from 1 to 10000
         for path = (path-join directory (funcall name-of n))
         do (when (funcall usable n)
@@ -837,5 +893,6 @@ octets overwritten so far, all passes counted. Returns T once it is gone."
                 (ignore-errors (sb-posix:fsync dirfd)))
            (sb-posix:close fd)
            (when random (sb-posix:close random))
-           (fill buffer 0)))))
+           (fill buffer 0))))
+     :writing "wipe")
     t))
