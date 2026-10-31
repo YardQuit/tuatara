@@ -172,12 +172,28 @@ first =, and what follows a short option stuck to it (-fPATH)."
                      (and (> (length word) 2) (char= (char word 0) #\-) (alpha-char-p (char word 1))
                           (list (subseq word 2))))))
 
+(defparameter *git-pathspecs-read-only*
+  (set-difference *git-commands-leaving-the-work-tree* '("config" "update-ref" "notes") :test #'string=)
+  "The git commands whose paths after a standalone -- are only read, files
+of evidence among them: those of *GIT-COMMANDS-LEAVING-THE-WORK-TREE* but
+config, update-ref and notes.")
+
+(defun git-words-checked (arguments)
+  "The words of ARGUMENTS that CHECK-GIT-ARGUMENTS looks at: all of them, but
+for a command of *GIT-PATHSPECS-READ-ONLY* those after its first
+standalone --, the paths it reads (git log -- evidence/report.pdf)."
+  (let* ((words (git-command-words arguments))
+         (end (and (member (first words) *git-pathspecs-read-only* :test #'equal)
+                   (position "--" words :test #'string=))))
+    (if end (ldiff arguments (nthcdr end words)) arguments)))
+
 (defun check-git-arguments (here arguments doing)
   "Signal TUATARA.IO:WRITING-REFUSED, DOING said, when a word of ARGUMENTS,
 taken as a path from HERE, where git runs (GIT-ARGUMENT-PLACES), lands in or
 under an evidence folder, or names a link into one: no option of git's can
-then write there, whatever it is called or however it is abbreviated."
-  (dolist (word arguments)
+then write there, whatever it is called or however it is abbreviated. The
+paths a reading command is given after -- are let be (GIT-WORDS-CHECKED)."
+  (dolist (word (git-words-checked arguments))
     (dolist (place (git-argument-places word))
       (let ((path (if (uiop:string-prefix-p "/" place) place (tuatara.io:path-join here place))))
         (tuatara.io:check-writing path doing)
