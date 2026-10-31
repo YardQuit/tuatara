@@ -438,7 +438,7 @@ over; THEN, a function of no arguments, is called then. Nothing is begun
 when one of them would write in an evidence folder (*EVIDENCE-FOLDERS*):
 that is said, and NIL returned."
   (let ((refusal (loop for (from . to) in pairs
-                       thereis (or (and (member verb '(:move :trash :delete))
+                       thereis (or (and (member verb '(:move :trash :delete :hardlink))
                                         (evidence-refusal (rimu-verb-words verb :verb) from))
                                    (and to (evidence-refusal (rimu-verb-words verb :verb) to))))))
     (when refusal

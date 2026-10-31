@@ -147,6 +147,9 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
         (true (refused (tuatara.io:touch-path a)))
         (true (refused (tuatara.io:make-symbolic-link "/etc/hostname" (concatenate 'string evidence "l"))))
         (true (refused (tuatara.io:make-hard-link outside (concatenate 'string evidence "h"))))
+        ;; a second name elsewhere changes the file of evidence too
+        (true (refused (tuatara.io:make-hard-link a (concatenate 'string work "h"))))
+        (false (tuatara.defaults::rimu-start-operation :hardlink (list (cons a (concatenate 'string work "h2"))) nil))
         (true (refused (tuatara.io:wipe-file a)))
         (true (refused (tuatara.io:delete-tree a)))
         (true (refused (tuatara.io:trash-path a)))

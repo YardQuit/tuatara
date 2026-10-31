@@ -204,7 +204,10 @@ may be written."
   "Give the file at FROM the second name PATH, on the same drive: one file,
 two names (a symbolic link at FROM gets a second name itself). A
 FILE-SYSTEM-ERROR when PATH is taken, FROM is a directory or the two are on
-different drives; WRITING-REFUSED where nothing may be written."
+different drives; WRITING-REFUSED where nothing may be written, at PATH or
+at FROM, whose file a second name changes (its count of names, its time of
+change)."
+  (check-writing from "give another name to")
   (check-writing path "make the link")
   (with-path-sap (old from)
     (with-path-sap (name path)
