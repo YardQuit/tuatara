@@ -27,6 +27,65 @@ those as names of files.")
       (remove "--literal-pathspecs" *git-safety* :test #'string=)
       *git-safety*))
 
+(defparameter *git-commands-leaving-the-work-tree*
+  '("status" "log" "diff" "show" "blame" "cat-file" "rev-parse" "ls-files" "ls-tree" "for-each-ref" "rev-list"
+    "describe" "merge-base" "show-ref" "symbolic-ref" "config" "grep" "check-ignore" "check-attr" "shortlog"
+    "name-rev" "var" "version" "help" "hash-object" "branch" "tag" "commit" "add" "fetch" "push" "remote" "notes"
+    "update-ref" "reflog" "count-objects" "fsck" "diff-tree" "diff-index" "diff-files" "cherry" "range-diff"
+    "update-index" "write-tree" "commit-tree" "mktree" "ls-remote" "verify-commit" "verify-tag")
+  "The git commands that write nothing in a repository's working files (its
+.git and its index aside). Every other command is taken to write there
+\(GIT-WRITES-WORK-TREE-P), so that a command not named here is held to it
+too.")
+
+(defun git-command-words (arguments)
+  "ARGUMENTS of git with the options before the command (-c NAME=VALUE, -C
+FOLDER, --no-pager and the like) left out: the command, then its own."
+  (loop while (and arguments (uiop:string-prefix-p "-" (first arguments)))
+        do (setf arguments (if (member (first arguments) '("-c" "-C") :test #'string=)
+                               (cddr arguments)
+                               (rest arguments))))
+  arguments)
+
+(defun git-writes-work-tree-p (arguments)
+  "True when git run with ARGUMENTS may write in the repository's working
+files: every command but those of *GIT-COMMANDS-LEAVING-THE-WORK-TREE*, and
+of the rest these only as they are given: apply with --cached or --check
+\(not --index), reset without --hard, --merge, --keep or
+--recurse-submodules, restore of --staged alone, rm --cached, stash list and
+show, worktree list, submodule status and summary, bisect log,
+sparse-checkout list, format-patch --stdout, bundle list-heads and verify,
+and archive with no file to write."
+  (destructuring-bind (&optional command &rest more) (git-command-words arguments)
+    (flet ((given (&rest options) (some (lambda (option) (member option more :test #'string=)) options))
+           (then (&rest words) (and more (member (first more) words :test #'string=))))
+      (cond ((null command) nil)
+            ((member command *git-commands-leaving-the-work-tree* :test #'string=) nil)
+            ((string= command "apply") (not (and (given "--cached" "--check") (not (given "--index")))))
+            ((string= command "reset") (given "--hard" "--merge" "--keep" "--recurse-submodules"))
+            ((string= command "restore") (not (and (given "--staged" "-S") (not (given "--worktree" "-W")))))
+            ((string= command "rm") (not (given "--cached")))
+            ((string= command "stash") (not (then "list" "show")))
+            ((string= command "worktree") (not (then "list")))
+            ((string= command "submodule") (not (then "status" "summary")))
+            ((string= command "bisect") (not (then "log")))
+            ((string= command "sparse-checkout") (not (then "list")))
+            ((string= command "format-patch") (not (given "--stdout")))
+            ((string= command "bundle") (not (then "list-heads" "verify")))
+            ((string= command "archive") (or (given "-o") (some (lambda (word) (uiop:string-prefix-p "--output" word)) more)))
+            (t t)))))
+
+(defun check-git-writing (directory arguments)
+  "Signal TUATARA.IO:WRITING-REFUSED when git run with ARGUMENTS in DIRECTORY
+may write in its repository's working files (GIT-WRITES-WORK-TREE-P) and
+the repository is, or holds, a place nothing is written in, an evidence
+folder (TUATARA.IO:CHECK-TREE-WRITING), the folder named. Nothing is looked
+at while no place is refused."
+  (when (and (tuatara.io:writing-refused-anywhere-p) (git-writes-work-tree-p arguments))
+    (let ((top (ignore-errors (repository-top directory))))
+      (when top
+        (tuatara.io:check-tree-writing top (format nil "run git ~a in" (first (git-command-words arguments))))))))
+
 (defun git-hash-p (text &key short)
   "True when TEXT is a commit's full hash as git writes it: 40 hexadecimal
 digits, or 64 in a repository of SHA-256 hashes; with SHORT, a hash cut as
@@ -94,7 +153,10 @@ third when it was more than LIMIT octets."
 failed (RUN-GIT with ERRORS); the rest is read and let go.")
 
 (defun run-git-program (git directory arguments &key cancel line environment errors input seconds limit)
-  "Run the program GIT as RUN-GIT runs git, once it has found it."
+  "Run the program GIT as RUN-GIT runs git, once it has found it. A command
+that would write in the working files of a repository holding an evidence
+folder is refused, never run (CHECK-GIT-WRITING)."
+  (check-git-writing directory arguments)
   (let ((limit (or limit *program-output-limit*)))
     (handler-case
         (tuatara.io:call-with-program
