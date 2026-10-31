@@ -518,7 +518,7 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                                   (list :until (lambda () (equal "topic" (on))))
                                   "b b" (list :until (asking "Check out:")) "m a i n RET"
                                   (list :until (lambda () (equal "main" (on))))
-                                  "b m" (list :until (asking "Rename branch:")) "t o p i c RET"
+                                  "b m" (list :until (asking "Rename branch")) "t o p i c RET"
                                   (list :until (asking "Rename topic to:")) "f e a t RET"
                                   (list :until (lambda () (equal '("feat" "main") (git-branch-names dir))))
                                   "b d" (list :until (asking "Delete branch:")) "f e a t RET"
@@ -615,9 +615,9 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                                   (lambda () (change "c.txt" "c") (git-output dir "add" "c.txt"))
                                   ;; left out of the slim menu: said so, the menu kept open, nothing else run
                                   "c f" (list :wait 0.2) "C-g"
-                                  "~ c f" (list :until (asking "Fix up commit:")) (format nil "~a RET" (key-string first)) (list :until (committed-p "fixup! First"))
+                                  "~ c f" (list :until (asking "Fix up commit")) (format nil "~a RET" (key-string first)) (list :until (committed-p "fixup! First"))
                                   (lambda () (change "d.txt" "d") (git-output dir "add" "d.txt"))
-                                  "c s" (list :until (asking "Squash into commit:")) (format nil "~a RET" (key-string first)) (list :until (committed-p "squash! First"))))))
+                                  "c s" (list :until (asking "Squash into commit")) (format nil "~a RET" (key-string first)) (list :until (committed-p "squash! First"))))))
         (true (tuatara.frontend.fake:fake-frame-showing f "Nothing staged: s stages a file"))
         (true (tuatara.frontend.fake:fake-frame-showing f "- a Every change (--all)"))
         (true (tuatara.frontend.fake:fake-frame-showing f "Fix up (f) is left out of this menu now; Slim menus:"))
@@ -695,12 +695,12 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                                   (list :until (lambda () (search "Stashes (1)" (tuatara.buffer:buffer-string (git-status-here)))))
                                   "M-< C-s s t a s h @ RET RET" (list :until (lambda () (git-buffer-named "*git stash@{0}*")))
                                   (list :wait 0.1) "C-x o"
-                                  "z p" (list :until (asking "Pop stash:")) "RET"
+                                  "z p" (list :until (asking "Pop stash")) "RET"
                                   (list :until (lambda () (zerop (length (stashes)))))
                                   (lambda () (change (format nil "one~%three~%")))
                                   "z z" (list :until (asking "Stash message")) "RET"
                                   (list :until (lambda () (plusp (length (stashes)))))
-                                  "z d" (list :until (asking "Drop stash:")) "RET"
+                                  "z d" (list :until (asking "Drop stash")) "RET"
                                   (list :until (asking "It cannot be undone")) "y e s RET"
                                   (list :until (lambda () (zerop (length (stashes)))))))))
         (true (tuatara.frontend.fake:fake-frame-showing f "Put the changes aside"))
@@ -724,8 +724,8 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                                   "h C-x g" (list :wait 0.2)
                                   "L - g L" (list :until (lambda () (search "* " (or (log-text) ""))))
                                   "h C-x g" (list :wait 0.2)
-                                  "L r" (list :until (lambda () (search "Reflog of HEAD" (or (log-text) ""))))
-                                  "C-n C-n C-n RET" (list :until (lambda () (git-buffer-named "*git commit ")))
+                                  "L r" (list :until (lambda () (search "commit (initial): First" (or (log-text) ""))))
+                                  "M-< C-s i n i t i a l RET RET" (list :until (lambda () (git-buffer-named "*git commit ")))
                                   "C-x 1 C-x g" (list :wait 0.2)
                                   "d d" (list :until (lambda () (tuatara.buffer:find-buffer "*git diff*")))
                                   "C-x 1 C-x g" (list :wait 0.2)
@@ -825,9 +825,9 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
       (git-commit-file dir "topic.txt" "topic" "Topic file")
       (let ((pick (string-trim '(#\Newline) (git-output dir "rev-parse" "--short" "clash"))))
         (git-session dir "a.txt"
-                     (list "R e" (list :until (asking "Rebase on:")) "m a i n RET"
+                     (list "R e" (list :until (asking "Rebase on")) "m a i n RET"
                            (list :until (lambda () (search "Ours" (git-output dir "log" "--format=%s"))))
-                           "A A" (list :until (asking "Cherry-pick commit:")) (format nil "~a RET" (key-string pick))
+                           "A A" (list :until (asking "Cherry-pick commit")) (format nil "~a RET" (key-string pick))
                            (list :until (lambda () (or (equal "Theirs" (first (subjects))) (search "Doing:    cherry" (status-text)))))))
         (true (search "Topic file" (git-output dir "log" "--format=%s")))
         ;; the pick clashed with Ours: stopped from its menu
@@ -838,15 +838,15 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
         (is equal "Topic file" (first (subjects))))
       (let ((topic (string-trim '(#\Newline) (git-output dir "rev-parse" "--short" "HEAD"))))
         (git-session dir "a.txt"
-                     (list "_ _" (list :until (asking "Revert commit:")) (format nil "~a RET" (key-string topic))
+                     (list "_ _" (list :until (asking "Revert commit")) (format nil "~a RET" (key-string topic))
                            (list :until (lambda () (search "Revert \"Topic file\"" (first (subjects)))))))
         (false (probe-file (merge-pathnames "topic.txt" dir)))
         ;; reset: mixed to before the revert, then hard with a change, asked
         (put-file (merge-pathnames "a.txt" dir) (format nil "changed~%"))
         (let ((f (git-session dir "a.txt"
-                              (list "X m" (list :until (asking "Reset to:")) "H E A D ~ 1 RET"
+                              (list "X m" (list :until (asking "Reset to")) "H E A D ~ 1 RET"
                                     (list :until (lambda () (equal "Topic file" (first (subjects)))))
-                                    "X H" (list :until (asking "Reset to (hard):")) "RET"
+                                    "X H" (list :until (asking "Reset to (hard)")) "RET"
                                     (list :until (asking "Changes not committed are lost")) "y e s RET"
                                     (list :until (lambda () (zerop (length (git-output dir "status" "--porcelain"))))))
                               :width 120 :height 30)))
@@ -872,7 +872,7 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                     (end (position #\Space text :start start)))
                (tuatara.buffer:buffer-replace buffer start end word))))
       (let ((f (git-session dir "a.txt"
-                            (list "~ R i" (list :until (asking "Rebase the commits after:")) "F i r s t RET"
+                            (list "~ R i" (list :until (asking "Rebase the commits after")) "F i r s t RET"
                                   (list :until #'todo)
                                   (lambda () (set-word "Add B" "drop") (set-word "Add C" "reword"))
                                   "C-c C-c" (list :until (asking "New subject of")) "C-a C-k C SPC a d d e d RET"
@@ -896,10 +896,10 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                (push (tuatara.defaults::buffer-private-folder (git-buffer-named "*git rebase:")) folders))
              (gone () (notany #'probe-file (remove nil folders))))
         (git-session dir "a.txt"
-                     (list "~ R i" (list :until (asking "Rebase the commits after:")) "F i r s t RET"
+                     (list "~ R i" (list :until (asking "Rebase the commits after")) "F i r s t RET"
                            (list :until #'todo) #'note-folder
                            "C-c C-k" (list :until #'gone)
-                           "~ R i" (list :until (asking "Rebase the commits after:")) "F i r s t RET"
+                           "~ R i" (list :until (asking "Rebase the commits after")) "F i r s t RET"
                            (list :until #'todo) #'note-folder
                            "C-c C-c" (list :until (lambda () (and (not (todo)) (gone)))))
                      :width 120 :height 30)
@@ -939,25 +939,25 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
     (flet ((tags () (git-output dir "tag" "--list" "-n1"))
            (remotes () (git-output dir "remote" "-v")))
       (let ((f (git-session dir "a.txt"
-                            (list "t t" (list :until (asking "Tag name:")) "v 1 RET" (list :until (asking "Tag v1 at:")) "RET"
+                            (list "t t" (list :until (asking "Tag name:")) "v 1 RET" (list :until (asking "Tag v1 at")) "RET"
                                   (list :until (lambda () (search "v1" (tags))))
-                                  "t - a t" (list :until (asking "Tag name:")) "v 2 RET" (list :until (asking "Tag v2 at:")) "RET"
+                                  "t - a t" (list :until (asking "Tag name:")) "v 2 RET" (list :until (asking "Tag v2 at")) "RET"
                                   (list :until (asking "Message of v2:")) "S e c o n d SPC r e l e a s e RET"
                                   (list :until (lambda () (search "Second release" (tags))))
                                   "~ t d" (list :until (asking "Delete tag:")) "v 1 RET" (list :until (asking "Delete the tag v1?")) "y e s RET"
                                   (list :until (lambda () (not (search "v1 " (tags)))))
-                                  "M a" (list :until (asking "Remote name:")) "RET" (list :until (asking "Address of origin:"))
+                                  "M a" (list :until (asking "Remote name")) "RET" (list :until (asking "Address of origin:"))
                                   "e x t : : s h SPC - c SPC t o u c h SPC x RET" (list :wait 0.2)
-                                  "M a" (list :until (asking "Remote name:")) "RET" (list :until (asking "Address of origin:"))
+                                  "M a" (list :until (asking "Remote name")) "RET" (list :until (asking "Address of origin:"))
                                   "/ t m p / o n e . g i t RET" (list :until (lambda () (search "/tmp/one.git" (remotes))))
-                                  "M r" (list :until (asking "Rename remote:")) "RET" (list :until (asking "Rename origin to:")) "u p RET"
+                                  "M r" (list :until (asking "Rename remote")) "RET" (list :until (asking "Rename origin to:")) "u p RET"
                                   (list :until (lambda () (search "up	" (remotes))))
-                                  "M u" (list :until (asking "Address of remote:")) "RET" (list :until (asking "Address of up:"))
+                                  "M u" (list :until (asking "Address of remote")) "RET" (list :until (asking "Address of up:"))
                                   "C-a C-k / t m p / t w o . g i t RET" (list :until (lambda () (search "/tmp/two.git" (remotes))))
                                   ;; a folder written from ~/ is made whole
-                                  "M a" (list :until (asking "Remote name:")) "h o m e RET" (list :until (asking "Address of home:"))
+                                  "M a" (list :until (asking "Remote name")) "h o m e RET" (list :until (asking "Address of home:"))
                                   "~ / x . g i t RET" (list :until (lambda () (search "x.git" (remotes))))
-                                  "M d" (list :until (asking "Remove remote:")) "u p RET" (list :until (asking "Remove the remote up")) "y e s RET"
+                                  "M d" (list :until (asking "Remove remote")) "u p RET" (list :until (asking "Remove the remote up")) "y e s RET"
                                   (list :until (lambda () (not (search "up	" (remotes))))))
                             :width 120 :height 30)))
         (true (tuatara.frontend.fake:fake-frame-showing f "Not an address git is given: ext::sh -c touch x"))
@@ -1078,10 +1078,10 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
                            "C-x g" (list :until #'git-state-here)
                            "w w" (list :until (asking "Take in patch:")) (format nil "C-a C-k ~a RET" (rimu-typed patch))
                            (list :until (lambda () (equal "Add the guide" (first (git-log-subjects repo)))))
-                           "W c" (list :until (asking "Commits after:")) "v 1 RET"
+                           "W c" (list :until (asking "Commits after")) "v 1 RET"
                            (list :until (asking "Write the patches in:")) (format nil "C-a C-k ~a RET" (rimu-typed (native-in dir "out/")))
                            (list :until (lambda () (directory (merge-pathnames "out/*.patch" dir))))
-                           "T T" (list :until (asking "Note on:")) "RET" (list :until (asking "Note on HEAD:")) "R e v i e w e d RET"
+                           "T T" (list :until (asking "Note on")) "RET" (list :until (asking "Note on HEAD:")) "R e v i e w e d RET"
                            (list :until (lambda () (search "Reviewed" (git-output repo "notes" "show" "HEAD"))))
                            "> s" (list :until (asking "Check out only the folders:")) "d o c s RET"
                            (list :until (lambda () (search "true" (git-output repo "config" "core.sparseCheckout"))))
@@ -1216,7 +1216,7 @@ DIR is visited and its status read, the project trusted. Returns the frontend."
           (tuatara-user:*lsp-trusted-projects* (list (namestring dir))))
       (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (native-in dir "a.txt")))
                                "C-x g" (list :until #'git-state-here)
-                               "d c" (list :until (asking "Show commit:")) "RET"
+                               "d c" (list :until (asking "Show commit")) "RET"
                                (list :until (lambda () (git-buffer-named "*git commit ")))
                                (list :wait 0.2)
                                (lambda () (setf (getf (symbol-plist 'shown-text) :class)

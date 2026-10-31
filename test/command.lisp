@@ -28,6 +28,14 @@ candidates found in the background (a completing read's SOURCE)."
   (loop while (tuatara.command::take-in-source tuatara.command:*editor*)
         do (sleep 0.01)))
 
+(defun waited-in-vain (until seconds)
+  "Fail the test running: a session waited SECONDS for UNTIL, a function, to
+be true, and it never was. What the editor asked and said then is told."
+  (let ((editor tuatara.command:*editor*))
+    (true nil "Waited ~a s in vain for ~a; asking ~s, saying ~s" seconds until
+          (and editor (tuatara.command:editor-minibuffer-active editor) (tuatara.command:editor-minibuffer-prompt editor))
+          (and editor (tuatara.command:editor-message editor)))))
+
 (defun queue-test-keys (f keys)
   "Queue KEYS on the fake frontend F: a key sequence as a string, or a list of
 them, :WAIT among them for WAIT-FOR-MINIBUFFER-SOURCE at that point, :TICK

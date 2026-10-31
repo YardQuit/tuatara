@@ -22,10 +22,10 @@ it names none: a bound on a wait that never ends, never what a test waits for.")
   "Run an editor session on STEPS, each a string of keys, (:wait SECONDS), or
 \(:until FUNCTION [SECONDS]) waiting until FUNCTION of no arguments is true:
 for that, never for a time, SECONDS (*UNTIL-BOUND* when not given) only a
-bound on a wait that never ends. As a step begins, *SESSION-MESSAGES-START* is where
-the step before it began. With PENDING, what is queued counts as typed
-meanwhile, as keys pressed while the editor waits are. Returns the frontend
-and the editor."
+bound on a wait that never ends, the test failing past it. As a step begins,
+*SESSION-MESSAGES-START* is where the step before it began. With PENDING,
+what is queued counts as typed meanwhile, as keys pressed while the editor
+waits are. Returns the frontend and the editor."
   (let* ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height))
          (log (lambda () (tuatara.buffer:buffer-size (tuatara.command::messages-buffer))))
          (begun nil)
@@ -45,9 +45,14 @@ and the editor."
                             (take (rest steps) (get-internal-real-time))
                             (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        ((and (consp step) (eq (first step) :until))
-                        (if (or (funcall (second step)) (> (- (get-internal-real-time) start) (* (or (third step) *until-bound*) internal-time-units-per-second)))
-                            (take (rest steps) (get-internal-real-time))
-                            (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
+                        (let ((bound (or (third step) *until-bound*)))
+                          (cond ((funcall (second step))
+                                 (take (rest steps) (get-internal-real-time)))
+                                ((> (- (get-internal-real-time) start) (* bound internal-time-units-per-second))
+                                 (waited-in-vain (second step) bound)
+                                 (take (rest steps) (get-internal-real-time)))
+                                (t
+                                 (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start)))))))
                        (t (queue-test-keys f (list step))
                           (tuatara.frontend.fake:fake-queue-action f (lambda () (take (rest steps) (get-internal-real-time)))))))))
       (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps (get-internal-real-time))))

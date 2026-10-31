@@ -8,13 +8,13 @@
 
 (defun terminal-session (steps &key (width 80) (height 12) (program '("bash" "--norc" "--noprofile" "-i")) (place :full) cell-pixels)
   "Run an editor session on STEPS, each a string of keys typed, (:until
-FUNCTION) waiting (ten seconds at most) until FUNCTION, of the current
-buffer, is true, (:do FUNCTION) calling FUNCTION of the current buffer, or
-\(:mouse BASE COLUMN ROW . MODIFIERS) a mouse key at that cell of the screen
-\(MODIFIERS :ctrl t, say), the terminal's program PROGRAM, shown at PLACE. Every
-terminal still running is ended afterwards, its buffer killed. CELL-PIXELS,
-a cell's width and height in pixels as a list, has the frontend show
-pictures. Returns the frontend and the editor."
+FUNCTION) waiting (ten seconds at most, failing the test past them) until
+FUNCTION, of the current buffer, is true, (:do FUNCTION) calling FUNCTION of
+the current buffer, or (:mouse BASE COLUMN ROW . MODIFIERS) a mouse key at
+that cell of the screen (MODIFIERS :ctrl t, say), the terminal's program
+PROGRAM, shown at PLACE. Every terminal still running is ended afterwards,
+its buffer killed. CELL-PIXELS, a cell's width and height in pixels as a
+list, has the frontend show pictures. Returns the frontend and the editor."
   (let ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height :cell-pixels cell-pixels))
         (tuatara-user:*terminal-program* program)
         (tuatara-user:*terminal-place* place)
@@ -33,11 +33,13 @@ pictures. Returns the frontend and the editor."
                         (funcall (second step) (buffer))
                         (take (rest steps) (get-internal-real-time)))
                        ((and (consp step) (eq (first step) :until))
-                        (if (or (funcall (second step) (buffer))
-                                (> (- (get-internal-real-time) start) (* 10 internal-time-units-per-second)))
-                            (take (rest steps) (get-internal-real-time))
-                            (progn (sleep 0.02)
-                                   (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
+                        (cond ((funcall (second step) (buffer))
+                               (take (rest steps) (get-internal-real-time)))
+                              ((> (- (get-internal-real-time) start) (* 10 internal-time-units-per-second))
+                               (waited-in-vain (second step) 10)
+                               (take (rest steps) (get-internal-real-time)))
+                              (t (sleep 0.02)
+                                 (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        (t (queue-test-keys f (list step))
                           (tuatara.frontend.fake:fake-queue-action
                            f (lambda () (take (rest steps) (get-internal-real-time)))))))))
