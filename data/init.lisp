@@ -15,6 +15,12 @@
 ;;;; mode, a package's name for that package, or a name of your own for a
 ;;;; group of settings that go together ("writing"). Keys say their mode
 ;;;; themselves (bind-key ... :mode 'org), whichever group they are in.
+;;;; The file is in parts, each begun by a banner of ==== lines; search for
+;;;; "===" to jump from one part to the next.
+
+;;;; ================================================================
+;;;; CORE: keys, looks, editing, files, windows, searching
+;;;; ================================================================
 
 ;;; Tuatara itself: what is for no one mode or package
 
@@ -789,6 +795,66 @@
   ;; set: nil.
   ;; (setf *help-window-select* t)
 
+  ;;; Searching files as you type (M-s g, C-x n g)
+
+  ;; Folders kept read in memory and current: C-x n o, C-x n g and M-s g there
+  ;; answer at once. Not set: none.
+  ;; (setf *indexed-directories* (list *formatted-file-directory*))
+
+  ;; Indexes in memory only, read whole at each start. Not set: t: kept in the
+  ;; cache.
+  ;; (setf *indexes-kept-on-disk* nil)
+
+  ;; Begin after 2 characters. Not set: 3.
+  ;; (setf *search-files-min-input* 2)
+
+  ;; Up to 4 GB of text in memory for searches and each index. Not set: 128 MB;
+  ;; past it from disk.
+  ;; (setf *search-files-limit* (* 4 1024 1024 1024))
+
+  ;; Up to 5,000 matching lines listed. Not set: 2,000.
+  ;; (setf *search-files-max-lines* 5000)
+
+  ;; What marks a project, all of which M-s g searches. Not set: '(".git"
+  ;; ".project").
+  ;; (setf *project-root-markers* '(".git" ".project" "Cargo.toml"))
+
+  ;; The mode line's sign for kept folders: a Nerd Font glyph. Not set: "U"; nil:
+  ;; none.
+  ;; (setf *indexing-indicator* "")
+
+  ;; The sign lit while they are searched. Not set: "S"; nil: none.
+  ;; (setf *searching-indicator* "")
+
+  ;;; Messages and debugging
+
+  ;; Lines *Messages* keeps. Not set: 1000.
+  ;; (setf *message-log-max* 5000)
+
+  ;; Start in debug mode: what the editor does goes to *Debug*. Not set: nil; M-x
+  ;; debug-mode, C-h E.
+  ;; (setf *debug-mode* t)
+
+  ;; Garbage left for its collection to come when it comes, maybe between two
+  ;; keys. Not set: 0.3: collected after that many seconds with no key, once
+  ;; there is enough of it.
+  ;; (setf *idle-collection-seconds* nil)
+
+  ;; Lines *Debug* keeps. Not set: 10000; nil: all.
+  ;; (setf *debug-log-max* 50000)
+
+  ;; An error shows the calls under way in *Backtrace*. Not set: nil; M-x
+  ;; toggle-debug-on-error.
+  ;; (setf *debug-on-error* t)
+  )
+
+;;;; ================================================================
+;;;; WRITING AND NOTES: notes, Org, exporting
+;;;; ================================================================
+
+(load-package "tuatara"
+  :config
+
   ;;; Notes: files with formatted names
   ;; C-x n f finds or makes one, C-x n o opens one, C-x n n makes one, C-x n g
   ;; searches them.
@@ -868,368 +934,6 @@
   ;; Dates asked for at the prompt, not first chosen in the calendar below (h j k l
   ;; move, m marks, u unmarks, RET writes the days chosen at the prompt). Not set: t.
   ;; (setf *org-read-date-in-calendar* nil)
-
-  ;;; Searching files as you type (M-s g, C-x n g)
-
-  ;; Folders kept read in memory and current: C-x n o, C-x n g and M-s g there
-  ;; answer at once. Not set: none.
-  ;; (setf *indexed-directories* (list *formatted-file-directory*))
-
-  ;; Indexes in memory only, read whole at each start. Not set: t: kept in the
-  ;; cache.
-  ;; (setf *indexes-kept-on-disk* nil)
-
-  ;; Begin after 2 characters. Not set: 3.
-  ;; (setf *search-files-min-input* 2)
-
-  ;; Up to 4 GB of text in memory for searches and each index. Not set: 128 MB;
-  ;; past it from disk.
-  ;; (setf *search-files-limit* (* 4 1024 1024 1024))
-
-  ;; Up to 5,000 matching lines listed. Not set: 2,000.
-  ;; (setf *search-files-max-lines* 5000)
-
-  ;; What marks a project, all of which M-s g searches. Not set: '(".git"
-  ;; ".project").
-  ;; (setf *project-root-markers* '(".git" ".project" "Cargo.toml"))
-
-  ;; The mode line's sign for kept folders: a Nerd Font glyph. Not set: "U"; nil:
-  ;; none.
-  ;; (setf *indexing-indicator* "")
-
-  ;; The sign lit while they are searched. Not set: "S"; nil: none.
-  ;; (setf *searching-indicator* "")
-
-  ;;; Running a build or the tests (M-x compile)
-
-  ;; The command M-x compile offers before you have typed one, run from the
-  ;; project's root. Not set: "make -k ".
-  ;; (setf *compile-command* "cargo build ")
-
-  ;; The most of a command's output *compile* keeps; past it the output is
-  ;; counted, not kept, and the end says how much was left out. Not set: 256 MB;
-  ;; nil: all of it.
-  ;; (setf *compile-output-most* (* 1024 1024 1024))
-
-  ;;; Language servers and formatting (C-c in code lists their keys)
-
-  ;; Projects whose servers start by themselves (they run the project's code);
-  ;; others: M-x lsp asks once. Not set: none.
-  ;; (setf *lsp-trusted-projects* '("~/src/"))
-
-  ;; Servers for these languages alone; '(:not markdown) all but these. Not set:
-  ;; t: every one with a server.
-  ;; (setf *lsp-languages* '(go rust c cpp python latex lua bash))
-
-  ;; Your own servers before each language's usual ones: by name, or (("program"
-  ;; "--stdio")); (markdown) for none.
-  ;; (setf *language-servers* '((python "basedpyright") (markdown)))
-
-  ;; Your own formatters before each language's usual ones, code on standard
-  ;; input; (LANGUAGE) for none.
-  ;; (setf *language-formatters* '((python "ruff" "format" "-")))
-
-  ;; These languages formatted before each save. Not set: t: every one with a
-  ;; formatter; none.
-  ;; (setf *format-on-save* '(rust python))
-
-  ;; Formatters run as any program. Not set: t: shut in the sandbox, the project
-  ;; read only.
-  ;; (setf *format-in-sandbox* nil)
-
-  ;; A formatter stopped after 60 seconds, nothing changed. Not set: 30.
-  ;; (setf *format-seconds* 60)
-
-  ;; The text sent to servers 1 second after typing stops. Not set: 0.5.
-  ;; (setf *lsp-sync-delay* 1)
-
-  ;; What is known where the cursor rests shown after 1 second. Not set: 0.5.
-  ;; (setf *lsp-idle-delay* 1)
-
-  ;; A problem the cursor rests on said in the echo area. Not set: :box: under the
-  ;; cursor; nil: not said.
-  ;; (setf *lsp-diagnostics-display* :echo)
-
-  ;; Problems underlined with dots; :line, :background on a ground of their
-  ;; colour. Not set: :wave.
-  ;; (setf *lsp-diagnostics-style* :dotted)
-
-  ;; One kind's colour (also -warning, -info, -hint; their -ground faces for
-  ;; :background)
-  ;; (set-face :diagnostic-error :underline-colour "#ff6b6b")
-
-  ;; A completion or a definition waits 5 seconds for its server at most, a key
-  ;; stopping it. Not set: 2.
-  ;; (setf *lsp-wait* 5)
-
-  ;; No call's parameters in the echo area. Not set: t.
-  ;; (setf *lsp-signature-help* nil)
-
-  ;; No type or signature of the thing under the cursor in the echo area. Not set:
-  ;; t.
-  ;; (setf *lsp-hover-echo* nil)
-
-  ;; The other uses of the name under the cursor not lit. Not set: t.
-  ;; (setf *lsp-highlight-symbol* nil)
-
-  ;; M-g o lists the mode's headings, not the server's names. Not set: t.
-  ;; (setf *lsp-outline* nil)
-
-  ;; No types and parameter names faint within the code. Not set: t; C-c i.
-  ;; (setf *lsp-inlay-hints* nil)
-
-  ;; What servers say of lines (3 references) faint at their ends, C-c k running
-  ;; one. Not set: nil; C-c K.
-  ;; (setf *lsp-code-lenses* t)
-
-  ;; Code coloured as its server sees it. Not set: nil; C-c S.
-  ;; (setf *lsp-semantic-tokens* t)
-
-  ;; The face a kind of name is coloured in.
-  ;; (push '("parameter" . :variable.other) *lsp-semantic-faces*)
-
-  ;; More than 200 edits at once sent as the whole text. Not set: 1000.
-  ;; (setf *lsp-most-changes* 200)
-
-  ;; Servers not told of their project's files changed by other programs. Not set:
-  ;; t.
-  ;; (setf *lsp-watch-files* nil)
-
-  ;; build/ folders not watched either (target, node_modules ...)
-  ;; (push "build" *lsp-watch-skipped*)
-
-  ;; Up to 20,000 folders of a project watched. Not set: 5000.
-  ;; (setf *lsp-watched-most* 20000)
-
-  ;; M-x lsp-events keeps each server's last 2000 messages. Not set: 500; 0: none.
-  ;; (setf *lsp-events-kept* 2000)
-
-  ;; And the first 10,000 characters of each. Not set: 2000.
-  ;; (setf *lsp-event-length* 10000)
-
-  ;; The places a question to a server names (references, definitions) show
-  ;; their lines from up to 64 MB of files read; past it, the places alone.
-  ;; Not set: 16 MB.
-  ;; (setf *lsp-location-files-total* (* 64 1024 1024))
-
-  ;;; Git (C-x g)
-
-  ;; The status shows the 20 latest commits. Not set: 10.
-  ;; (setf *git-recent-commits* 20)
-
-  ;; L there lists the 1000 latest. Not set: 200.
-  ;; (setf *git-log-length* 1000)
-
-  ;; TAB on a file shows the first 3000 lines of its changes, and TAB on the
-  ;; line after them 3000 more. Not set: 1000.
-  ;; (setf *git-diff-lines* 3000)
-
-  ;; Each section of the status (files in conflict, not tracked, changed,
-  ;; staged, ignored) lists its first 3000 files, and TAB on the line after
-  ;; them 3000 more. Not set: 1000.
-  ;; (setf *git-section-lines* 3000)
-
-  ;; A file up to 64 MB is looked through for the conflicts a merge left in
-  ;; it when it is shown; a larger one only with M-x conflict-markers-mode.
-  ;; Not set: 256 MB.
-  ;; (setf *conflict-markers-max-bytes* (* 64 1024 1024))
-
-  ;; A status on the screen is read again at most every 5 seconds when git
-  ;; changes the repository (from a terminal too), nil never: r reads it
-  ;; again. Not set: 2.
-  ;; (setf *git-watch-seconds* 5)
-
-  ;; The git menus (b for branches, Z for worktrees ... in the status) show
-  ;; every action. Not set: :slim, the ones most used; ~ in a status switches.
-  ;; (setf *git-menus* :full)
-
-  ;; The slim menus show moving a branch too. Not set: the actions most used:
-  ;; committing, amending, rewording, extending; checking out, making,
-  ;; renaming, deleting branches; stashing, applying, popping, dropping;
-  ;; making, showing, deleting worktrees. C-h in a menu lists the rest.
-  ;; (push 'git-branch-reset *git-slim-actions*)
-
-  ;;; Encryption and wiping
-
-  ;; The GnuPG program for .gpg files. Not set: "gpg".
-  ;; (setf *gpg-program* "/usr/bin/gpg2")
-
-  ;; gpg-agent's pinentry asks in the terminal; :agent, :minibuffer. Not set:
-  ;; :auto: its window on a desktop, else the terminal.
-  ;; (setf *gpg-passphrase-from* :terminal)
-
-  ;; No window of its risks when the minibuffer asks for a passphrase. Not set: t.
-  ;; (setf *gpg-loopback-warning* nil)
-
-  ;; A file wiped is written over 3 times before it is deleted. Not set: 1; more
-  ;; help no SSD or btrfs.
-  ;; (setf *wipe-passes* 3)
-
-  ;; tar packing or extracting an archive (rimu's c and Z) is stopped after an
-  ;; hour. Not set: a day.
-  ;; (setf *archive-seconds* (* 60 60))
-
-  ;; Unpacking an archive (Z in rimu) stops before the drive has less than
-  ;; 10 GB free. Not set: 1 GB.
-  ;; (setf *archive-free-reserve* (* 10 1024 1024 1024))
-
-  ;; What an archive holds (C-c e in rimu) is shown up to 16 MB of its list.
-  ;; Not set: 64 MB.
-  ;; (setf *archive-listing-limit* (* 16 1024 1024))
-
-  ;; The differences of two files (= in rimu, M-x diff-files) are shown up to
-  ;; 16 MB of them. Not set: 64 MB.
-  ;; (setf *differences-limit* (* 16 1024 1024))
-
-  ;; M-x file-metadata names the owners of an encrypted file's keys from your
-  ;; keyring (runs gpg --list-keys; the file is never given to it); nil: the
-  ;; key IDs alone. Not set: :ask each time.
-  ;; (setf *metadata-look-up-key-owners* t)
-
-  ;;; Viewing what is not text: the sandbox, pictures, PDFs, office documents
-  ;; Where Tuatara keeps what files you open leave behind, as on an encrypted
-  ;; drive when the system's is not: its cache (compiled packages, previews,
-  ;; pages drawn, the logs), what it remembers between sessions (recent files,
-  ;; places, the session, auto-saved text) and the packages it fetches. Make
-  ;; each folder yourself (mkdir -m 700); while one is not there, its drive
-  ;; not mounted, Tuatara keeps those things in memory and says so. Move what
-  ;; is in the standard folders there first. Not set: ~/.cache/tuatara/,
-  ;; ~/.local/state/tuatara/ and ~/.local/share/tuatara/packages/.
-  ;; (setf *cache-directory* "/run/media/you/Data/tuatara/cache/"
-  ;;       *state-directory* "/run/media/you/Data/tuatara/state/"
-  ;;       *packages-directory* "/run/media/you/Data/tuatara/packages/")
-
-  ;; The program decoding a file runs shut in by bubblewrap (bwrap), with no
-  ;; network and no file but the one; M-x check-health says whether it works.
-
-  ;; A program decoding a file may run 30 seconds. Not set: 10.
-  ;; (setf *sandbox-seconds* 30)
-
-  ;; And take 2 GB of memory. Not set: 1 GB; nil: no limit.
-  ;; (setf *sandbox-memory* (* 2 1024 1024 1024))
-
-  ;; A large picture (a PNG, TIFF or WebP of a hundred megapixels) may be given
-  ;; up to 8 GB to be drawn. Not set: 4 GB; a JPEG needs little whatever its size.
-  ;; (setf *picture-memory* (* 8 1024 1024 1024))
-
-  ;; All of one file's decoding together 4 GB. Not set: 2 GB, where systemd-run
-  ;; holds it; nil: no limit.
-  ;; (setf *sandbox-total-memory* (* 4 1024 1024 1024))
-
-  ;; Files of up to 4 GB decoded, each copied into memory first. Not set: 1 GB;
-  ;; nil: no limit.
-  ;; (setf *sandbox-input-limit* (* 4 1024 1024 1024))
-
-  ;; A program's output (a decoder's, the clipboard's) taken up to 256 MB;
-  ;; more, and the program is stopped, its output not taken. Not set: 64 MB.
-  ;; (setf *program-output-limit* (* 256 1024 1024))
-
-  ;; No file decoded: pictures and PDFs as octets and text. Not set: "bwrap".
-  ;; (setf *sandbox-program* nil)
-
-  ;; Decoding programs may make every system call. Not set: t: mounting,
-  ;; namespaces, modules, tracing, io_uring, BPF, sockets refused.
-  ;; (setf *sandbox-seccomp* nil)
-
-  ;; ImageMagick refuses pictures wider or taller than 16,384 pixels. Not set:
-  ;; "64KP".
-  ;; (setf *magick-largest-side* "16KP")
-
-  ;; PDF pages dark, as the theme. Not set: nil; d in a PDF.
-  ;; (setf *pdf-view-dark-pages* t)
-
-  ;; Word, Excel and PowerPoint read as text, LibreOffice never run. Not set: t:
-  ;; pages drawn by LibreOffice in the sandbox, T for text.
-  ;; (setf *office-view-pages* nil)
-
-  ;; A note read from an office file (Word, Excel, PowerPoint, OpenDocument)
-  ;; holds up to 64 million characters, the rest left out and said so. Not
-  ;; set: 16 million.
-  ;; (setf *office-note-largest* (* 64 1024 1024))
-
-  ;; And up to 10,000 columns of one value (a cell, a formula), cut there
-  ;; ending in …. Not set: 2000.
-  ;; (setf *office-value-longest* 10000)
-
-  ;; A Word document's note names the stand-ins of up to 40 fonts not
-  ;; installed. Not set: 16.
-  ;; (setf *docx-read-most-stand-ins* 40)
-
-  ;; O opens pictures, PDFs, sound, video in the desktop's program at once. Not
-  ;; set: t: asks.
-  ;; (setf *open-externally-ask* nil)
-
-  ;; Only these kinds, by their contents. Not set: pictures, PDFs, sound, video.
-  ;; (setf *open-externally-kinds* '(:pdf :png :jpeg :mp4))
-
-  ;; These MIME types in these programs. Not set: the desktop's choice.
-  ;; (setf *open-externally-programs*
-  ;;       '(("application/pdf" . "zathura") ("video/*" "mpv" "--fs")))
-
-  ;; What opens them otherwise. Not set: "xdg-open".
-  ;; (setf *open-externally-program* "gio open")
-
-  ;;; Exporting: PDFs of Org and LaTeX files
-  ;; M-x org-export-latex-pdf and the -buffer, -xdg, -enhanced ones;
-  ;; latex-compile-pdf.
-
-  ;; Lualatex first, xelatex when it fails. Not set: '("xelatex" "lualatex"); full
-  ;; paths for programs elsewhere.
-  ;; (setf *latex-engines* '("lualatex" "xelatex"))
-
-  ;; The enhanced export's text font, for notes setting none. Not set: the first
-  ;; installed of Libertinus Serif, Noto Serif ...
-  ;; (setf *latex-main-font* "Libertinus Serif")
-
-  ;; Its sans-serif font. Not set: Libertinus Sans, Noto Sans ...
-  ;; (setf *latex-sans-font* "Noto Sans")
-
-  ;; Its font for code. Not set: your window's font when installed, else JetBrains
-  ;; Mono ...
-  ;; (setf *latex-mono-font* "JetBrains Mono")
-
-  ;; Commands hiding their argument, for M-x check-redactions. Not set: '("R" "D"
-  ;; "redact").
-  ;; (setf *latex-redaction-commands* '("R" "D" "anon"))
-
-  ;; Besides a note's own folder and your note templates' folder, where its export
-  ;; may take #+SETUPFILE files and pictures from. Not set: none.
-  ;; (setf *export-trusted-folders* '("~/notes/latex/" "~/notes/pictures/"))
-
-  ;; The folder of the pictures your templates ask a note for: #+logo: a name
-  ;; alone (logo.png) is the file of that name there, and a picture a template
-  ;; asks for comes from it or the note's own folder, never from elsewhere.
-  ;; Not set: logos/ in the configuration directory (~/.config/tuatara/logos/).
-  ;; (setf *logos-directory* "~/notes/logos/")
-
-  ;; A picture of up to 256 MB a LaTeX document shows saved with the template
-  ;; made from it (make-template-from-latex). Not set: 64 MB.
-  ;; (setf *latex-import-picture-limit* (* 256 1024 1024))
-
-  ;; The most characters a note may grow to as its macro calls are put in
-  ;; place for an export. Not set: 16 MB.
-  ;; (setf *org-macro-limit* (* 32 1024 1024))
-
-  ;;; Messages and debugging
-
-  ;; Lines *Messages* keeps. Not set: 1000.
-  ;; (setf *message-log-max* 5000)
-
-  ;; Start in debug mode: what the editor does goes to *Debug*. Not set: nil; M-x
-  ;; debug-mode, C-h E.
-  ;; (setf *debug-mode* t)
-
-  ;; Garbage left for its collection to come when it comes, maybe between two
-  ;; keys. Not set: 0.3: collected after that many seconds with no key, once
-  ;; there is enough of it.
-  ;; (setf *idle-collection-seconds* nil)
-
-  ;; Lines *Debug* keeps. Not set: 10000; nil: all.
-  ;; (setf *debug-log-max* 50000)
-
-  ;; An error shows the calls under way in *Backtrace*. Not set: nil; M-x
-  ;; toggle-debug-on-error.
-  ;; (setf *debug-on-error* t)
   )
 
 ;;; Org
@@ -1480,6 +1184,387 @@
   ;; (setf *org-formula-deepest* 500)
   )
 
+(load-package "tuatara"
+  :config
+
+  ;;; Exporting: PDFs of Org and LaTeX files
+  ;; M-x org-export-latex-pdf and the -buffer, -xdg, -enhanced ones;
+  ;; latex-compile-pdf.
+
+  ;; Lualatex first, xelatex when it fails. Not set: '("xelatex" "lualatex"); full
+  ;; paths for programs elsewhere.
+  ;; (setf *latex-engines* '("lualatex" "xelatex"))
+
+  ;; The enhanced export's text font, for notes setting none. Not set: the first
+  ;; installed of Libertinus Serif, Noto Serif ...
+  ;; (setf *latex-main-font* "Libertinus Serif")
+
+  ;; Its sans-serif font. Not set: Libertinus Sans, Noto Sans ...
+  ;; (setf *latex-sans-font* "Noto Sans")
+
+  ;; Its font for code. Not set: your window's font when installed, else JetBrains
+  ;; Mono ...
+  ;; (setf *latex-mono-font* "JetBrains Mono")
+
+  ;; Commands hiding their argument, for M-x check-redactions. Not set: '("R" "D"
+  ;; "redact").
+  ;; (setf *latex-redaction-commands* '("R" "D" "anon"))
+
+  ;; Besides a note's own folder and your note templates' folder, where its export
+  ;; may take #+SETUPFILE files and pictures from. Not set: none.
+  ;; (setf *export-trusted-folders* '("~/notes/latex/" "~/notes/pictures/"))
+
+  ;; The folder of the pictures your templates ask a note for: #+logo: a name
+  ;; alone (logo.png) is the file of that name there, and a picture a template
+  ;; asks for comes from it or the note's own folder, never from elsewhere.
+  ;; Not set: logos/ in the configuration directory (~/.config/tuatara/logos/).
+  ;; (setf *logos-directory* "~/notes/logos/")
+
+  ;; A picture of up to 256 MB a LaTeX document shows saved with the template
+  ;; made from it (make-template-from-latex). Not set: 64 MB.
+  ;; (setf *latex-import-picture-limit* (* 256 1024 1024))
+
+  ;; The most characters a note may grow to as its macro calls are put in
+  ;; place for an export. Not set: 16 MB.
+  ;; (setf *org-macro-limit* (* 32 1024 1024))
+  )
+
+;;;; ================================================================
+;;;; PROGRAMMING: language servers, formatting, Git, the terminal
+;;;; ================================================================
+
+(load-package "tuatara"
+  :config
+
+  ;;; Running a build or the tests (M-x compile)
+
+  ;; The command M-x compile offers before you have typed one, run from the
+  ;; project's root. Not set: "make -k ".
+  ;; (setf *compile-command* "cargo build ")
+
+  ;; The most of a command's output *compile* keeps; past it the output is
+  ;; counted, not kept, and the end says how much was left out. Not set: 256 MB;
+  ;; nil: all of it.
+  ;; (setf *compile-output-most* (* 1024 1024 1024))
+
+  ;;; Language servers and formatting (C-c in code lists their keys)
+
+  ;; Projects whose servers start by themselves (they run the project's code);
+  ;; others: M-x lsp asks once. Not set: none.
+  ;; (setf *lsp-trusted-projects* '("~/src/"))
+
+  ;; Servers for these languages alone; '(:not markdown) all but these. Not set:
+  ;; t: every one with a server.
+  ;; (setf *lsp-languages* '(go rust c cpp python latex lua bash))
+
+  ;; Your own servers before each language's usual ones: by name, or (("program"
+  ;; "--stdio")); (markdown) for none.
+  ;; (setf *language-servers* '((python "basedpyright") (markdown)))
+
+  ;; Your own formatters before each language's usual ones, code on standard
+  ;; input; (LANGUAGE) for none.
+  ;; (setf *language-formatters* '((python "ruff" "format" "-")))
+
+  ;; These languages formatted before each save. Not set: t: every one with a
+  ;; formatter; none.
+  ;; (setf *format-on-save* '(rust python))
+
+  ;; Formatters run as any program. Not set: t: shut in the sandbox, the project
+  ;; read only.
+  ;; (setf *format-in-sandbox* nil)
+
+  ;; A formatter stopped after 60 seconds, nothing changed. Not set: 30.
+  ;; (setf *format-seconds* 60)
+
+  ;; The text sent to servers 1 second after typing stops. Not set: 0.5.
+  ;; (setf *lsp-sync-delay* 1)
+
+  ;; What is known where the cursor rests shown after 1 second. Not set: 0.5.
+  ;; (setf *lsp-idle-delay* 1)
+
+  ;; A problem the cursor rests on said in the echo area. Not set: :box: under the
+  ;; cursor; nil: not said.
+  ;; (setf *lsp-diagnostics-display* :echo)
+
+  ;; Problems underlined with dots; :line, :background on a ground of their
+  ;; colour. Not set: :wave.
+  ;; (setf *lsp-diagnostics-style* :dotted)
+
+  ;; One kind's colour (also -warning, -info, -hint; their -ground faces for
+  ;; :background)
+  ;; (set-face :diagnostic-error :underline-colour "#ff6b6b")
+
+  ;; A completion or a definition waits 5 seconds for its server at most, a key
+  ;; stopping it. Not set: 2.
+  ;; (setf *lsp-wait* 5)
+
+  ;; No call's parameters in the echo area. Not set: t.
+  ;; (setf *lsp-signature-help* nil)
+
+  ;; No type or signature of the thing under the cursor in the echo area. Not set:
+  ;; t.
+  ;; (setf *lsp-hover-echo* nil)
+
+  ;; The other uses of the name under the cursor not lit. Not set: t.
+  ;; (setf *lsp-highlight-symbol* nil)
+
+  ;; M-g o lists the mode's headings, not the server's names. Not set: t.
+  ;; (setf *lsp-outline* nil)
+
+  ;; No types and parameter names faint within the code. Not set: t; C-c i.
+  ;; (setf *lsp-inlay-hints* nil)
+
+  ;; What servers say of lines (3 references) faint at their ends, C-c k running
+  ;; one. Not set: nil; C-c K.
+  ;; (setf *lsp-code-lenses* t)
+
+  ;; Code coloured as its server sees it. Not set: nil; C-c S.
+  ;; (setf *lsp-semantic-tokens* t)
+
+  ;; The face a kind of name is coloured in.
+  ;; (push '("parameter" . :variable.other) *lsp-semantic-faces*)
+
+  ;; More than 200 edits at once sent as the whole text. Not set: 1000.
+  ;; (setf *lsp-most-changes* 200)
+
+  ;; Servers not told of their project's files changed by other programs. Not set:
+  ;; t.
+  ;; (setf *lsp-watch-files* nil)
+
+  ;; build/ folders not watched either (target, node_modules ...)
+  ;; (push "build" *lsp-watch-skipped*)
+
+  ;; Up to 20,000 folders of a project watched. Not set: 5000.
+  ;; (setf *lsp-watched-most* 20000)
+
+  ;; M-x lsp-events keeps each server's last 2000 messages. Not set: 500; 0: none.
+  ;; (setf *lsp-events-kept* 2000)
+
+  ;; And the first 10,000 characters of each. Not set: 2000.
+  ;; (setf *lsp-event-length* 10000)
+
+  ;; The places a question to a server names (references, definitions) show
+  ;; their lines from up to 64 MB of files read; past it, the places alone.
+  ;; Not set: 16 MB.
+  ;; (setf *lsp-location-files-total* (* 64 1024 1024))
+
+  ;;; Git (C-x g)
+
+  ;; The status shows the 20 latest commits. Not set: 10.
+  ;; (setf *git-recent-commits* 20)
+
+  ;; L there lists the 1000 latest. Not set: 200.
+  ;; (setf *git-log-length* 1000)
+
+  ;; TAB on a file shows the first 3000 lines of its changes, and TAB on the
+  ;; line after them 3000 more. Not set: 1000.
+  ;; (setf *git-diff-lines* 3000)
+
+  ;; Each section of the status (files in conflict, not tracked, changed,
+  ;; staged, ignored) lists its first 3000 files, and TAB on the line after
+  ;; them 3000 more. Not set: 1000.
+  ;; (setf *git-section-lines* 3000)
+
+  ;; A file up to 64 MB is looked through for the conflicts a merge left in
+  ;; it when it is shown; a larger one only with M-x conflict-markers-mode.
+  ;; Not set: 256 MB.
+  ;; (setf *conflict-markers-max-bytes* (* 64 1024 1024))
+
+  ;; A status on the screen is read again at most every 5 seconds when git
+  ;; changes the repository (from a terminal too), nil never: r reads it
+  ;; again. Not set: 2.
+  ;; (setf *git-watch-seconds* 5)
+
+  ;; The git menus (b for branches, Z for worktrees ... in the status) show
+  ;; every action. Not set: :slim, the ones most used; ~ in a status switches.
+  ;; (setf *git-menus* :full)
+
+  ;; The slim menus show moving a branch too. Not set: the actions most used:
+  ;; committing, amending, rewording, extending; checking out, making,
+  ;; renaming, deleting branches; stashing, applying, popping, dropping;
+  ;; making, showing, deleting worktrees. C-h in a menu lists the rest.
+  ;; (push 'git-branch-reset *git-slim-actions*)
+  )
+
+;;; The terminal (M-x terminal)
+
+(load-package "terminal"
+  :config
+
+  ;; Keys kept for the editor while you type in it, the rest going to the program.
+  ;; Not set: as standard.
+  ;; (setf *terminal-editor-keys* '("C-x" "M-x" "C-g" "C-\\" "C-q" "C-s"))
+
+  ;; C-g to the program, C-\ alone stopping typing there.
+  ;; (setf *terminal-editor-keys*
+  ;;       (remove "C-g" *terminal-editor-keys* :test #'string=))
+
+  ;; Keys that paste into it, a shell running nothing until RET. Not set: as
+  ;; standard.
+  ;; (setf *terminal-paste-keys* '("C-V" "S-<insert>"))
+
+  ;; Columns of its title in the mode line. Not set: 40; nil: none.
+  ;; (setf *terminal-title-max* 60)
+
+  ;; Where it shows: :bottom :top :left :right, or :full, the window you are in.
+  ;; Not set: :bottom.
+  ;; (setf *terminal-place* :right)
+
+  ;; At the bottom or top: rows, or a fraction of the height. Not set: 0.3.
+  ;; (setf *terminal-size* 15)
+
+  ;; At the left or right: columns, or a fraction of the width. Not set: 0.5.
+  ;; (setf *terminal-width* 80)
+
+  ;; One key to show it and type there, or hide it (the same terminal, still
+  ;; running)
+  ;; (bind-key "C-`" 'terminal-toggle)
+
+  ;; What it runs. Not set: nil: your shell, $SHELL.
+  ;; (setf *terminal-program* '("bash" "-l"))
+
+  ;; Lines it keeps that have gone up off its screen. Not set: 100,000.
+  ;; (setf *terminal-scrollback* 500000)
+
+  ;; Seconds quiet before its history is compressed. Not set: 10; nil: never.
+  ;; (setf *terminal-compress-after* 30)
+
+  ;; Octets of pictures it keeps for kitty icat, yazi ... Not set: 64 MB; 0: none.
+  ;; (setf *terminal-picture-memory* (* 256 1024 1024))
+  )
+
+;;;; ================================================================
+;;;; FORENSIC: what is not text, encryption and wiping
+;;;; ================================================================
+
+(load-package "tuatara"
+  :config
+
+  ;;; Viewing what is not text: the sandbox, pictures, PDFs, office documents
+  ;; Where Tuatara keeps what files you open leave behind, as on an encrypted
+  ;; drive when the system's is not: its cache (compiled packages, previews,
+  ;; pages drawn, the logs), what it remembers between sessions (recent files,
+  ;; places, the session, auto-saved text) and the packages it fetches. Make
+  ;; each folder yourself (mkdir -m 700); while one is not there, its drive
+  ;; not mounted, Tuatara keeps those things in memory and says so. Move what
+  ;; is in the standard folders there first. Not set: ~/.cache/tuatara/,
+  ;; ~/.local/state/tuatara/ and ~/.local/share/tuatara/packages/.
+  ;; (setf *cache-directory* "/run/media/you/Data/tuatara/cache/"
+  ;;       *state-directory* "/run/media/you/Data/tuatara/state/"
+  ;;       *packages-directory* "/run/media/you/Data/tuatara/packages/")
+
+  ;; The program decoding a file runs shut in by bubblewrap (bwrap), with no
+  ;; network and no file but the one; M-x check-health says whether it works.
+
+  ;; A program decoding a file may run 30 seconds. Not set: 10.
+  ;; (setf *sandbox-seconds* 30)
+
+  ;; And take 2 GB of memory. Not set: 1 GB; nil: no limit.
+  ;; (setf *sandbox-memory* (* 2 1024 1024 1024))
+
+  ;; A large picture (a PNG, TIFF or WebP of a hundred megapixels) may be given
+  ;; up to 8 GB to be drawn. Not set: 4 GB; a JPEG needs little whatever its size.
+  ;; (setf *picture-memory* (* 8 1024 1024 1024))
+
+  ;; All of one file's decoding together 4 GB. Not set: 2 GB, where systemd-run
+  ;; holds it; nil: no limit.
+  ;; (setf *sandbox-total-memory* (* 4 1024 1024 1024))
+
+  ;; Files of up to 4 GB decoded, each copied into memory first. Not set: 1 GB;
+  ;; nil: no limit.
+  ;; (setf *sandbox-input-limit* (* 4 1024 1024 1024))
+
+  ;; A program's output (a decoder's, the clipboard's) taken up to 256 MB;
+  ;; more, and the program is stopped, its output not taken. Not set: 64 MB.
+  ;; (setf *program-output-limit* (* 256 1024 1024))
+
+  ;; No file decoded: pictures and PDFs as octets and text. Not set: "bwrap".
+  ;; (setf *sandbox-program* nil)
+
+  ;; Decoding programs may make every system call. Not set: t: mounting,
+  ;; namespaces, modules, tracing, io_uring, BPF, sockets refused.
+  ;; (setf *sandbox-seccomp* nil)
+
+  ;; ImageMagick refuses pictures wider or taller than 16,384 pixels. Not set:
+  ;; "64KP".
+  ;; (setf *magick-largest-side* "16KP")
+
+  ;; PDF pages dark, as the theme. Not set: nil; d in a PDF.
+  ;; (setf *pdf-view-dark-pages* t)
+
+  ;; Word, Excel and PowerPoint read as text, LibreOffice never run. Not set: t:
+  ;; pages drawn by LibreOffice in the sandbox, T for text.
+  ;; (setf *office-view-pages* nil)
+
+  ;; A note read from an office file (Word, Excel, PowerPoint, OpenDocument)
+  ;; holds up to 64 million characters, the rest left out and said so. Not
+  ;; set: 16 million.
+  ;; (setf *office-note-largest* (* 64 1024 1024))
+
+  ;; And up to 10,000 columns of one value (a cell, a formula), cut there
+  ;; ending in …. Not set: 2000.
+  ;; (setf *office-value-longest* 10000)
+
+  ;; A Word document's note names the stand-ins of up to 40 fonts not
+  ;; installed. Not set: 16.
+  ;; (setf *docx-read-most-stand-ins* 40)
+
+  ;; O opens pictures, PDFs, sound, video in the desktop's program at once. Not
+  ;; set: t: asks.
+  ;; (setf *open-externally-ask* nil)
+
+  ;; Only these kinds, by their contents. Not set: pictures, PDFs, sound, video.
+  ;; (setf *open-externally-kinds* '(:pdf :png :jpeg :mp4))
+
+  ;; These MIME types in these programs. Not set: the desktop's choice.
+  ;; (setf *open-externally-programs*
+  ;;       '(("application/pdf" . "zathura") ("video/*" "mpv" "--fs")))
+
+  ;; What opens them otherwise. Not set: "xdg-open".
+  ;; (setf *open-externally-program* "gio open")
+
+  ;;; Encryption and wiping
+
+  ;; The GnuPG program for .gpg files. Not set: "gpg".
+  ;; (setf *gpg-program* "/usr/bin/gpg2")
+
+  ;; gpg-agent's pinentry asks in the terminal; :agent, :minibuffer. Not set:
+  ;; :auto: its window on a desktop, else the terminal.
+  ;; (setf *gpg-passphrase-from* :terminal)
+
+  ;; No window of its risks when the minibuffer asks for a passphrase. Not set: t.
+  ;; (setf *gpg-loopback-warning* nil)
+
+  ;; A file wiped is written over 3 times before it is deleted. Not set: 1; more
+  ;; help no SSD or btrfs.
+  ;; (setf *wipe-passes* 3)
+
+  ;; tar packing or extracting an archive (rimu's c and Z) is stopped after an
+  ;; hour. Not set: a day.
+  ;; (setf *archive-seconds* (* 60 60))
+
+  ;; Unpacking an archive (Z in rimu) stops before the drive has less than
+  ;; 10 GB free. Not set: 1 GB.
+  ;; (setf *archive-free-reserve* (* 10 1024 1024 1024))
+
+  ;; What an archive holds (C-c e in rimu) is shown up to 16 MB of its list.
+  ;; Not set: 64 MB.
+  ;; (setf *archive-listing-limit* (* 16 1024 1024))
+
+  ;; The differences of two files (= in rimu, M-x diff-files) are shown up to
+  ;; 16 MB of them. Not set: 64 MB.
+  ;; (setf *differences-limit* (* 16 1024 1024))
+
+  ;; M-x file-metadata names the owners of an encrypted file's keys from your
+  ;; keyring (runs gpg --list-keys; the file is never given to it); nil: the
+  ;; key IDs alone. Not set: :ask each time.
+  ;; (setf *metadata-look-up-key-owners* t)
+  )
+
+;;;; ================================================================
+;;;; FILES AND DATA: Rimu, CSV files
+;;;; ================================================================
+
 ;;; Rimu: lists of folders
 
 (load-package "rimu"
@@ -1562,52 +1647,9 @@
   ;; (setf *csv-header* nil)
   )
 
-;;; The terminal (M-x terminal)
-
-(load-package "terminal"
-  :config
-
-  ;; Keys kept for the editor while you type in it, the rest going to the program.
-  ;; Not set: as standard.
-  ;; (setf *terminal-editor-keys* '("C-x" "M-x" "C-g" "C-\\" "C-q" "C-s"))
-
-  ;; C-g to the program, C-\ alone stopping typing there.
-  ;; (setf *terminal-editor-keys*
-  ;;       (remove "C-g" *terminal-editor-keys* :test #'string=))
-
-  ;; Keys that paste into it, a shell running nothing until RET. Not set: as
-  ;; standard.
-  ;; (setf *terminal-paste-keys* '("C-V" "S-<insert>"))
-
-  ;; Columns of its title in the mode line. Not set: 40; nil: none.
-  ;; (setf *terminal-title-max* 60)
-
-  ;; Where it shows: :bottom :top :left :right, or :full, the window you are in.
-  ;; Not set: :bottom.
-  ;; (setf *terminal-place* :right)
-
-  ;; At the bottom or top: rows, or a fraction of the height. Not set: 0.3.
-  ;; (setf *terminal-size* 15)
-
-  ;; At the left or right: columns, or a fraction of the width. Not set: 0.5.
-  ;; (setf *terminal-width* 80)
-
-  ;; One key to show it and type there, or hide it (the same terminal, still
-  ;; running)
-  ;; (bind-key "C-`" 'terminal-toggle)
-
-  ;; What it runs. Not set: nil: your shell, $SHELL.
-  ;; (setf *terminal-program* '("bash" "-l"))
-
-  ;; Lines it keeps that have gone up off its screen. Not set: 100,000.
-  ;; (setf *terminal-scrollback* 500000)
-
-  ;; Seconds quiet before its history is compressed. Not set: 10; nil: never.
-  ;; (setf *terminal-compress-after* 30)
-
-  ;; Octets of pictures it keeps for kitty icat, yazi ... Not set: 64 MB; 0: none.
-  ;; (setf *terminal-picture-memory* (* 256 1024 1024))
-  )
+;;;; ================================================================
+;;;; PACKAGES: where they come from, how to load them
+;;;; ================================================================
 
 ;;; Packages
 
