@@ -392,10 +392,6 @@
   "Lua patterns inside Lua strings, parsed with tree-sitter-luap."
   :grammar "luap" :modes nil :indent 4 :queries "luap" :injection-names "luap")
 
-(define-language rust-format-args
-  "The format strings of Rust's println!, format! and the rest, parsed with tree-sitter-rust-format-args."
-  :grammar "rust-format-args" :modes nil :indent 4 :queries "rust-format-args" :injection-names "rust-format-args")
-
 (define-language rust-format-args-macro
   "The arguments of Rust's println!, format! and the rest, parsed with tree-sitter-rust."
   :grammar "rust" :modes nil :indent 4 :queries "rust-format-args-macro" :definitions :textobjects)
@@ -1098,10 +1094,6 @@
   :lighter "Move"
   :comment "//"
   :extensions ("move"))
-
-(define-language move
-  "Move smart contracts, parsed with tree-sitter-move."
-  :grammar "move" :modes (move-mode) :indent 4 :queries "move" :injection-names "move")
 
 (define-major-mode nearley-mode prog-mode
   "Nearley grammars."

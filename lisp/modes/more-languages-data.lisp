@@ -532,10 +532,6 @@
   :comment "//"
   :extensions ("cpon" "cp"))
 
-(define-language cpon
-  "CPON: the ChainPack Object Notation of Silicon Heaven, parsed with tree-sitter-cpon."
-  :grammar "cpon" :modes (cpon-mode) :indent 2 :queries "cpon" :injection-names "cpon")
-
 (define-major-mode dbml-mode prog-mode
   "DBML: database schemas written as markup."
   :lighter "DBML"

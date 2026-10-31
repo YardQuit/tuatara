@@ -167,6 +167,11 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
       fi ;;
   esac
 done < <(manifest)
+# a grammar left out of the manifest is left out of what is built
+for made in "$out"/*.so; do
+  name="$(basename "$made" .so)"
+  manifest | cut -f1 | grep -qx "$name" || rm -f "$made" "$out/$name.commit"
+done
 ' grammars "$root" "$out" "$sources" "$record"
 [ -n "$record" ] && exit 0
 echo "$wanted" > "$stamp"

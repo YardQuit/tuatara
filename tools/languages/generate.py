@@ -433,6 +433,11 @@ QUERY_FIXES = {
     ('cairo', 'textobjects'): [RUST_TEST],
 }
 
+# grammars whose repositories are archived with no source kept up in their
+# place: left out; a language of them keeps its mode, its files opened in it
+# with no colours or structure
+DROPPED = {'rust-format-args', 'djot', 'cpon', 'move'}
+
 # rules taken from the grammar's own repository, which Helix's no longer fit
 # once its pin moved off a commit on no branch or tag: kept as they are
 OWN_QUERIES = {
@@ -526,10 +531,11 @@ def main():
     for name, mode, lighter, parent, doc in TABLE:
         l = LANGS[name]
         grammar = l['grammar']
-        if grammar not in pinned:
+        dropped = name in DROPPED
+        if grammar not in pinned and not dropped:
             pinned.add(grammar)
             rows.append('\t'.join([grammar, l['git'], l['rev'], 'unknown'] + ([l['subpath']] if l['subpath'] else [])))
-        kinds = copy_queries(name, done)
+        kinds = set() if dropped else copy_queries(name, done)
         exts, names, patterns = [], [], []
         override = OVERRIDES.get(name, {})
         types = [t for t in l['file_types'] if t not in override.get('drop', [])] + override.get('add', [])
@@ -583,6 +589,7 @@ def main():
             interpreters = list(dict.fromkeys(i.split()[0] for i in l['shebangs'] if i.split()))
             if interpreters: opts.append(f':interpreters {lisp_list(interpreters)}')
             forms[family(name)].append(f'(define-major-mode {mode} {parent}\n  {lisp_string(doc)}\n  ' + '\n  '.join(opts) + ')')
+        if dropped: continue
         lang_opts = [f':grammar {lisp_string(grammar)}', f':modes ({mode or ""})'.replace('()', 'nil'), f':indent {indent}',
                      f':queries {lisp_string(name)}']
         if injection: lang_opts.append(f':injection-names {lisp_string(injection)}')

@@ -67,7 +67,7 @@ latex	https://github.com/latex-lsp/tree-sitter-latex	8c75e93cd08ccb7ce1ccab22c1f
 bibtex	https://github.com/latex-lsp/tree-sitter-bibtex	8d04ed27b3bc7929f14b7df9236797dab9f3fa66	MIT
 fish	https://github.com/ram02z/tree-sitter-fish	f435b0bd772578c70e5d158b85267bb886316f88	Unlicense
 awk	https://github.com/Beaglefoot/tree-sitter-awk	34bbdc7cce8e803096f47b625979e34c1be38127	MIT
-just	https://github.com/poliorcetics/tree-sitter-just	f749ec853adcacc5f14e9ec375f244104e033d88	MIT
+just	https://codeberg.org/poliorcetics/tree-sitter-just	f749ec853adcacc5f14e9ec375f244104e033d88	MIT
 proto	https://github.com/sdoerner/tree-sitter-proto	35a6a3b543e418b7037328261f40e912c767c598	MIT
 graphql	https://github.com/bkegley/tree-sitter-graphql	5e66e961eee421786bdda8495ed1db045e06b5fe	MIT
 hcl	https://github.com/tree-sitter-grammars/tree-sitter-hcl	64ad62785d442eb4d45df3a1764962dafd5bc98b	Apache-2.0
@@ -89,7 +89,6 @@ jq	https://github.com/flurie/tree-sitter-jq	13990f530e8e6709b7978503da9bc8701d36
 comment	https://github.com/stsewd/tree-sitter-comment	66272d2b6c73fb61157541b69dd0a7ce7b42a5ad	MIT
 jsdoc	https://github.com/tree-sitter/tree-sitter-jsdoc	658d18dcdddb75c760363faa4963427a7c6b52db	MIT
 luap	https://github.com/tree-sitter-grammars/tree-sitter-luap	c134aaec6acf4fa95fe4aa0dc9aba3eacdbbe55a	MIT
-rust-format-args	https://github.com/nik-rev/tree-sitter-rust-format-args	84ffe550e261cf5ea40a0ec31849ba2443bae99f	MIT
 go-format-string	https://codeberg.org/kpbaks/tree-sitter-go-format-string	06587ea641155db638f46a32c959d68796cd36bb	MIT
 lua-format-string	https://codeberg.org/kpbaks/tree-sitter-lua-format-string	b667c8cab109df307e1b4d56b0b43f5c4a353533	MIT
 ada	https://github.com/briot/tree-sitter-ada	ba0894efa03beb70780156b91e28c716b7a4764d	MIT
@@ -135,14 +134,13 @@ thrift	https://github.com/tree-sitter-grammars/tree-sitter-thrift	68fd0d80943a82
 capnp	https://github.com/tree-sitter-grammars/tree-sitter-capnp	7b0883c03e5edd34ef7bcf703194204299d7099f	MIT
 prisma	https://github.com/victorhqc/tree-sitter-prisma	eca2596a355b1a9952b4f80f8f9caed300a272b5	MIT
 cython	https://github.com/b0o/tree-sitter-cython	62f44f5e7e41dde03c5f0a05f035e293bcf2bcf8	MIT
-gnuplot	https://codeberg.org/maribu/tree-sitter-gnuplot	21a3a3929facb964b3592daeb69119294ff84cf2	ISC
+gnuplot	https://github.com/maribu/tree-sitter-gnuplot	21a3a3929facb964b3592daeb69119294ff84cf2	ISC
 openscad	https://github.com/openscad/tree-sitter-openscad	4c36a4fb569688c97cfa28090031e039a6079244	MIT
 smali	https://github.com/tree-sitter-grammars/tree-sitter-smali	fdfa6a1febc43c7467aa7e937b87b607956f2346	MIT
 yara	https://github.com/egibs/tree-sitter-yara	eb3ede203275c38000177f72ec0f9965312806ef	Apache-2.0
 rego	https://github.com/FallenAngel97/tree-sitter-rego	ddd39af81fe8b0288102a7cb97959dfce723e0f3	MIT
 rst	https://github.com/stsewd/tree-sitter-rst	6322f2629f29d8b442f4ca897904d407672ebb78	MIT
 typst	https://github.com/uben0/tree-sitter-typst	13863ddcbaa7b68ee6221cea2e3143415e64aea4	MIT
-djot	https://github.com/treeman/tree-sitter-djot	759a61896ccb2200a4becec4443e768638a21d58	MIT
 mermaid	https://github.com/monaqa/tree-sitter-mermaid	d787c66276e7e95899230539f556e8b83ee16f6d	MIT
 gemini	https://git.sr.ht/~nbsp/tree-sitter-gemini	3cc5e4bdf572d5df4277fc2e54d6299bd59a54b3	MIT
 wikitext	https://github.com/wikimedia/tree-sitter-wikitext	444214b31695e9dd4d32fb06247397fb8778a9d2	MIT
@@ -195,7 +193,6 @@ circom	https://github.com/Decurity/tree-sitter-circom	02150524228b1e6afef96949f2
 clarity	https://github.com/xlittlerag/tree-sitter-clarity	1436da3946359fcd7ac2d81917aaa78ef1e01755	MIT
 ql	https://github.com/tree-sitter/tree-sitter-ql	1fd627a4e8bff8c24c11987474bd33112bead857	MIT
 concerto	https://github.com/accordproject/concerto-tree-sitter	920ba23ea93af56b19dfc38fcddf80b3ddc62685	Apache-2.0
-cpon	https://github.com/fvacek/tree-sitter-cpon	0d01fcdae5a53191df5b1349f9bce053833270e7	MIT
 cylc	https://github.com/elliotfontaine/tree-sitter-cylc	6d1d81137112299324b526477ce1db989ab58fb8	MIT
 dbml	https://github.com/dynamotn/tree-sitter-dbml	2e2fa5640268c33c3d3f27f7e676f631a9c68fd9	MIT
 doxyfile	https://github.com/tingerrr/tree-sitter-doxyfile/	18e44c6da639632a4e42264c7193df34be915f34	MIT
@@ -227,7 +224,7 @@ hdl	https://github.com/quantonganh/tree-sitter-hdl	2199fdf1d302100a53002ea2cf540
 hoon	https://github.com/urbit-pilled/tree-sitter-hoon	1545137aadcc63660c47db9ad98d02fa602655d0	BSD-3-Clause
 hurl	https://github.com/pfeiferj/tree-sitter-hurl	597efbd7ce9a814bb058f48eabd055b1d1e12145	Apache-2.0
 ink	https://github.com/rhizoome/tree-sitter-ink2	8486e9b1627b0bc6b2deb9ee8102277a7c1281ac	Apache-2.0
-inko	https://github.com/inko-lang/tree-sitter-inko	f58a87ac4dc6a7955c64c9e4408fbd693e804686	MPL-2.0
+inko	https://codeberg.org/inko-lang/tree-sitter-inko	f58a87ac4dc6a7955c64c9e4408fbd693e804686	MPL-2.0
 jjdescription	https://github.com/kareigu/tree-sitter-jjdescription	1613b8c85b6ead48464d73668f39910dcbb41911	MIT
 kcl	https://github.com/KittyCAD/tree-sitter-kcl	8905e0bdbf5870b50bc3f24345f1af27746f42e8	MIT
 klog	https://github.com/Ansimorph/tree-sitter-klog/	0b215fe75bdeb8368546e3cee36aca8c19212d06	MIT
@@ -237,7 +234,6 @@ lpf	https://gitlab.com/TheZoq2/tree-sitter-lpf	db7372e60c722ca7f12ab359e57e6bf76
 mail	https://codeberg.org/ficd/tree-sitter-mail	5eddbfdbec4c893182c79047499901c196332e78	MIT
 markdoc	https://github.com/mohitsinghs/tree-sitter-markdoc	e4211fe541a13350275e4684de79adfebe9a91f8	MIT
 mojo	https://github.com/lsh/tree-sitter-mojo	e5905c480b9ebbeb4195032805781a5e535547f7	MIT
-move	https://github.com/tzakian/tree-sitter-move	8bc0d1692caa8763fef54d48068238d9bf3c0264	MIT
 nearley	https://github.com/mi2ebi/tree-sitter-nearley	12d01113e194c8e83f6341aab8c2a5f21db9cac9	MIT
 ohm	https://github.com/novusnota/tree-sitter-ohm	a1de3e748a185a335b446613aaeff1eb10e83cdf	MIT
 penrose	https://github.com/klukaszek/tree-sitter-penrose	d9368ff7f743b2ac2145a3342db13b1ad950cba5	MIT
@@ -245,7 +241,7 @@ pest	https://github.com/pest-parser/tree-sitter-pest	c19629a0c50e6ca2485c3b154b1
 picat	https://github.com/dlr-ft/tree-sitter-picat	ecb6b07d280f2cef8214bc4b999ad83ac1d9205c	MIT
 pod	https://github.com/tree-sitter-perl/tree-sitter-pod	cd1931314beafeebc957964c65802961e283411e	Artistic-2.0
 ponylang	https://github.com/mfelsche/tree-sitter-ponylang	ef66b151bc2604f431b5668fcec4747db4290e11	MIT
-proverif	https://codeberg.org/maribu/tree-sitter-proverif	7741807092c4009c1fe4c3648da60ca72b1b80f1	ISC
+proverif	https://github.com/maribu/tree-sitter-proverif	7741807092c4009c1fe4c3648da60ca72b1b80f1	ISC
 prql	https://github.com/PRQL/tree-sitter-prql	09e158cd3650581c0af4c49c2e5b10c4834c8646	MIT
 ptx	https://codeberg.org/jer-gremlin/tree-sitter-ptx	3dfa6758d4c15832d051f933101992b9e01d6611	MIT
 qmljs	https://github.com/yuja/tree-sitter-qmljs	0b2b25bcaa7d4925d5f0dda16f6a99c588a437f1	MIT

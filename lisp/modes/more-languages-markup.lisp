@@ -160,10 +160,6 @@
   :block-comment ("{%" "%}")
   :extensions ("dj" "djot"))
 
-(define-language djot
-  "Djot documents, parsed with tree-sitter-djot."
-  :grammar "djot" :modes (djot-mode) :indent 2 :queries "djot" :injection-names "dj|djot")
-
 (define-major-mode mermaid-mode prog-mode
   "Mermaid diagrams."
   :lighter "Mermaid"

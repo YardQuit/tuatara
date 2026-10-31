@@ -315,6 +315,10 @@ and the Quicklisp folder."
                    "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)
              "~a has moved" old))
+    ;; archived, their development carried on elsewhere
+    (dolist (old '("https://github.com/poliorcetics/tree-sitter-just" "https://github.com/inko-lang/tree-sitter-inko"
+                   "https://codeberg.org/maribu/tree-sitter-gnuplot" "https://codeberg.org/maribu/tree-sitter-proverif"))
+      (false (find old rows :key #'second :test #'string-equal) "~a is archived" old))
     (dolist (orphan '("3d7c53b8038f9ebbb57cd2e61296180aa5c1cf64" "29f9c6707ce9dfc2fc915d175ec720b207f179f3"
                       "d98426109258b266e1e92358c5f11716d2e8f638"))
       (false (find orphan rows :key #'third :test #'string=) "~a is on no branch or tag" orphan))))
@@ -413,3 +417,15 @@ git checkout -q -; git branch -q -D gone" repo)))
           (multiple-value-bind (status out) (check (second commits))
             (is = 1 status)
             (true (search "on no branch or tag" out))))))))
+
+(define-test (tools archived-grammars-left-out)
+  ;; a grammar whose repository is archived, with no source kept up in its
+  ;; place, is left out; the mode of its files stays, with no language
+  (let ((rows (manifest-rows)))
+    (loop for (grammar mode) in '(("rust-format-args" nil) ("djot" tuatara.defaults::djot-mode)
+                                  ("cpon" tuatara.defaults::cpon-mode) ("move" tuatara.defaults::move-mode))
+          do (false (find grammar rows :key #'first :test #'string=) "~a is left out" grammar)
+             (false (find grammar tuatara.defaults::*languages* :key #'tuatara.defaults::language-grammar :test #'string=))
+             (when mode
+               (true (tuatara.modes:find-mode mode) "~(~a~) stays" mode)
+               (false (tuatara.defaults::mode-language (make-instance mode)))))))

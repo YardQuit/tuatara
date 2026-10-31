@@ -271,7 +271,6 @@ end
  * @param {number} x The value.
  */")
     (luap "^%d+%s*$")
-    (rust-format-args "{} {name:>8} {0:?}")
     (rust-format-args-macro "fn main() { println!(\"{}\", 1); }
 ")
     (go-format-string "%d items, %-8s")
@@ -494,10 +493,6 @@ Some *text*.
     (typst "= Title
 
 Some *text*.
-")
-    (djot "# Title
-
-Some _text_.
 ")
     (mermaid "flowchart TD
     A --> B
@@ -848,10 +843,6 @@ Hi
     var x = 1
     print(x)
 ")
-    (move "module 0x1::m {
-    fun f(): u64 { 1 }
-}
-")
     (nearley "main -> \"a\" | \"b\"
 ")
     (ohm "G {
@@ -1042,8 +1033,6 @@ System.print(x)
 ")
     (bass "(def x 1)
 [:a 1 :b 2]
-")
-    (cpon "<\"foo\":\"bar\", 1:<2:\"baz\">\"baz\">1
 ")
     (lpf "SYSCONFIG CONFIG_IOVOLTAGE=1.2;
 ")
