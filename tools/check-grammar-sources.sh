@@ -6,9 +6,13 @@
 # what a grammar's grammar.js requires), it asks:
 #   - whether the repository is still where the manifest says: its host's
 #     answer for the owner and name (GitHub's, Codeberg's, GitLab's API; a
-#     redirect for git.sr.ht). A repository renamed, moved to another owner
-#     or gone STOPS the check: the new home is judged first (who keeps it,
-#     whether it is kept up), and the manifest changed by hand;
+#     redirect for git.sr.ht; for tangled.org, the records of the owner and
+#     of the repository, under their DIDs). A repository renamed, moved to
+#     another owner or gone STOPS the check: the new home is judged first
+#     (who keeps it, whether it is kept up), and the manifest changed by
+#     hand; on tangled.org, a DID changed (its keys, its server) since the
+#     day syntax/grammar-reviews.tsv gives for the grammar is to be reviewed
+#     (WATCH);
 #   - whether the pinned commit is on a branch or a tag of that repository.
 #     A pin on neither STOPS it: such a commit may be one pushed to someone
 #     else's copy of the repository, which the host serves all the same;
@@ -86,53 +90,133 @@ except Exception:
     pass' "$2"
 }
 
-# the DID document of DID $1 (did:plc: from the PLC directory, did:web: from
-# its domain), or nothing
-did_document() {
-  case "$1" in
-    did:plc:*) curl -sSf --max-time 30 "https://plc.directory/$1" 2>/dev/null || true ;;
-    did:web:*) curl -sSf --max-time 30 "https://${1#did:web:}/.well-known/did.json" 2>/dev/null || true ;;
-  esac
+# what curl fetches from $1 over HTTPS alone, redirects too, or nothing
+https_get() {
+  curl -sS --proto =https --proto-redir =https --max-time 30 "$1" 2>/dev/null || true
 }
 
-# where the repository OWNER/NAME of tangled.org is now, as where_now says it.
-# tangled.org keeps a repository as a record of its owner's, under the owner's
-# DID, which stays the same through every change of the owner's handle (a
-# domain name, which someone else may hold later): the manifest names the
-# owner by that DID, and the repository is where the owner's record of it says
-# it is. A repository with a DID of its own declares its owner and name too,
-# and when those differ it has moved. When any of this cannot be asked, or the
-# owner is named by a handle, it cannot be told who keeps the repository, and
-# the check stops.
+# the DID document of the did:plc: DID $1 from the PLC directory, or nothing
+# when it cannot be had or is another DID's
+did_document() {
+  local document
+  case "$1" in
+    did:plc:*) document=$(https_get "https://plc.directory/$1") ;;
+    *) return ;;
+  esac
+  [ "$(field "$document" id)" = "$1" ] && printf '%s' "$document"
+}
+
+# the days (YYYY-MM-DD) on which the did:plc: DID $1 was changed after the day
+# $2 (its keys or the servers it names), one a line; "?" when its history
+# cannot be had
+did_changes_after() {
+  https_get "https://plc.directory/$1/log/audit" | python3 -I -c 'import json,sys
+try:
+    days = sorted({entry["createdAt"][:10] for entry in json.load(sys.stdin)})
+except Exception:
+    print("?"); sys.exit()
+print("\n".join(day for day in days if day > sys.argv[1]))' "$2"
+}
+
+# the day the source of grammar $1 was last reviewed by hand, from
+# syntax/grammar-reviews.tsv, or nothing
+reviewed_on() {
+  awk -F'\t' -v n="$1" '!/^#/ && $1 == n { print $2 }' "$root/syntax/grammar-reviews.tsv" 2>/dev/null
+}
+
+# the owner's record (sh.tangled.repo) of the repository NAME on the server
+# PDS of the owner OWNER: the one keyed NAME, else one whose name is NAME
+# among all the owner's records; "none" when there is none, nothing when it
+# cannot be told
+tangled_record() {
+  local owner="$1" name="$2" pds="$3" record cursor="" page pages=0
+  record=$(https_get "$pds/xrpc/com.atproto.repo.getRecord?repo=$owner&collection=sh.tangled.repo&rkey=$name")
+  if [ -n "$(field "$record" value.knot)" ]; then printf '%s' "$record"; return; fi
+  [ "$(field "$record" error)" = RecordNotFound ] || return
+  while [ $pages -lt 50 ]; do
+    page=$(https_get "$pds/xrpc/com.atproto.repo.listRecords?repo=$owner&collection=sh.tangled.repo&limit=100${cursor:+&cursor=$cursor}")
+    record=$(printf '%s' "$page" | python3 -I -c 'import json,sys
+try:
+    records = json.load(sys.stdin)["records"]
+except Exception:
+    print("?"); sys.exit()
+for r in records:
+    if r.get("value", {}).get("name") == sys.argv[1]:
+        print(json.dumps(r)); break' "$name")
+    [ "$record" = "?" ] && return
+    if [ -n "$record" ]; then printf '%s' "$record"; return; fi
+    cursor=$(field "$page" cursor)
+    [ -z "$cursor" ] && { echo none; return; }
+    pages=$((pages + 1))
+  done
+}
+
+# where the repository OWNER/NAME of tangled.org, grammar GRAMMAR, is now, as
+# where_now says it, followed by a line "watch WHAT" for each thing to
+# review. tangled.org keeps a repository as a record of its owner's, under
+# the owner's DID, which stays the same through every change of the owner's
+# handle: the manifest names the owner by that DID (a did:plc:; a handle or
+# a did:web: names a domain, which can change hands), and the repository is
+# where the owner's record of it says it is. A repository with a DID of its
+# own declares its owner and name too, and when those differ it has moved;
+# tangled.org must send git to the server those records name. When any of
+# this cannot be asked, it cannot be told who keeps the repository, and the
+# check stops. A change to either DID (its keys, its server) after the day
+# the grammar's source was last reviewed is to be reviewed.
 tangled_where() {
-  local owner="${1%%/*}" name="${1#*/}" document pds record repo_did repo_document knot manifest
+  local owner="${1%%/*}" name="${1#*/}" grammar="$2" document pds record repo_did repo_document knot manifest sent reviewed did day
   case "$owner" in
-    did:plc:*|did:web:*) ;;
-    *) echo "! ? $owner is a handle, which someone else may hold later: name the owner by its DID (tangled.org/did:.../$name)"; return ;;
+    did:plc:*) ;;
+    *) echo "! ? $owner names a domain, which can change hands: name the owner by its did:plc: DID (tangled.org/did:plc:.../$name)"; return ;;
   esac
   document=$(did_document "$owner")
   pds=$(did_service "$document" "#atproto_pds")
   if [ -z "$pds" ]; then echo "! ? the DID document of $owner, who keeps it, could not be read"; return; fi
-  record=$(curl -sS --max-time 30 "$pds/xrpc/com.atproto.repo.getRecord?repo=$owner&collection=sh.tangled.repo&rkey=$name" 2>/dev/null || true)
-  if [ "$(field "$record" error)" = RecordNotFound ]; then echo "- ?"; return; fi
-  if [ -z "$(field "$record" value.knot)" ]; then echo "! ? $owner's record of $name could not be read from $pds"; return; fi
+  record=$(tangled_record "$owner" "$name" "$pds")
+  if [ "$record" = none ]; then echo "- ?"; return; fi
+  if [ -z "$record" ]; then echo "! ? no record of $owner's is keyed $name or named so, as far as $pds could be asked"; return; fi
   repo_did=$(field "$record" value.repoDid)
+  knot=$(field "$record" value.knot)
   if [ -n "$repo_did" ]; then
+    case "$repo_did" in
+      did:plc:*) ;;
+      *) echo "! ? the repository is $repo_did, which names a domain that can change hands"; return ;;
+    esac
     repo_document=$(did_document "$repo_did")
-    knot=$(did_service "$repo_document" "#atproto_pds")
-    manifest=$(curl -sS --max-time 30 "$knot/xrpc/com.atproto.repo.getRecord?repo=$repo_did&collection=org.tangled.repo.manifest&rkey=self" 2>/dev/null || true)
-    if [ -z "$knot" ] || [ -z "$(field "$manifest" value.declaration.owner)" ]; then
+    manifest=$(https_get "$(did_service "$repo_document" "#atproto_pds")/xrpc/com.atproto.repo.getRecord?repo=$repo_did&collection=org.tangled.repo.manifest&rkey=self")
+    if [ -z "$(field "$manifest" value.declaration.owner)" ]; then
       echo "! ? the repository $repo_did of $owner's record could not be asked who keeps it"; return
     fi
+  fi
+  # where tangled.org sends git
+  sent=$(curl -s --proto =https --max-time 30 -o /dev/null -w '%{redirect_url}' "https://tangled.org/$owner/$name/info/refs?service=git-upload-pack" 2>/dev/null || true)
+  case "$sent" in
+    "https://$knot/${repo_did:-$owner/$name}/"*) ;;
+    *) echo "! ? tangled.org sends git to ${sent:-nowhere}, not to $knot, the server the records name"; return ;;
+  esac
+  if [ -n "$repo_did" ]; then
     echo "$(field "$manifest" value.declaration.owner)/$(field "$manifest" value.declaration.name) ?"
   else
     echo "$owner/$name ?"
   fi
+  reviewed=$(reviewed_on "$grammar")
+  if [ -z "$reviewed" ]; then
+    echo "watch no day of review for it in syntax/grammar-reviews.tsv: review who keeps it, then write the day there"
+    return
+  fi
+  for did in "$owner" $repo_did; do
+    while read -r day; do
+      [ -z "$day" ] && continue
+      if [ "$day" = "?" ]; then echo "watch the history of $did could not be read"; continue; fi
+      echo "watch $did was changed on $day (its keys or its server), after the review of $reviewed: review it, then the day in syntax/grammar-reviews.tsv"
+    done < <(did_changes_after "$did" "$reviewed")
+  done
 }
 
-# where URL's repository is now: OWNER/NAME as its host has it (- when the
-# host says it is gone, ? when it is a host this check does not know, ! when
-# who keeps it cannot be told, followed by why), and whether it is archived
+# where URL's repository, of grammar $2, is now: OWNER/NAME as its host has
+# it (- when the host says it is gone, ? when it is a host this check does
+# not know, ! when who keeps it cannot be told, followed by why), and
+# whether it is archived; then a line "watch WHAT" for each thing to review
 where_now() {
   local url="$1" path answer
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
@@ -158,7 +242,7 @@ where_now() {
         30*) echo "${target#https://git.sr.ht/} ?" ;;
         *) echo "- ?" ;;
       esac ;;
-    https://tangled.org/*) tangled_where "$path" ;;
+    https://tangled.org/*) tangled_where "$path" "$2" ;;
     *) echo "? ?" ;;
   esac
 }
@@ -187,7 +271,11 @@ fetch_files() {
 
 while IFS=$'\t' read -r name url commit; do
   printf '%s ' "$name" >&2
-  read -r full archived why < <(where_now "$url")
+  answer=$(where_now "$url" "$name")
+  read -r full archived why <<< "${answer%%$'\n'*}"
+  while read -r word line; do
+    [ "$word" = watch ] && watches+=("$name: $line")
+  done <<< "$answer"
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
   if [ "$full" = "!" ]; then
     stops+=("$name: who keeps $url cannot be told: $why")

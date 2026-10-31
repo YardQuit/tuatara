@@ -1,0 +1,6 @@
+# The day each grammar's source was last reviewed by hand (who keeps it, how
+# it is taken), for tools/check-grammar-sources.sh: on tangled.org, a change
+# to the owner's or the repository's DID after that day is to be reviewed
+# again, and the day written here once it has been.
+# name	reviewed
+doxyfile	2026-10-31

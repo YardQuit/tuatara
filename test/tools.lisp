@@ -441,10 +441,12 @@ git checkout -q main; git branch -q -D gone tagged" repo)))
             (true (search "could not be fetched" out))))))))
 
 (define-test (tools grammar-source-check-asks-tangled-who-keeps-it)
-  ;; a grammar on tangled.org is named by its owner's DID, and the check asks
-  ;; the owner's records where the repository is: one declared by another
-  ;; owner, one gone, one named by a handle, or answers that cannot be had,
-  ;; stop it; the owner's own passes
+  ;; a grammar on tangled.org is named by its owner's did:plc: DID, and the
+  ;; check asks the owner's records where the repository is: one declared by
+  ;; another owner, one gone, an owner named by a domain (a handle, a
+  ;; did:web:), git sent to another server than the records name, or answers
+  ;; that cannot be had, stop it; the owner's own passes, and a change to a
+  ;; DID after the day of the grammar's review is to be watched
   (with-test-directory (directory)
     (let* ((repo (uiop:native-namestring (merge-pathnames "repo/" directory)))
            (tools (merge-pathnames "tools/" directory))
@@ -459,6 +461,7 @@ git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m on
       (ensure-directories-exist answers)
       (dolist (script '("check-grammar-sources.sh" "grammar-build.sh"))
         (uiop:copy-file (tools-script script) (merge-pathnames script tools)))
+      (write-test-file directory "syntax/grammar-reviews.tsv" (format nil "g	2026-10-01~%"))
       ;; curl answers from answers/, a file named after the address asked, and
       ;; fails as with no network for any other
       (write-test-file bin "curl" (format nil "#!/bin/bash
@@ -472,12 +475,15 @@ cat \"$file\"~%" (uiop:native-namestring answers)))
              (check (address)
                (write-test-file directory "syntax/grammars.tsv" (format nil "g	~a	~a	MIT~%" address commit))
                (multiple-value-bind (out error status)
-                   (uiop:run-program (list "env" (format nil "PATH=~a:~a" (uiop:native-namestring bin) (uiop:getenv "PATH"))
-                                           "GIT_CONFIG_COUNT=2"
-                                           (format nil "GIT_CONFIG_KEY_0=url.file://~a.insteadOf" repo) (format nil "GIT_CONFIG_VALUE_0=~a" url)
-                                           (format nil "GIT_CONFIG_KEY_1=url.file://~a.insteadOf" repo)
-                                           "GIT_CONFIG_VALUE_1=https://tangled.org/owner.example/g"
-                                           "bash" (uiop:native-namestring (merge-pathnames "check-grammar-sources.sh" tools)))
+                   (uiop:run-program (list* "env" (format nil "PATH=~a:~a" (uiop:native-namestring bin) (uiop:getenv "PATH"))
+                                            "GIT_CONFIG_COUNT=3"
+                                            (append
+                                             (loop for from in (list url "https://tangled.org/owner.example/g"
+                                                                     "https://tangled.org/did:web:owner.example/g")
+                                                   for i from 0
+                                                   collect (format nil "GIT_CONFIG_KEY_~d=url.file://~a.insteadOf" i repo)
+                                                   collect (format nil "GIT_CONFIG_VALUE_~d=~a" i from))
+                                             (list "bash" (uiop:native-namestring (merge-pathnames "check-grammar-sources.sh" tools)))))
                                      :output :string :error-output nil :ignore-error-status t)
                  (declare (ignore error))
                  (values status out))))
@@ -485,29 +491,68 @@ cat \"$file\"~%" (uiop:native-namestring answers)))
                 "{\"id\":\"did:plc:owner\",\"service\":[{\"id\":\"#atproto_pds\",\"serviceEndpoint\":\"https://pds.example\"}]}")
         (answer "https://plc.directory/did:plc:repo"
                 "{\"id\":\"did:plc:repo\",\"service\":[{\"id\":\"#atproto_pds\",\"serviceEndpoint\":\"https://knot.example\"}]}")
+        (answer "https://plc.directory/did:plc:owner/log/audit" "[{\"createdAt\":\"2026-09-01T10:00:00Z\"}]")
+        (answer "https://plc.directory/did:plc:repo/log/audit" "[{\"createdAt\":\"2026-09-02T10:00:00Z\"}]")
         (answer "https://pds.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:owner&collection=sh.tangled.repo&rkey=g"
                 "{\"value\":{\"knot\":\"knot.example\",\"repoDid\":\"did:plc:repo\"}}")
+        (answer "https://tangled.org/did:plc:owner/g/info/refs?service=git-upload-pack"
+                "https://knot.example/did:plc:repo/info/refs?service=git-upload-pack")
         (flet ((declared (owner)
                  (answer "https://knot.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:repo&collection=org.tangled.repo.manifest&rkey=self"
                          (format nil "{\"value\":{\"declaration\":{\"name\":\"g\",\"owner\":\"~a\"}}}" owner))))
           (declared "did:plc:owner")
           (multiple-value-bind (status out) (check url)
-            (is = 0 status "~a" out))
+            (is = 0 status "~a" out)
+            (false (search "WATCH" out) "~a" out))
+          ;; the repository's DID changed after the review: watched
+          (answer "https://plc.directory/did:plc:repo/log/audit"
+                  "[{\"createdAt\":\"2026-09-02T10:00:00Z\"},{\"createdAt\":\"2026-10-20T10:00:00Z\"}]")
+          (multiple-value-bind (status out) (check url)
+            (is = 0 status "~a" out)
+            (true (search "did:plc:repo was changed on 2026-10-20" out) "~a" out))
+          ;; git sent to another server than the records name
+          (answer "https://tangled.org/did:plc:owner/g/info/refs?service=git-upload-pack"
+                  "https://elsewhere.example/did:plc:repo/info/refs?service=git-upload-pack")
+          (multiple-value-bind (status out) (check url)
+            (is = 1 status)
+            (true (search "sends git to https://elsewhere.example" out) "~a" out))
+          (answer "https://tangled.org/did:plc:owner/g/info/refs?service=git-upload-pack"
+                  "https://knot.example/did:plc:repo/info/refs?service=git-upload-pack")
           ;; declared by another owner: moved
           (declared "did:plc:other")
           (multiple-value-bind (status out) (check url)
             (is = 1 status)
             (true (search "is now did:plc:other/g" out) "~a" out)))
-        ;; an owner named by a handle, which another may hold later
-        (multiple-value-bind (status out) (check "https://tangled.org/owner.example/g")
-          (is = 1 status)
-          (true (search "owner.example is a handle" out) "~a" out))
-        ;; the owner's record of it gone
+        ;; an owner named by a domain, which can change hands
+        (dolist (owner '("owner.example" "did:web:owner.example"))
+          (multiple-value-bind (status out) (check (format nil "https://tangled.org/~a/g" owner))
+            (is = 1 status)
+            (true (search (format nil "~a names a domain" owner) out) "~a" out)))
+        ;; no record keyed g, and the owner's records cannot be listed
         (answer "https://pds.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:owner&collection=sh.tangled.repo&rkey=g"
                 "{\"error\":\"RecordNotFound\",\"message\":\"Could not locate record\"}")
         (multiple-value-bind (status out) (check url)
           (is = 1 status)
+          (true (search "no record of did:plc:owner's is keyed g" out) "~a" out))
+        ;; none of them named g either: gone
+        (answer "https://pds.example/xrpc/com.atproto.repo.listRecords?repo=did:plc:owner&collection=sh.tangled.repo&limit=100"
+                "{\"records\":[{\"value\":{\"name\":\"h\",\"knot\":\"knot.example\"}}]}")
+        (multiple-value-bind (status out) (check url)
+          (is = 1 status)
           (true (search "is gone" out) "~a" out))
+        ;; a record named g, kept under another key, is the repository's
+        (answer "https://pds.example/xrpc/com.atproto.repo.listRecords?repo=did:plc:owner&collection=sh.tangled.repo&limit=100"
+                "{\"records\":[{\"value\":{\"name\":\"g\",\"knot\":\"knot.example\",\"repoDid\":\"did:plc:repo\"}}]}")
+        (answer "https://knot.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:repo&collection=org.tangled.repo.manifest&rkey=self"
+                "{\"value\":{\"declaration\":{\"name\":\"g\",\"owner\":\"did:plc:owner\"}}}")
+        (multiple-value-bind (status out) (check url)
+          (is = 0 status "~a" out))
+        ;; a DID document for another DID than the one asked about
+        (answer "https://plc.directory/did:plc:owner"
+                "{\"id\":\"did:plc:someone\",\"service\":[{\"id\":\"#atproto_pds\",\"serviceEndpoint\":\"https://pds.example\"}]}")
+        (multiple-value-bind (status out) (check url)
+          (is = 1 status)
+          (true (search "cannot be told" out) "~a" out))
         ;; no answer from the directory of DIDs
         (uiop:delete-file-if-exists (merge-pathnames "https___plc_directory_did_plc_owner" answers))
         (multiple-value-bind (status out) (check url)
