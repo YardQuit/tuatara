@@ -28,7 +28,7 @@
            #:substitute-command-keys #:unmark-keys #:text-spans #:mark-key #:key-mark-p #:key-description< #:command-key
            #:keymap-called #:keymap-summary #:valid-key-text-p #:*key-keymaps-function* #:*keymap-named-function*
            #:completing-read #:completing-read-value #:key-waiting-p #:completion #:editor-completion #:editor-key-hints #:editor-width #:editor-height
-           #:active-keymaps #:*state-keys-function* #:*prefix-help-function* #:resolve-keys #:candidate-score #:panel-rows #:*highlight-functions* #:*key-hint-focus-functions* #:*job-highlight-functions* #:*syntax-highlight-functions* #:*text-highlight-functions* #:window-highlights-for #:window-syntax #:read-key #:read-event #:*tick-functions* #:*last-input-time* #:*after-tick-functions* #:*title-functions* #:*background-work* #:*tick-interval* #:run-tick-functions
+           #:active-keymaps #:*state-keys-function* #:*prefix-help-function* #:resolve-keys #:candidate-score #:panel-rows #:*highlight-functions* #:*key-hint-focus-functions* #:*job-highlight-functions* #:*syntax-highlight-functions* #:*text-highlight-functions* #:window-highlights-for #:window-syntax #:read-key #:read-answer-key #:read-event #:*tick-functions* #:*last-input-time* #:*after-tick-functions* #:*title-functions* #:*background-work* #:*tick-interval* #:run-tick-functions
            #:*gutter-providers* #:window-margin-for #:gutter-cells #:*ruler-functions*
            #:editor-minibuffer-prompt #:editor-minibuffer-text #:editor-minibuffer-point
            ;; windows

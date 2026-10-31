@@ -1038,20 +1038,23 @@ NIL when it failed."
 
 (defun package-question (name where folder then &optional signer)
   "Ask whether to compile and load the package NAME from WHERE, kept in
-FOLDER, SIGNER saying who signed it when given: y calls THEN, v lists its
-folder, opened safely, n leaves it; THEN at once with
-*PACKAGE-ASK-BEFORE-LOADING* NIL."
+FOLDER, SIGNER saying who signed it when given, answered by one key pressed
+once the question is shown (READ-ANSWER-KEY): y calls THEN, v lists its
+folder, opened safely, n leaves it, as \\`C-g' does (\"not now\"), asked again
+at the next start. Any other key says which keys answer and asks again.
+THEN at once with *PACKAGE-ASK-BEFORE-LOADING* NIL."
   (if (not *package-ask-before-loading*)
       (funcall then)
-      (loop
-        (let ((answer (string-trim " " (read-string (format nil "Compile and load the package ~a from ~a~@[, ~a~]? (y, n, or v to view its source) "
-                                                            name (abbreviated-path where) signer)))))
-          (cond ((string-equal answer "y") (return (funcall then)))
-                ((string-equal answer "v")
-                 (rimu-show-directory (tuatara.io:native folder) :safe t :root (tuatara.io:native folder) :back (current-buffer))
-                 (return (message (substitute-command-keys "~a is shown; load-package asks again at the next start, \\[package-update] now" :for-format t)
-                                  name)))
-                ((string-equal answer "n") (return (message "The package ~a is not loaded" name))))))))
+      (case (handler-case (read-answer-key (format nil "Compile and load the package ~a from ~a~@[, ~a~]? (y, n, or v to view its source) "
+                                                   name (abbreviated-path where) signer)
+                                           '(#\y #\n #\v))
+              (quit () nil))
+        (#\y (funcall then))
+        (#\v (rimu-show-directory (tuatara.io:native folder) :safe t :root (tuatara.io:native folder) :back (current-buffer))
+         (message (substitute-command-keys "~a is shown; load-package asks again at the next start, \\[package-update] now" :for-format t)
+                  name))
+        (#\n (message "The package ~a is not loaded" name))
+        (t (message "The package ~a is not loaded now; load-package asks again at the next start" name)))))
 
 ;;; Fetching
 

@@ -200,8 +200,8 @@ file:// address, everything remembered of it forgotten afterwards."
         (let ((tuatara-user:*package-ask-before-loading* t))
           (let ((f (auto-save-session
                     (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                          (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                          "y RET"
+                          (list :until #'package-question-shown)
+                          "y"
                           (list :until (lambda () (trust-version-loaded))))
                     :width 240)))
             (true (tuatara.frontend.fake:fake-frame-showing-across-rows f (format nil "signed by the key ~a" alice-print)))
@@ -349,16 +349,16 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
         (let ((tuatara-user:*package-ask-before-loading* t))
           (auto-save-session
            (list (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
-                 (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                 "v RET" (list :until (lambda () (echo-says "is shown")))))
+                 (list :until #'package-question-shown)
+                 "v" (list :until (lambda () (echo-says "is shown")))))
           (false (fourth (tuatara.defaults::package-state "pkgv" where "latest")))
           ;; the next start
           (setf tuatara.defaults::*loaded-packages* '())
           (makunbound 'tuatara-user::*package-trust-version*)
           (let ((f (auto-save-session
                     (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                          (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                          "y RET" (list :until (lambda () (trust-version-loaded))))
+                          (list :until #'package-question-shown)
+                          "y" (list :until (lambda () (trust-version-loaded))))
                     :width 240)))
             (true (tuatara.frontend.fake:fake-frame-showing-across-rows f (format nil "signed by the key ~a" alice-print))))
           (is equal "two" (trust-version-loaded))
@@ -461,8 +461,8 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
         (let ((tuatara-user:*package-ask-before-loading* t))
           (let ((f (auto-save-session
                     (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                          (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                          "y RET" (list :until (lambda () (trust-version-loaded))))
+                          (list :until #'package-question-shown)
+                          "y" (list :until (lambda () (trust-version-loaded))))
                     :width 240)))
             (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "from"))
             (true (tuatara.frontend.fake:fake-frame-showing-across-rows f ", unsigned?"))))
@@ -697,13 +697,13 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
     (let ((tuatara-user:*package-ask-before-loading* t) (jobs nil) (said nil))
       (let ((f (auto-save-session
                 (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                      (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
+                      (list :until #'package-question-shown)
                       (list :until (lambda ()
                                      (tuatara.defaults::update-packages (list "pkgv"))
                                      (setf jobs (count-if #'tuatara.defaults::package-fetch-p tuatara.runtime:*jobs*))
                                      t))
                       (list :until (lambda () (setf said (echo-says "pkgv: a fetch or check of it is already running"))))
-                      "n RET" (list :until (lambda () (echo-says "is not loaded"))))
+                      "n" (list :until (lambda () (echo-says "is not loaded"))))
                 :width 240)))
         (true said)
         (true (tuatara.frontend.fake:fake-frame-showing f "is not loaded"))

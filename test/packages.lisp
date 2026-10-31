@@ -73,6 +73,11 @@ WHERE its file:// address, all of it forgotten afterwards."
   "The version of pkgone loaded, or NIL."
   (and (boundp 'tuatara-user::*package-test-version*) (symbol-value 'tuatara-user::*package-test-version*)))
 
+(defun package-question-shown ()
+  "True while the question whether to compile and load a package waits for its key."
+  (and tuatara.command::*key-question*
+       (search "Compile and load the package" (or (tuatara.command:editor-message tuatara.command:*editor*) ""))))
+
 (define-test (packages newest-tag-by-date)
   ;; no version asked for: the tag made last, though its name sorts first; only its folder kept
   (with-package-repository (dir where)
@@ -138,17 +143,17 @@ WHERE its file:// address, all of it forgotten afterwards."
     (let ((tuatara-user:*package-ask-before-loading* t))
       (let ((f (auto-save-session
                 (list (list :until (lambda () (tuatara-user:load-package "pkgone" :source where) t))
-                      (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                      "n RET" (list :wait 0.2))
+                      (list :until #'package-question-shown)
+                      "n" (list :wait 0.2))
                 :width 160)))
-        (true (tuatara.frontend.fake:fake-frame-showing f "Compile and load the package pkgone from"))
+        (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Compile and load the package pkgone from"))
         (true (tuatara.frontend.fake:fake-frame-showing f "The package pkgone is not loaded"))
         (false (package-test-version))
         (false (fourth (tuatara.defaults::package-state "pkgone" where nil)))
         (auto-save-session
          (list (list :until (lambda () (tuatara-user:load-package "pkgone" :source where) t))
-               (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-               "y RET" (list :until (lambda () (package-test-version)))))
+               (list :until #'package-question-shown)
+               "y" (list :until (lambda () (package-test-version)))))
         (is equal "alpha" (package-test-version))
         (true (fourth (tuatara.defaults::package-state "pkgone" where nil)))))))
 
@@ -220,15 +225,15 @@ WHERE its file:// address, all of it forgotten afterwards."
              (let ((f (auto-save-session
               (list (list :until (lambda () (tuatara-user:package-source "mine" (namestring dir)) t))
                     (list :until (lambda () (tuatara-user:load-package "mypkg" :source "mine" :file "start.lisp") t))
-                    (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                    "v RET" (list :until (lambda () (search "is shown" (or (tuatara.command:editor-message tuatara.command:*editor*) "")))))
+                    (list :until #'package-question-shown)
+                    "v" (list :until (lambda () (search "is shown" (or (tuatara.command:editor-message tuatara.command:*editor*) "")))))
                        :width 120)))
                (true (tuatara.frontend.fake:fake-frame-showing f "start.lisp")))
              (false (package-test-version))
              (auto-save-session
               (list (list :until (lambda () (tuatara-user:load-package "mypkg" :source "mine" :file "start.lisp") t))
-                    (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
-                    "y RET" (list :until (lambda () (package-test-version)))))
+                    (list :until #'package-question-shown)
+                    "y" (list :until (lambda () (package-test-version)))))
              (is equal "mine" (package-test-version))
              (makunbound 'tuatara-user::*package-test-version*)
              (true (tuatara-user:load-package "mypkg" :source "mine" :file "start.lisp"))
@@ -240,6 +245,53 @@ WHERE its file:// address, all of it forgotten afterwards."
                (false (probe-file fasl))
                (true (probe-file (merge-pathnames "start.lisp" dir)))))
         (forget-test-packages dir)))))
+
+(defmacro with-folder-package ((dir name text) &body body)
+  "Run BODY with DIR a new folder holding the package NAME, its NAME.lisp
+TEXT, as the source \"mine\"; all of it forgotten afterwards."
+  `(with-test-directory (,dir)
+     (alexandria:write-string-into-file ,text (merge-pathnames (format nil "~a.lisp" ,name) ,dir))
+     (let ((tuatara.defaults::*package-sources* '()))
+       (unwind-protect (progn (tuatara-user:package-source "mine" (namestring ,dir)) ,@body)
+         (forget-test-packages ,dir)))))
+
+(define-test (packages question-answered-by-one-key)
+  ;; y alone answers, no minibuffer opened; another key says which keys answer and asks
+  ;; again; C-g is not now, nothing loaded
+  (with-folder-package (dir "onekey" "(defparameter *package-test-version* \"one key\")")
+    (let ((tuatara-user:*package-ask-before-loading* t) (minibuffer :unseen))
+      (let ((f (auto-save-session
+                (list (list :until (lambda () (tuatara-user:load-package "onekey" :source "mine") t))
+                      (list :until #'package-question-shown)
+                      (list :until (lambda () (setf minibuffer (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)) t))
+                      "x" (list :until (lambda () (search "Answer y, n or v. Compile and load the package onekey"
+                                                          (or (tuatara.command:editor-message tuatara.command:*editor*) ""))))
+                      "y" (list :until (lambda () (package-test-version))))
+                :width 160)))
+        (false minibuffer)
+        (true (tuatara.frontend.fake:fake-frame-showing f "Answer y, n or v. Compile and load the package onekey"))
+        (is equal "one key" (package-test-version))))
+    ;; forgotten, so that it is asked about again
+    (forget-test-packages dir)
+    (let ((tuatara-user:*package-ask-before-loading* t))
+      (let ((f (auto-save-session
+                (list (list :until (lambda () (tuatara-user:load-package "onekey" :source "mine") t))
+                      (list :until #'package-question-shown)
+                      "C-g" (list :until (lambda () (search "is not loaded now" (or (tuatara.command:editor-message tuatara.command:*editor*) "")))))
+                :width 160)))
+        (true (tuatara.frontend.fake:fake-frame-showing f "The package onekey is not loaded now"))
+        (false (package-test-version))))))
+
+(define-test (packages question-not-answered-by-keys-typed-ahead)
+  ;; keys typed before the question shows never answer it: the n pressed after it does
+  (with-folder-package (dir "ahead" "(defparameter *package-test-version* \"ahead\")")
+    (let ((tuatara-user:*package-ask-before-loading* t)
+          (f (tuatara.frontend.fake:make-fake-frontend :width 160 :height 8)))
+      (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (tuatara.frontend.fake::fake-events f)))
+      (queue-test-keys f (list (lambda () (tuatara-user:load-package "ahead" :source "mine")) "y RET" :tick "n"))
+      (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults)
+      (true (tuatara.frontend.fake:fake-frame-showing f "The package ahead is not loaded"))
+      (false (package-test-version)))))
 
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another

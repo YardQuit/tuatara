@@ -374,6 +374,26 @@ has nothing more to deliver."
             (when replay (push key (cdr replay)))
             key)))))
 
+(defun answer-keys-words (answers)
+  "The keys ANSWERS, a list of characters, in words: y, n or v."
+  (format nil "~{~a~#[~; or ~:;, ~]~}" answers))
+
+(defun read-answer-key (prompt answers)
+  "Ask PROMPT in the echo area, answered by one key: one of ANSWERS, a list
+of characters such as (#\\y #\\n), pressed once the question is shown (READ-KEY
+with FRESH: keys typed before are thrown away). Returns the character, in
+lower case, whatever the case typed. Any other key says which keys answer
+and asks again; \\`C-g' signals QUIT."
+  (let ((asked prompt))
+    (loop
+      (let* ((key (read-key asked :fresh t))
+             (base (tuatara.frontend:key-base key))
+             (char (and (not (tuatara.frontend:key-ctrl key)) (not (tuatara.frontend:key-meta key))
+                        (characterp base) (char-downcase base))))
+        (cond ((quit-key-p key) (keyboard-quit-signal))
+              ((and char (member char answers)) (return char))
+              (t (setf asked (format nil "Answer ~a. ~a" (answer-keys-words answers) prompt))))))))
+
 (defun completing-read (prompt table &key annotate require-match history (initial "") (separator #\/) (filter t)
                                          select reselect preview source default keep-order none taken keymap)
   "Read with completion: PROMPT is shown (a string, or a function of no
