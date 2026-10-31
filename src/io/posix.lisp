@@ -1118,7 +1118,8 @@ entries in it and closed after; refused (WRITING-REFUSED, OPERATION said)
 when nothing may be written there, told by where the folder opened really
 is, so that nothing swapped for it meanwhile is written in."
   (let ((fd (handler-case (sb-posix:open (string-right-trim "/" (native directory))
-                                         (logior sb-posix:o-rdonly +o-directory+ +o-cloexec+))
+                                         ;; O_PATH: a folder you may write in but not list (-wx) too
+                                         (logior +o-path+ +o-directory+ +o-cloexec+))
               (sb-posix:syscall-error (e) (fail "open" directory (sb-posix:syscall-errno e))))))
     (unwind-protect (progn (check-writing (string-right-trim "/" (native directory)) operation :fd fd)
                            (funcall function fd))

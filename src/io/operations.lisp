@@ -292,7 +292,8 @@ by where the directory opened really is."
     (let ((own (tuatara.text:string-octets name)))
       (when (or (zerop (length own)) (equalp own #(46)) (equalp own #(46 46)))
         (error 'file-system-error :operation "change" :path path :reason "it names no entry of a directory"))
-      (let ((dirfd (handler-case (sb-posix:open parent (logior sb-posix:o-rdonly +o-directory+ +o-cloexec+))
+      ;; O_PATH: a folder you may write in but not list (-wx) is opened all the same
+      (let ((dirfd (handler-case (sb-posix:open parent (logior +o-path+ +o-directory+ +o-cloexec+))
                      (sb-posix:syscall-error (e) (fail "open" parent (sb-posix:syscall-errno e))))))
         (unwind-protect (progn (when writing (check-writing path writing :dirfd dirfd))
                                (funcall function dirfd own))
@@ -924,7 +925,7 @@ octets overwritten so far, all passes counted. Returns T once it is gone."
                     (if (same-file-p hidden)
                         (remove-entry-at dirfd hidden native nil)
                         (error 'file-system-error :operation "wipe" :path native :reason "its name was given to another file meanwhile"))))
-                (ignore-errors (sb-posix:fsync dirfd)))
+                (sync-directory (parent-path native)))
            (sb-posix:close fd)
            (when random (sb-posix:close random))
            (fill buffer 0))))

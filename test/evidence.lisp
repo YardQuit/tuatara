@@ -519,3 +519,36 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
       (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
         (false (tuatara.defaults::project-trusted-p root))
         (true (tuatara.defaults::project-trusted-p work))))))
+
+(define-test (evidence folders-written-not-read)
+  ;; a folder you may write in but not list (-wx) takes new files, as before, the setting on or off
+  (with-test-directory (dir)
+    (let* ((root (namestring dir))
+           (blind (namestring (ensure-directories-exist (merge-pathnames "blind/" dir)))))
+      (put-file (concatenate 'string blind "old.txt") "old")
+      (sb-posix:chmod blind #o300)
+      (unwind-protect
+           (dolist (setting (list '() (list (concatenate 'string root "elsewhere/*/evidence/"))))
+             (with-evidence-folders (setting)
+               (tuatara.io:write-new-file (concatenate 'string blind "new.txt") "new")
+               (tuatara.io:write-text-file (tuatara.text:string->rope "saved") (concatenate 'string blind "saved.txt"))
+               (tuatara.io:remove-file (concatenate 'string blind "new.txt"))
+               (tuatara.io:remove-file (concatenate 'string blind "saved.txt"))
+               (is string= "old" (file-text (concatenate 'string blind "old.txt")))))
+        (sb-posix:chmod blind #o700)))))
+
+
+(define-test (evidence saved-apart-said-plainly)
+  ;; a file with other names in a folder that may not be written in is refused, saying why
+  (with-case-folder (root evidence work)
+    (let* ((shut (namestring (ensure-directories-exist (concatenate 'string work "shut/"))))
+           (other (concatenate 'string shut "a.txt")))
+      (sb-posix:link (concatenate 'string evidence "a.txt") other)
+      (sb-posix:chmod shut #o500)
+      (unwind-protect
+           (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
+             (handler-case (progn (tuatara.io:write-text-file (tuatara.text:string->rope "x") other) (false t))
+               (tuatara.io:file-system-error (e) (true (search "may not be written in" (princ-to-string e)))))
+             (is string= "kept as found" (file-text other)))
+        (sb-posix:chmod shut #o700)))))
+

@@ -1596,6 +1596,12 @@ refuses the rename or the naming, for the caller to write in place."
         (when existing
           ;; the owner first: changing it may clear set-id bits the mode then restores
           (ignore-errors (sb-posix:fchown fd (stamp-uid existing) (stamp-gid existing)))
+          ;; never yours in its place without a word: someone else's file is not taken over
+          (let ((now (fd-stamp fd target)))
+            (unless (and (= (stamp-uid now) (stamp-uid existing)) (= (stamp-gid now) (stamp-gid existing)))
+              (error 'file-system-error :operation "save" :path target
+                                        :reason (format nil "it belongs to user ~d and group ~d, and the file of its own it would be saved as could not be given to them"
+                                                        (stamp-uid existing) (stamp-gid existing)))))
           (ignore-errors (sb-posix:fchmod fd (logand (stamp-mode existing) #o7777)))
           (let ((source (ignore-errors (open-examined +at-fdcwd+ (tuatara.text:string-octets (native target))
                                                       (logior sb-posix:o-rdonly sb-posix:o-nonblock (if nofollow +o-nofollow+ 0))
@@ -1699,7 +1705,7 @@ the file itself is touched. Returns :DONE, or :STOPPED."
               (sb-posix:close fd))))
         ;; they read the backup now: a lease on the file would only hold up this write
         (give-up-leases (lambda (lease) (member (lease-target lease) mappings))))
-      (let ((fd (handler-case (sb-posix:open (native target)
+      (let* ((fd (handler-case (sb-posix:open (native target)
                                              (logior (cond ((not existing) (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl))
                                                            (backup sb-posix:o-wronly)
                                                            (t (logior sb-posix:o-wronly sb-posix:o-trunc)))
@@ -1708,7 +1714,8 @@ the file itself is touched. Returns :DONE, or :STOPPED."
                   (sb-posix:syscall-error (e)
                     ;; nothing was written: the backup is not needed
                     (drop-backup)
-                    (fail "open for writing" target (sb-posix:syscall-errno e))))))
+                    (fail "open for writing" target (sb-posix:syscall-errno e)))))
+             (made (and (not existing) (ignore-errors (fd-stamp fd target)))))
         (handler-case
             (unwind-protect
                  (progn
@@ -1727,8 +1734,11 @@ the file itself is touched. Returns :DONE, or :STOPPED."
               (sb-posix:close fd))
           (writing-refused (e)
             (drop-backup)
-            ;; a file made here for this write, empty, is not left behind
-            (unless existing (ignore-errors (sb-posix:unlink (native target))))
+            ;; the file made here for this write, empty, is not left behind: that very file alone
+            (unless existing
+              (let ((there (ignore-errors (path-stamp target :follow nil))))
+                (when (and made there (= (stamp-dev made) (stamp-dev there)) (= (stamp-ino made) (stamp-ino there)))
+                  (ignore-errors (sb-posix:unlink (native target))))))
             (error e))
           (error (e)
             (when backup-fd (ignore-errors (sb-posix:close backup-fd)))
@@ -1782,7 +1792,11 @@ held, and that is told (TELL-WRITING)."
                              (not (writable-p directory))))
                     (write-in-place rope target existing :mappings mappings :cancel cancel :progress progress
                                                          :nofollow (not follow-links) :mode mode))
-                   (t (let ((r (write-by-rename rope target existing :cancel cancel :progress progress
+                   (t (when (and apart (not (writable-p directory)))
+                        (error 'file-system-error :operation "save" :path target
+                                                  :reason (format nil "it has ~d names, so it is saved as a file of its own beside them, and ~a may not be written in"
+                                                                  names (native directory))))
+                      (let ((r (write-by-rename rope target existing :cancel cancel :progress progress
                                                                      :nofollow (not follow-links) :mode mode)))
                         (cond ((and (eq r :refused) apart)
                                (error 'writing-refused :operation "save" :path target
