@@ -281,3 +281,44 @@ a new session would."
         (unwind-protect (false (loop repeat 3 thereis (tuatara.syntax:find-grammar "testjson") do (sleep 0.2)))
           (tuatara.syntax:stop-helpers)
           (tuatara.syntax:forget-grammars))))))
+
+(define-test (grammars-on own-languages-not-replaced)
+  ;; an init file or a package adds languages; one of Tuatara's own is not
+  ;; replaced, and that is said
+  (let ((before (tuatara.defaults::find-language 'python)))
+    (unwind-protect
+         (progn
+           (false (eval '(tuatara.defaults::define-language tuatara-user::python "Python read as Nix." :grammar "nix")))
+           (is eq before (tuatara.defaults::find-language 'python))
+           (is string= "python" (tuatara.defaults::language-grammar (tuatara.defaults::find-language 'python))))
+      (unless (eq before (tuatara.defaults::find-language 'python))
+        (setf tuatara.defaults::*languages* (cons before (remove (tuatara.defaults::find-language 'python)
+                                                                 tuatara.defaults::*languages*)))))))
+
+(define-test (grammars-on rules-held-to-their-size)
+  ;; rules over *rules-largest*, as a file or with what they take in, are
+  ;; not used, and that is said
+  (with-test-directory (directory)
+    (let ((tuatara.defaults::*rules-largest* 1000))
+      (write-test-file directory "big.scm" (make-string 2000 :initial-element #\;))
+      (write-test-file directory "a.scm" (format nil "; inherits: b,b,b,b~%(x) @y~%"))
+      (write-test-file directory "b.scm" (format nil "; inherits: c,c,c,c~%~a~%" (make-string 90 :initial-element #\;)))
+      (write-test-file directory "c.scm" (make-string 90 :initial-element #\;))
+      (false (tuatara.defaults::read-query directory "big"))
+      (false (tuatara.defaults::read-query directory "a") "grown past it by what it takes in")
+      (true (tuatara.defaults::read-query directory "c")))))
+
+(define-test (grammars-on rules-threads-kept-once)
+  ;; a thread compiling rules that ends at once is not left kept: asked
+  ;; again, a new one runs
+  (let ((table (make-hash-table :test 'equal :synchronized t)) (runs 0))
+    (sb-thread:join-thread (tuatara.defaults::thread-once table :k (lambda () (incf runs))))
+    (loop repeat 100 while (gethash :k table) do (sleep 0.01))
+    (false (gethash :k table) "taken out as it ended")
+    (sb-thread:join-thread (tuatara.defaults::thread-once table :k (lambda () (incf runs))))
+    (is = 2 runs)
+    ;; a dead thread left in the table counts as none
+    (setf (gethash :k table) (sb-thread:make-thread (lambda ())))
+    (sb-thread:join-thread (gethash :k table))
+    (sb-thread:join-thread (tuatara.defaults::thread-once table :k (lambda () (incf runs))))
+    (is = 3 runs)))

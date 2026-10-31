@@ -28,28 +28,47 @@ it would be beside the program when neither is there."
   "What a rules file says to take in another's rules of the same kind, a
 comment such as ; inherits: ecma,_javascript.")
 
+(defparameter *rules-largest* (* 1024 1024)
+  "The largest set of rules read, in characters: a rules file larger, or one
+whose ; inherits: lines make it larger, is not used, and that is said.")
+
 (defun read-query (directory name &optional seen)
   "The text of the rules NAME.scm in DIRECTORY, or NIL when there is none;
 each ; inherits: A,B in it replaced by the rules A and B of DIRECTORY, read
-the same way."
+the same way. Rules larger than *RULES-LARGEST*, as a file or once what
+they inherit is put in, are not used: NIL, and said."
   (let ((path (probe-file (merge-pathnames (format nil "~a.scm" name) directory))))
-    (and path
-         (cl-ppcre:regex-replace-all
-          *query-inherits* (uiop:read-file-string path :external-format :utf-8)
-          (lambda (match names)
-            (declare (ignore match))
-            (format nil "~{~%~a~%~}"
-                    (loop for other in (uiop:split-string names :separator ",")
-                          unless (member other (cons name seen) :test #'string=)
-                            collect (or (read-query directory other (cons name seen)) ""))))
-          :simple-calls t))))
+    (when path
+      (let ((size (ignore-errors (with-open-file (in path :element-type '(unsigned-byte 8)) (file-length in)))))
+        (if (or (null size) (> size *rules-largest*))
+            (progn (rules-failed "The rules ~a are larger than ~:d characters: not used" (namestring path) *rules-largest*)
+                   nil)
+            (let ((text (cl-ppcre:regex-replace-all
+                         *query-inherits* (uiop:read-file-string path :external-format :utf-8)
+                         (lambda (match names)
+                           (declare (ignore match))
+                           (format nil "~{~%~a~%~}"
+                                   (loop for other in (uiop:split-string names :separator ",")
+                                         unless (member other (cons name seen) :test #'string=)
+                                           collect (or (read-query directory other (cons name seen)) ""))))
+                         :simple-calls t)))
+              (if (> (length text) *rules-largest*)
+                  (progn (rules-failed "The rules ~a, with those they take in, are larger than ~:d characters: not used"
+                                       (namestring path) *rules-largest*)
+                         nil)
+                  text)))))))
 
 (defun read-kind-query (kind name)
   "The text of the rules of KIND (as SYNTAX-DIRECTORY names kinds) called NAME:
-Tuatara's own, syntax/KIND/NAME.scm, else those of a grammar you added,
-KIND/NAME.scm in the folder of grammars you add; NIL when there are none."
+Tuatara's own, syntax/KIND/NAME.scm, else those you added, KIND/NAME.scm in
+the folder of grammars you add; NIL when there are none. Rules you added
+for one of Tuatara's grammars are said as they are taken."
   (or (read-query (syntax-directory kind) name)
-      (read-query (merge-pathnames (format nil "~a/" kind) (tuatara.syntax:user-grammar-directory)) name)))
+      (let ((text (read-query (merge-pathnames (format nil "~a/" kind) (tuatara.syntax:user-grammar-directory)) name)))
+        (when (and text (not (tuatara.syntax:user-grammar-p name)))
+          (message "Rules you added are used for ~a: ~a/~a.scm in ~a" name kind name
+                        (abbreviated-path (namestring (tuatara.syntax:user-grammar-directory)))))
+        text)))
 
 (defun read-rules (name)
   "The text of the colouring rules NAME (a grammar's or a language's name), from
@@ -166,6 +185,15 @@ each captured as @definition."
        (search "around" textobjects)
        (cl-ppcre:regex-replace-all "@(function|class)\\.around\\b" textobjects "@definition")))
 
+(defun own-language-name-p (name)
+  "True when NAME, a language's name, is one Tuatara's own definitions make:
+a symbol of its defaults' package."
+  (and (symbolp name) (eq (symbol-package name) (find-package '#:tuatara.defaults))))
+
+(defun own-language-p (language)
+  "True when LANGUAGE is one of Tuatara's own."
+  (own-language-name-p (language-name language)))
+
 (defun register-language (name doc grammar modes &key (indent 4) more-textobjects injection-names definitions queries)
   "Record language NAME with DOC, GRAMMAR and MODES, reading its colouring,
 indentation, selection and injection rules, one level of indentation being
@@ -173,7 +201,14 @@ INDENT columns, MORE-TEXTOBJECTS the text of selection rules of its own,
 added to those read, INJECTION-NAMES a regular expression for the names
 other languages' rules call it by, and DEFINITIONS the text of the rules
 naming its definitions; a language defined again keeps the style and level
-chosen for it."
+chosen for it. One of Tuatara's own languages is never replaced from
+elsewhere (an init file, a package): that is refused, said, and NIL
+returned; a package adds languages of its own."
+  (let ((old (find-language name)))
+    (when (and old (own-language-p old) (not (own-language-name-p name)))
+      (message "~(~a~) is one of Tuatara's own languages: a package or an init file adds languages, it does not replace them (~(~a~) left as it is)"
+               name name)
+      (return-from register-language nil)))
   (when injection-names
     (handler-case (cl-ppcre:create-scanner (format nil "^(?i)(~a)$" injection-names))
       (error (e)
@@ -345,14 +380,8 @@ kept once compiled."
     (cond (known (and (tuatara.syntax:query-p known) known))
           ((not (on-editor-thread-p)) (compile-language-query language kind))
           ((rules-backing-off-p language) nil)
-          (t (let* ((key (cons language kind))
-                    (thread (or (gethash key *compiling*)
-                                (setf (gethash key *compiling*)
-                                      (tuatara.runtime:make-guarded-thread
-                                       (lambda ()
-                                         (unwind-protect (let ((*rules-quiet* t)) (compile-language-query language kind))
-                                           (remhash key *compiling*)))
-                                       :name "tuatara rules")))))
+          (t (let ((thread (thread-once *compiling* (cons language kind)
+                                        (lambda () (let ((*rules-quiet* t)) (compile-language-query language kind))))))
                (sb-thread:join-thread thread :timeout *rules-editor-wait* :default nil)
                (let ((now (funcall (second (assoc kind *language-queries*)) language)))
                  (and (tuatara.syntax:query-p now) now)))))))
@@ -608,18 +637,32 @@ languages, its local names) are compiled, or found not to compile."
 are compiled or being compiled, and have the editor redraw when they are.
 Returns the thread, or NIL."
   (unless (or (rules-ready-p language) (rules-backing-off-p language))
-    (or (gethash language *warming*)
-        (setf (gethash language *warming*)
-              (tuatara.runtime:make-guarded-thread
-               (lambda ()
-                 (unwind-protect
-                      (let ((*rules-quiet* t))
-                        (language-compiled-query language :colouring) (language-compiled-query language :injection) (language-compiled-query language :locals))
-                   (remhash language *warming*)
-                   (sb-ext:atomic-incf (car tuatara.syntax:*rules-generation*))
-                   (let ((wake tuatara.syntax:*syntax-wake-function*))
-                     (when wake (ignore-errors (funcall wake))))))
-               :name "tuatara rules")))))
+    (thread-once *warming* language
+                 (lambda ()
+                   (unwind-protect
+                        (let ((*rules-quiet* t))
+                          (language-compiled-query language :colouring) (language-compiled-query language :injection) (language-compiled-query language :locals))
+                     (sb-ext:atomic-incf (car tuatara.syntax:*rules-generation*))
+                     (let ((wake tuatara.syntax:*syntax-wake-function*))
+                       (when wake (ignore-errors (funcall wake)))))))))
+
+(defun thread-once (table key function)
+  "The thread running FUNCTION for KEY, kept in TABLE (a synchronized table)
+while it runs: the one there when it is alive, else a new one, kept there
+before it can end, and taken out as it ends only while the entry is still
+its own."
+  (sb-ext:with-locked-hash-table (table)
+    (let ((running (gethash key table)))
+      (if (and running (sb-thread:thread-alive-p running))
+          running
+          (setf (gethash key table)
+                (tuatara.runtime:make-guarded-thread
+                 (lambda ()
+                   (unwind-protect (funcall function)
+                     (sb-ext:with-locked-hash-table (table)
+                       (when (eq (gethash key table) sb-thread:*current-thread*)
+                         (remhash key table)))))
+                 :name "tuatara rules"))))))
 
 (defun rules-at-hand (language &key (wait *rules-wait*))
   "True when LANGUAGE's rules for colouring are compiled, compiling them in the
