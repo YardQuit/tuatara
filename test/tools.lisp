@@ -312,7 +312,8 @@ and the Quicklisp folder."
                    "MaeBrooks/tree-sitter-gren" "rhizoome/tree-sitter-ink" "jzelinskie/tree-sitter-spicedb"
                    "Philipp-M/tree-sitter-yuck"
                    ;; copies of a grammar kept on elsewhere: taken from where it is kept
-                   "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"))
+                   "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"
+                   "mtoohey31/tree-sitter-gitattributes"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)
              "~a has moved" old))
     ;; archived, their development carried on elsewhere

@@ -443,6 +443,7 @@ DROPPED = {'rust-format-args', 'djot', 'cpon', 'move'}
 OWN_QUERIES = {
     'mojo': {'highlights', 'textobjects', 'locals'},
     'lean': {'highlights', 'injections'},
+    'git-attributes': {'highlights'},
 }
 
 def copy_queries(name, done):

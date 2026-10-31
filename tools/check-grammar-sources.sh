@@ -47,9 +47,9 @@ rows() {
   done
 }
 
-# the pin of NAME in the manifest as git HEAD has it, or nothing
+# the pin and the repository of NAME in the manifest as git HEAD has it, or nothing
 committed_pin() {
-  { git -C "$root" show HEAD:syntax/grammars.tsv 2>/dev/null || true; } | awk -F'\t' -v n="$1" '$1 == n { print $3 }'
+  { git -C "$root" show HEAD:syntax/grammars.tsv 2>/dev/null || true; } | awk -F'\t' -v n="$1" '$1 == n { print $3, $2 }'
 }
 
 # a JSON answer of GitHub's API for the path $1, or nothing
@@ -143,11 +143,12 @@ while IFS=$'\t' read -r name url commit; do
     reports+=("$name: $url has had no commit since $(date -u -d "@$newest" +%Y-%m-%d)")
   fi
   # a pin moved since the last commit: how far, and what changed in what is compiled
-  old=$(committed_pin "$name")
+  read -r old old_url < <(committed_pin "$name"; echo)
   if [ -n "$old" ] && [ "$old" != "$commit" ]; then
-    if fetch_files "$dir" "$url" "$old" && fetch_files "$dir" "$url" "$commit"; then
+    # the old commit from where it was fetched: a grammar may have moved to another repository
+    if fetch_files "$dir" "$old_url" "$old" && fetch_files "$dir" "$url" "$commit"; then
       out="$work/${name//\//_}.diff"
-      { echo "$name: ${old:0:12} -> ${commit:0:12} ($url)"
+      { echo "$name: ${old:0:12} -> ${commit:0:12} (${old_url}${old_url:+ -> }$url)"
         git -C "$dir" log --oneline --no-decorate "$old..$commit" 2>/dev/null | head -50 || true
         echo
         git -C "$dir" diff --stat "$old" "$commit"
