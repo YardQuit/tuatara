@@ -490,6 +490,7 @@ OWN_QUERIES = {
     'svelte': {'highlights', 'indents', 'textobjects', 'injections', 'locals', 'tags'},
     'luau': {'highlights', 'indents', 'textobjects', 'injections', 'locals'},
     'protobuf': {'highlights'},
+    'slisp': {'highlights', 'tags'},
 }
 
 def copy_queries(name, done):

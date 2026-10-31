@@ -3,7 +3,7 @@
 ; file, You can obtain one at https://mozilla.org/MPL/2.0/.
 ;
 ; The rules naming the definitions and headings in slisp: runtime/queries/slisp/tags.scm of
-; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
+; Helix (https://github.com/helix-editor/helix) at commit ba40e547426b,
 ; unchanged below this notice.
 
 ;; def

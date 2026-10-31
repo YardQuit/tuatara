@@ -253,7 +253,7 @@ scfg	https://github.com/rockorager/tree-sitter-scfg	d850fd470445d73de318a21d734d
 shellcheckrc	https://codeberg.org/kpbaks/tree-sitter-shellcheckrc	ad3da4e8f7fd72dcc5e93a6b89822c59a7cd10ff	MIT
 slang	https://github.com/tree-sitter-grammars/tree-sitter-slang	327b1b821c255867a4fb724c8eee48887e3d014b	MIT
 slint	https://github.com/slint-ui/tree-sitter-slint	68b25244cec6eb9d7f8f790ef781c29c822d8f84	MIT
-slisp	https://github.com/xenogenics/tree-sitter-slisp	3482b8bbb428d33ed8f03ef24c6ca99f669dc4d2	BSD-2-Clause
+slisp	https://git.sr.ht/~xguerin/tree-sitter-slisp	e14f62169145d9661c1ab16790f527770d157bb8	BSD-2-Clause
 smithy	https://github.com/indoorvivants/tree-sitter-smithy	ec4fe14586f2b0a1bc65d6db17f8d8acd8a90433	MIT
 snakemake	https://github.com/osthomas/tree-sitter-snakemake	e909815acdbe37e69440261ebb1091ed52e1dec6	MIT
 sourcepawn	https://github.com/nilshelmig/tree-sitter-sourcepawn	5a8fdd446b516c81e218245c12129c6ad4bccfa2	MIT
