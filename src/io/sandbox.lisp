@@ -583,16 +583,19 @@ root itself is never shown: the sandbox's root is its own."
             (loop for mount in mounts append (cdr mount)))))
 
 (defun sandbox-arguments (program arguments seconds memory &key seccomp files environment directories writable overlays
-                                                              (directory "/tmp") (file-limit *sandbox-file-limit*))
+                                                              (directory "/tmp") (file-limit *sandbox-file-limit*)
+                                                              (processes *sandbox-process-limit*) (scratch t)
+                                                              (descriptors nil))
   "bwrap's arguments for running PROGRAM with ARGUMENTS shut in, limited to
-SECONDS of processor time and MEMORY octets (NIL: no limit) each process, its
-scratch /tmp to MEMORY octets too, to *SANDBOX-PROCESS-LIMIT* processes, and
-to files of FILE-LIMIT octets (NIL: no limit); SECCOMP the descriptor of its
+SECONDS of processor time (NIL: no limit) and MEMORY octets (NIL: no limit)
+each process, its scratch /tmp to MEMORY octets too, to PROCESSES processes
+and threads, and to files of FILE-LIMIT octets (NIL: no limit); SECCOMP the descriptor of its
 seccomp filter, FILES the descriptors of files it is shown read only, each
 \(PATH . FD), ENVIRONMENT what it has in its environment besides, each (NAME
 VALUE), a later one for the same NAME in place of the earlier, DIRECTORIES,
 WRITABLE and OVERLAYS the directories it is shown as SANDBOX-RUN says, and
-DIRECTORY the one it starts in."
+DIRECTORY the one it starts in. Without SCRATCH it has no /tmp at all;
+DESCRIPTORS, when given, is the most files it may have open at once."
   (append (list "--unshare-all" "--unshare-user" "--disable-userns" "--die-with-parent" "--new-session"
                 "--cap-drop" "ALL" "--clearenv"
                 "--setenv" "PATH" *sandbox-path* "--setenv" "HOME" "/tmp" "--setenv" "LC_ALL" "C.UTF-8")
@@ -600,19 +603,20 @@ DIRECTORY the one it starts in."
           (system-directory-arguments)
           (list "--proc" "/proc" "--dev" "/dev")
           ;; the scratch /tmp is memory too: held to the memory a program may take, where bwrap can (0.10 on)
-          (and memory (bwrap-version-at-least-p 0 10) (list "--size" (princ-to-string memory)))
-          (list "--tmpfs" "/tmp")
+          (and scratch memory (bwrap-version-at-least-p 0 10) (list "--size" (princ-to-string memory)))
+          (and scratch (list "--tmpfs" "/tmp"))
           (mount-arguments directories writable overlays)
           (loop for (path . fd) in files append (list "--ro-bind-data" (princ-to-string fd) path))
           (and seccomp (list "--seccomp" (princ-to-string seccomp)))
           (list "--chdir" directory
                 "--" "/bin/sh" "-c"
-                "ulimit -c 0 && ulimit -v \"$1\" && ulimit -t \"$2\" && ulimit -f \"$3\" && ulimit -u \"$4\" && shift 4 && exec \"$@\""
+                "ulimit -c 0 && ulimit -v \"$1\" && ulimit -t \"$2\" && ulimit -f \"$3\" && ulimit -u \"$4\" && { [ \"$5\" = as-is ] || ulimit -n \"$5\"; } && shift 5 && exec \"$@\""
                 "sh"
                 (if memory (princ-to-string (ceiling memory 1024)) "unlimited")
-                (princ-to-string (max 1 (ceiling seconds)))
+                (if seconds (princ-to-string (max 1 (ceiling seconds))) "unlimited")
                 (if file-limit (princ-to-string (ceiling file-limit 512)) "unlimited")
-                (princ-to-string *sandbox-process-limit*)
+                (princ-to-string processes)
+                (if descriptors (princ-to-string descriptors) "as-is")
                 program)
           arguments))
 
@@ -648,11 +652,13 @@ empty string when it says nothing within five seconds."
                                       :capture nil :seconds 10 :environment (scope-environment)))
          path)))
 
-(defun start-sandbox (bwrap program arguments stdin seconds memory &rest keys &key files &allow-other-keys)
+(defun start-sandbox (bwrap program arguments stdin seconds memory
+                      &rest keys &key files (total *sandbox-total-memory*) (outputs :stream) &allow-other-keys)
   "Start bwrap at the path BWRAP on PROGRAM with ARGUMENTS, STDIN its input,
 shown FILES, each (PATH . TEXT), as SANDBOX-RUN has them, KEYS the rest of
-SANDBOX-ARGUMENTS's; the process. In a scope whose memory is held to
-*SANDBOX-TOTAL-MEMORY* when systemd-run can make one."
+SANDBOX-ARGUMENTS's; the process. In a scope whose memory is held to TOTAL
+\(*SANDBOX-TOTAL-MEMORY* unless given) when systemd-run can make one. Its
+outputs are streams to read, or let go when OUTPUTS is NIL."
   (let ((seccomp nil) (data '()))
     (unwind-protect
          (let* ((program-octets (and *sandbox-seccomp* (seccomp-program)))
@@ -663,20 +669,44 @@ SANDBOX-ARGUMENTS's; the process. In a scope whose memory is held to
                                                                     (tuatara.text:string-octets text)))
                                             data))
                              (apply #'sandbox-arguments program arguments seconds memory
-                                    :seccomp seccomp :files (reverse data) keys)))
+                                    :seccomp seccomp :files (reverse data)
+                                    (alexandria:remove-from-plist keys :files :total :outputs))))
                 (keep (remove nil (cons seccomp (mapcar #'cdr data))))
-                (scope (and *sandbox-total-memory* **sandbox-scope**)))
+                (scope (and total **sandbox-scope**)))
            (if scope
                ;; systemd-run moves itself into the scope and becomes bwrap: still this one's child
-               (sb-ext:run-program scope (append (scope-arguments *sandbox-total-memory*) (list bwrap) arguments)
+               (sb-ext:run-program scope (append (scope-arguments total) (list bwrap) arguments)
                                    :search nil :wait nil :input stdin :preserve-fds keep
-                                   :output :stream :error :stream :environment (scope-environment))
+                                   :output outputs :error outputs :environment (scope-environment))
                (sb-ext:run-program bwrap arguments
                                    :search nil :wait nil :input stdin :preserve-fds keep
-                                   :output :stream :error :stream :environment '())))
+                                   :output outputs :error outputs :environment '())))
       ;; bwrap has its own descriptors of them once started
       (when seccomp (ignore-errors (sb-posix:close seccomp)))
       (dolist (file data) (ignore-errors (sb-posix:close (cdr file)))))))
+
+(defun sandbox-start (program arguments stdin &key memory directories (processes *sandbox-process-limit*) descriptors)
+  "Start PROGRAM (a full path to one it is shown) with ARGUMENTS shut in as
+SANDBOX-RUN shuts in a program, left running, with no limit on the processor
+time it takes, no /tmp, no file it may write into (writing one ends it) and
+its outputs let go; STDIN, a stream on a descriptor, its standard input. It may take MEMORY octets (NIL: no limit),
+held to them together with all it starts where systemd-run can, have
+PROCESSES processes and threads and DESCRIPTORS files open (NIL: as it is);
+DIRECTORIES are directories it is shown, read only, as SANDBOX-RUN has them.
+The process, or NIL when there is no sandbox here (SANDBOX-STATUS). Ending
+it ends all it started."
+  (multiple-value-bind (status detail bwrap) (sandbox-status)
+    (declare (ignore detail))
+    (when (eq status :ready)
+      (start-sandbox bwrap program arguments stdin nil memory
+                     :total memory :outputs nil :directories directories :processes processes
+                     :descriptors descriptors :scratch nil :directory "/" :file-limit 0))))
+
+(defun sandbox-memory-scope-p ()
+  "True when what is started shut in is held, with all it starts, to its
+memory in a scope of its own (systemd-run); without one, each process is
+held only to its own address space."
+  (and (eq :ready (sandbox-status)) **sandbox-scope** t))
 
 (defun %sandbox-run (bwrap program arguments input seconds memory output-limit cancel ended-well &rest keys)
   "Run PROGRAM with ARGUMENTS in the sandbox bwrap at the path BWRAP makes,
