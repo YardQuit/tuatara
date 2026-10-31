@@ -2,133 +2,33 @@
 ; License, v. 2.0. If a copy of the MPL was not distributed with this
 ; file, You can obtain one at https://mozilla.org/MPL/2.0/.
 ;
-; The indentation rules for luau: runtime/queries/luau/indents.scm of
-; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; The indentation rules for luau: Helix's rules for Lua,
+; runtime/queries/lua/indents.scm of Helix
+; (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
+; unchanged below this notice: the grammar of tree-sitter-luau
+; (https://github.com/tree-sitter-grammars/tree-sitter-luau) at commit
+; a8914d6c1fc5 is Lua's grammar with Luau's types added, and names Lua's
+; nodes as Lua's does.
 
 [
-  (repeat_stmt)
-  (for_in_stmt)
-  (for_range_stmt)
-  (do_stmt)
-  (while_stmt)
-  (if_stmt)
-  ; (else_clause)
-  ; (elseif_clause)
-  (fn_stmt)
-  (local_fn_stmt)
-  (anon_fn)
-  (bindinglist)
-  (varlist)
-  (paramlist)
-  (paramtypelist)
-  (table)
-  (cast)
-  (tbtype)
-  (dyntype)
-  (bintype)
-  (wraptype)
-  (typepack)
-  (attribute)
-  (parattr)
-  (littable)
+  (function_definition)
+  (function_declaration)
+  (method_index_expression)
+  (field)
+  (if_statement)
+  (for_statement)
+  (repeat_statement)
+  (while_statement)
+  (table_constructor)
+  (arguments)
+  (do_statement)
 ] @indent
 
-(
-  [
-    (arglist)
-  ] @indent
-
-)
-
-(
-  [
-    (explist)
-    (interp_exp)
-  ] @indent.always
-
-)
-
 [
-  "until"
   "end"
-  ")"
+  "until"
+  "else"
+  "elseif"
   "}"
-  "]"
+  ")"
 ] @outdent
-
-[
-  (interp_brace_close)
-] @outdent.always
-
-(ret_stmt
-  "return" @expr-start
-  .
-  (_) @indent
-  (#not-same-line? @indent @expr-start)
-
-)
-
-(field
-  "[" @expr-start
-  .
-  field_indexer: (_) @indent
-  (#not-same-line? @expr-start @indent)
-
-)
-
-(_
-  (_) @expr-start
-  .
-  assign_symbol: _ @indent
-  .
-  (_) @expr-end
-  (#not-same-line? @indent @expr-start)
-  (#same-line? @expr-end @indent)
-
-)
-
-(_
-  (_) @expr-start
-  .
-  assign_symbol: _ @assign-sym
-  .
-  (_) @indent
-  (#same-line? @expr-start @assign-sym)
-  (#not-same-line? @assign-sym @indent)
-
-)
-
-(ifexp
-  [
-    "if"
-    "then"
-    "elseif"
-    "else"
-  ] @expr-start
-  .
-  (_) @indent.always
-
-  (#not-same-line? @indent.always @expr-start)
-)
-
-(fntype
-  (paramtypelist) @expr-start
-  return_type: (_) @indent
-  (#not-same-line? @expr-start @indent)
-
-)
-
-(exp_wrap
-  (_) @expr-content
-  (#not-same-line? @indent @expr-content)
-  (#not-kind-eq? @expr-content "ifexp")
-) @indent
-
-(else_clause
-  "else" @outdent
-)
-
-(elseif_clause
-  "elseif" @outdent
-)

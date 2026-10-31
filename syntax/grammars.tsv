@@ -115,7 +115,7 @@ gdscript	https://github.com/PrestonKnopp/tree-sitter-gdscript	1f1e782fe2600f50ae
 haxe	https://github.com/vantreeseba/tree-sitter-haxe	f2a2394d9ca7a6099f78d8b0d178530e7c9a8e26	MIT
 janet-simple	https://github.com/sogaiu/tree-sitter-janet-simple	3c1bdcfff374138da03a1db25c75efce623910fe	CC0-1.0
 teal	https://github.com/euclidianAce/tree-sitter-teal	3db655924b2ff1c54fdf6371b5425ea6b5dccefe	MIT
-luau	https://github.com/polychromatist/tree-sitter-luau	ec187cafba510cddac265329ca7831ec6f3b9955	MIT
+luau	https://github.com/tree-sitter-grammars/tree-sitter-luau	a8914d6c1fc5131f8e1c13f769fa704c9f5eb02f	MIT
 nu	https://github.com/nushell/tree-sitter-nu	cc4624fbc6ec3563d98fbe8f215a8b8e10b16f32	MIT
 elvish	https://github.com/elves/tree-sitter-elvish	e50787cadd3bc54f6d9c0704493a79078bb8a4e5	0BSD
 forth	https://github.com/alexanderbrevig/tree-sitter-forth	360ef13f8c609ec6d2e80782af69958b84e36cd0	MIT

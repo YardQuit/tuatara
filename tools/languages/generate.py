@@ -478,6 +478,7 @@ OWN_QUERIES = {
     'xml': {'highlights'},
     'dtd': {'highlights'},
     'svelte': {'highlights', 'indents', 'textobjects', 'injections', 'locals', 'tags'},
+    'luau': {'highlights', 'indents', 'textobjects', 'injections', 'locals'},
 }
 
 def copy_queries(name, done):
