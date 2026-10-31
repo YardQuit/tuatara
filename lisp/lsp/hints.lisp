@@ -37,7 +37,7 @@ to be shown once they come while its buffer's text is still as asked of."
     (when server
       (let ((version (lsp-doc-version doc))
             ;; all of the text as the server has it, changes not yet sent left out
-            (shown (if (lsp-doc-shadow doc) (lsp-doc-rope doc) (lsp-doc-sent-rope doc))))
+            (shown (lsp-doc-shown-rope doc)))
         (lsp-request server "textDocument/inlayHint"
                      (tuatara.text:json-object "textDocument" (doc-identifier doc)
                                                "range" (lsp-range server shown 0 (tuatara.text:rope-bytes shown)))

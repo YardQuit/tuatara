@@ -378,6 +378,35 @@ what marks a project; check-health saying which are installed.")
              (true (tuatara.frontend.fake:fake-frame-showing f "x: int = bad")))
         (tuatara.defaults::lsp-stop-all)))))
 
+(define-test (lsp block-changes-sent-as-ranges)
+  ;; typing in a note's Python block sends its server what changed in the block's code, not the
+  ;; whole document again; what it finds then stands where the note has it
+  (with-test-directory (dir)
+    (ensure-directories-exist (merge-pathnames ".git/" dir))
+    (let* ((log (merge-pathnames "told.log" dir))
+           (file (namestring (merge-pathnames "r.org" dir)))
+           (tuatara.defaults::*modal-editing* nil)
+           (tuatara-user:*language-servers* (stand-in-server-setting log))
+           (tuatara-user:*lsp-trusted-projects* (list (namestring dir)))
+           (tuatara-user:*lsp-sync-delay* 0.05)
+           (text (format nil "* Notes~%~%#+begin_src python~%  x = 1~%#+end_src~%~%Prose.~%~%#+begin_src python~%  y = meh~%#+end_src~%"))
+           (seen nil) (now nil))
+      (alexandria:write-string-into-file text file)
+      (flet ((buffer () (tuatara.buffer:find-buffer "r.org")))
+        (unwind-protect
+             (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
+                                      (list :until (lambda () (and (buffer) (= 1 (length (tuatara.defaults::buffer-diagnostics (buffer)))))))
+                                      ;; the first block's line: x = 1 made x = 1 + bad
+                                      "M-< C-n C-n C-n C-e SPC + SPC b a d"
+                                      (list :until (lambda () (= 2 (length (tuatara.defaults::buffer-diagnostics (buffer))))))
+                                      (list :until (lambda () (setf seen (tuatara.defaults::buffer-diagnostics (buffer))
+                                                                    now (tuatara.buffer:buffer-string (buffer))))))
+                                :width 100 :height 20)
+          (tuatara.defaults::lsp-stop-all))
+        (is equal (list (search "bad" now) (search "meh" now)) (mapcar #'tuatara.defaults::diagnostic-start seen))
+        (true (member "ranges" (told log) :test #'string=))
+        (false (member "whole" (told log) :test #'string=))))))
+
 (define-test (lsp context-keys)
   ;; C-c in code: the language server's keys, named; in a list: its own keys too; the terminal's C-c its program's
   (multiple-value-bind (f editor) (run-keys "M-x r u s t - m o d e RET C-c" :width 120 :height 24)
@@ -1484,3 +1513,214 @@ what marks a project; check-health saying which are installed.")
                                            (length (tuatara.text:json-get (tuatara.defaults::lsp-read-message in) "result" "contents")))
                                        (- (sb-ext:get-bytes-consed) before))))))
         (true (< consed (* 16 (length body))) "~,1f octets made for each octet" (/ consed (length body)))))))
+
+;;; What a server makes of the changes sent: the text it has, kept beside the buffer's
+
+(defun lsp-line-start (text line)
+  "Where the 0-based LINE of TEXT begins, lines ended by CR LF, LF or CR alone
+as a language server ends them; NIL past its last."
+  (let ((at 0))
+    (loop repeat line
+          do (let ((end (position-if (lambda (c) (member c '(#\Return #\Newline))) text :start at)))
+               (unless end (return-from lsp-line-start nil))
+               (setf at (if (and (char= (char text end) #\Return) (< (1+ end) (length text))
+                                 (char= (char text (1+ end)) #\Newline))
+                            (+ end 2)
+                            (1+ end)))))
+    at))
+
+(defun lsp-applied-index (text position encoding)
+  "The index into TEXT, a string, of POSITION as a language server reads it,
+counting ENCODING's units (:UTF-8 octets or :UTF-16 units) along its line;
+NIL when it is not exactly at a character within the line."
+  (let ((at (lsp-line-start text (tuatara.text:json-get position "line")))
+        (character (tuatara.text:json-get position "character"))
+        (units 0))
+    (when at
+      (loop while (< units character)
+            do (when (or (>= at (length text)) (member (char text at) '(#\Return #\Newline)))
+                 (return-from lsp-applied-index nil))
+               (incf units (if (eq encoding :utf-8)
+                               (tuatara.text:char-octet-length (char text at))
+                               (if (> (char-code (char text at)) #xFFFF) 2 1)))
+               (incf at))
+      (and (= units character) at))))
+
+(defun lsp-applied (text changes encoding)
+  "TEXT with CHANGES, the contentChanges of a didChange, made one after
+another as a language server makes them; NIL when a range is not exactly at
+characters of the text it is made in."
+  (loop for change across changes
+        for range = (tuatara.text:json-get change "range")
+        do (if (null range)
+               (setf text (tuatara.text:json-get change "text"))
+               (let ((start (lsp-applied-index text (tuatara.text:json-get range "start") encoding))
+                     (end (lsp-applied-index text (tuatara.text:json-get range "end") encoding)))
+                 (unless (and start end (<= start end))
+                   (return nil))
+                 (setf text (concatenate 'string (subseq text 0 start) (tuatara.text:json-get change "text") (subseq text end))))))
+  text)
+
+(defun messages-written (server)
+  "The messages written to SERVER, a stand-in with no program, since last
+asked: each a JSON object, in order."
+  (loop for octets = (sb-concurrency:receive-message-no-hang (tuatara.defaults::lsp-server-outbox server))
+        while octets
+        collect (tuatara.text:json-read (tuatara.text:octets-string octets))))
+
+(defun server-taking-changes (encoding)
+  "A ready stand-in language server with no program that takes changes as ranges, counting ENCODING's units."
+  (let ((server (tuatara.defaults::make-lsp-server "kea" '("true") "/tmp/" 'python nil nil)))
+    (setf (tuatara.defaults::lsp-server-status server) :ready
+          (tuatara.defaults::lsp-server-encoding server) encoding
+          (tuatara.defaults::lsp-server-capabilities server) (tuatara.text:json-object "textDocumentSync" 2))
+    server))
+
+(defun note-shadow-slowly (text language)
+  "What a note's LANGUAGE blocks' document holds, TEXT the note: worked out
+line by line from the whole text, an oracle for ORG-BLOCKS-SHADOW."
+  (let* ((lines (coerce (uiop:split-string text :separator '(#\Newline)) 'vector))
+         (shown (make-array (length lines) :initial-element ""))
+         (open nil))
+    (loop for line across lines
+          for n from 0
+          do (if open
+                 (when (cl-ppcre:scan "(?i)^[ \\t]*#\\+end_src\\b" line)
+                   (when (eq (tuatara.defaults::org-src-language (first open)) language)
+                     (let* ((code (subseq lines (second open) n))
+                            (indent (loop for l across code
+                                          unless (zerop (length (string-trim '(#\Space #\Tab) l)))
+                                            minimize (or (position-if-not (lambda (c) (member c '(#\Space #\Tab))) l) 0))))
+                       (loop for l across code
+                             for k from (second open)
+                             for cut = (min (or indent 0) (length l))
+                             for rest = (subseq l cut)
+                             do (setf (aref shown k)
+                                      (if (or (uiop:string-prefix-p ",*" rest) (uiop:string-prefix-p ",#+" rest)) (subseq rest 1) rest)))))
+                   (setf open nil))
+                 (multiple-value-bind (match groups) (cl-ppcre:scan-to-strings "(?i)^[ \\t]*#\\+begin_src[ \\t]+([^ \\t]+)" line)
+                   (when match (setf open (list (aref groups 0) (1+ n)))))))
+    (format nil "~{~a~^~%~}" (coerce shown 'list))))
+
+(defparameter *note-pieces*
+  (vector "a" "x = 1" " " "  " "é" "😀" "中" (string #\Newline) (string #\Newline) (format nil "~c~c" #\Return #\Newline)
+          (format nil "#+begin_src python~%") (format nil "  #+BEGIN_SRC python :tangle no~%") (format nil "#+end_src~%")
+          (format nil "#+begin_src rust~%") (format nil "* Heading~%") ",*" ",#+" "#+end_src" "#+begin_src python")
+  "Pieces random notes are built from: code, Org's block lines, headlines, escaping commas and line ends of each kind.")
+
+(defun random-sync-session (encoding text shadow-language)
+  "Edit a buffer holding TEXT at random, its changes sent to a stand-in
+server counting ENCODING's units now and then, and check after each send that
+the server's text, made from what it was sent, is the buffer's (or, with
+SHADOW-LANGUAGE, the document of the note's blocks of that language); undo,
+redo and a whole text swapped among the edits. Returns how many changes went
+as ranges and how many whole."
+  (let* ((buffer (tuatara.buffer:make-buffer (format nil "sync-~a" (random 1000000)) :text text))
+         (server (server-taking-changes encoding))
+         (doc (tuatara.defaults::make-lsp-doc buffer (or shadow-language 'python) "file:///tmp/sync.py"
+                                              (and shadow-language
+                                                   (lambda (b &optional doc stretches)
+                                                     (tuatara.defaults::org-blocks-shadow b shadow-language doc stretches)))))
+         (tuatara.defaults::*lsp-doc-spec-functions* '())
+         (model nil) (ranges 0) (whole 0))
+    (flet ((expected () (let ((now (tuatara.buffer:buffer-string buffer)))
+                          (if shadow-language (note-shadow-slowly now shadow-language) now)))
+           (take (messages)
+             (dolist (message messages)
+               (let ((params (tuatara.text:json-get message "params")))
+                 (cond ((equal (tuatara.text:json-get message "method") "textDocument/didOpen")
+                        (setf model (tuatara.text:json-get params "textDocument" "text")))
+                       ((equal (tuatara.text:json-get message "method") "textDocument/didChange")
+                        (let ((changes (tuatara.text:json-get params "contentChanges")))
+                          (if (every (lambda (c) (tuatara.text:json-get c "range")) changes) (incf ranges) (incf whole))
+                          (setf model (and model (lsp-applied model changes encoding))))))))))
+      (unwind-protect
+           (progn
+             (setf (tuatara.defaults::lsp-doc-servers doc) (list server)
+                   (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc))
+             (tuatara.defaults::lsp-open-document server doc)
+             (take (messages-written server))
+             (is string= (expected) model)
+             (dotimes (step 40)
+               (let ((now (tuatara.buffer:buffer-string buffer)))
+                 (case (random 12)
+                   ((0 1) (tuatara.buffer:buffer-undo buffer))
+                   (2 (tuatara.buffer:buffer-redo buffer))
+                   (3 (when (zerop (random 4))
+                        (let ((rope (tuatara.text:string->rope (concatenate 'string now "x")))
+                              (size (tuatara.buffer:buffer-size buffer)))
+                          (tuatara.buffer:buffer-swap-text buffer rope (lambda (p bias) (declare (ignore bias)) p)
+                                                           (lambda (p bias) (declare (ignore bias)) (min p size))))))
+                   (t (tuatara.buffer:buffer-edit buffer (random-batch now)))))
+               (when (or (zerop (random 3)) (= step 39))
+                 (tuatara.defaults::lsp-send-text buffer)
+                 (take (messages-written server))
+                 (let ((expected (expected)))
+                   (unless (string= expected model)
+                     (is string= expected model "after step ~a, the server counting ~a" step encoding)
+                     (return))))))
+        (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+        (tuatara.buffer:kill-buffer buffer)))
+    (values ranges whole)))
+
+(define-test (lsp changes-sent-make-the-text)
+  ;; a server counting octets or UTF-16 units, given what changed at each pause, has the buffer's
+  ;; text: random edits of letters of up to four octets, CR LF and LF, undone and done again
+  (let ((ranges 0) (whole 0))
+    (dotimes (round 40)
+      (let ((*alphabet* (if (< round 20) *note-pieces* (remove #\Return *note-pieces* :test #'find))))
+        (multiple-value-bind (r w) (random-sync-session (if (evenp round) :utf-16 :utf-8) (random-text 1000) nil)
+          ;; with no carriage returns, a stray one sending all whole from then on
+          (when (>= round 20) (incf ranges r) (incf whole w)))))
+    (true (> ranges (* 3 whole)) "~a sent as ranges, ~a whole" ranges whole)))
+
+(define-test (lsp block-changes-make-the-document)
+  ;; the same for a note's Python blocks: blocks begun, ended, indented and escaped at random, the
+  ;; document of their code made by the server from what changed is the one the note has
+  (let ((ranges 0) (whole 0)
+        (python (tuatara.defaults::org-src-language "python")))
+    (dotimes (round 40)
+      (let ((*alphabet* (if (< round 20) *note-pieces* (remove #\Return *note-pieces* :test #'find))))
+        (multiple-value-bind (r w) (random-sync-session (if (evenp round) :utf-16 :utf-8) (random-text 1000) python)
+          (when (>= round 20) (incf ranges r) (incf whole w)))))
+    (true (> ranges (* 3 whole)) "~a sent as ranges, ~a whole" ranges whole)))
+
+(defun note-of-blocks (count)
+  "An Org note of COUNT headlines, each with prose and a Python block."
+  (with-output-to-string (out)
+    (dotimes (n count)
+      (format out "* Heading ~d~%~%Some prose ~d.~%~%#+begin_src python~%  def f_~d(x):~%      return x + ~d~%#+end_src~%~%" n n n n))))
+
+(define-test (lsp block-changes-cost-little-for-each-block)
+  ;; a letter typed in a block of a long note: the pause sends that letter, and what it makes
+  ;; grows by little for each block more in the note: some 33 octets, where making the whole
+  ;; code again and sending it took some 4,600
+  (flet ((pause (count)
+           (let* ((text (note-of-blocks count))
+                  (buffer (tuatara.buffer:make-buffer (format nil "blocks-~a-~a" count (random 1000000)) :text text))
+                  (server (server-taking-changes :utf-16))
+                  (python (tuatara.defaults::org-src-language "python"))
+                  (doc (tuatara.defaults::make-lsp-doc buffer python "file:///tmp/blocks.org.py"
+                                                       (lambda (b &optional doc stretches)
+                                                         (tuatara.defaults::org-blocks-shadow b python doc stretches))))
+                  (tuatara.defaults::*lsp-doc-spec-functions* '()))
+             (unwind-protect
+                  (progn
+                    (setf (tuatara.defaults::lsp-doc-servers doc) (list server)
+                          (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc))
+                    (tuatara.defaults::lsp-open-document server doc)
+                    (messages-written server)
+                    (loop repeat 3
+                          for at = (+ 8 (search "return x" text :start2 (floor (length text) 2))) then (1+ at)
+                          do (tuatara.buffer:buffer-insert buffer at "y")
+                          minimize (let ((before (sb-ext:get-bytes-consed)))
+                                     (tuatara.defaults::lsp-send-text buffer)
+                                     (prog1 (- (sb-ext:get-bytes-consed) before)
+                                       (let ((sent (messages-written server)))
+                                         (is equal "y" (tuatara.text:json-get (aref (tuatara.text:json-get (first sent) "params" "contentChanges") 0)
+                                                                              "text")))))))
+               (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+               (tuatara.buffer:kill-buffer buffer)))))
+    (let* ((small (pause 2000)) (large (pause 4000))
+           (each (/ (- large small) 2000.0)))
+      (true (< each 300) "~,1f octets made for each block more" each))))
