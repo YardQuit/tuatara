@@ -52,9 +52,12 @@ again each time."
 (defun project-trusted-p (root)
   "True when the project at ROOT may run its own programs: it, where it really
 is, was trusted when asked (kept by where it really was then), or is in one
-of *LSP-TRUSTED-PROJECTS* (where they really are)."
+of *LSP-TRUSTED-PROJECTS* (where they really are); never one that is, or
+holds, an evidence folder (FOLDER-HOLDS-EVIDENCE-P), whose programs could
+write there."
   (let ((real (real-folder root)))
     (and real
+         (not (folder-holds-evidence-p real))
          (or (member real (state-list-entries *lsp-trusted*) :test #'equal)
              (some (lambda (trusted) (tuatara.io:path-within-p real trusted))
                    (trusted-setting-folders))))))
@@ -62,10 +65,10 @@ of *LSP-TRUSTED-PROJECTS* (where they really are)."
 (defun buffer-in-trusted-project-p (buffer)
   "True when BUFFER visits a file of a project you trust (PROJECT-TRUSTED-P):
 its text is then parsed by the program shared by such files, not one of its
-own. Looked up again only when the file, the projects trusted when asked or
-*LSP-TRUSTED-PROJECTS* change."
+own. Looked up again only when the file, the projects trusted when asked,
+*LSP-TRUSTED-PROJECTS* or *EVIDENCE-FOLDERS* change."
   (let* ((file (tuatara.buffer:buffer-file buffer))
-         (key (list file (state-list-entries *lsp-trusted*) *lsp-trusted-projects*))
+         (key (list file (state-list-entries *lsp-trusted*) *lsp-trusted-projects* (evidence-generation)))
          (seen (tuatara.buffer:buffer-local buffer :trusted-project-seen)))
     (if (and seen (equal (car seen) key))
         (cdr seen)
@@ -82,9 +85,15 @@ own. Looked up again only when the file, the projects trusted when asked or
   "True when the project at ROOT may run its own programs: trusted already,
 or asked now, and remembered when the answer is yes. The question says all a
 yes allows, whatever asks it: its language servers starting by themselves,
-git running the programs it names, and its build commands (\\[compile])."
+git running the programs it names, and its build commands (\\[compile]).
+A project that is, or holds, an evidence folder is not asked of: NIL, and
+why said."
   (or (project-trusted-p root)
-      (let ((real (real-folder root)))
+      (let ((real (real-folder root))
+            (evidence (folder-holds-evidence-p root)))
+        (when evidence
+          (message "~a is not trusted: ~a" (abbreviated-path root) evidence)
+          (return-from trust-project nil))
         (when (and real
                    (yes-or-no-p* (format nil "Trust ~a? From now on its language servers start by themselves and run its code, git runs the programs it names (hooks, filters), and its build commands run (M-x compile)"
                                          (abbreviated-path real))))
