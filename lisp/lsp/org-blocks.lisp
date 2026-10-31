@@ -152,15 +152,21 @@ code and the lines of the note)."
   "STRETCHES, as CHANGED-STRETCHES gives them, as the lines they are on: a
 list in order of (OLD-FIRST OLD-LAST NEW-FIRST NEW-LAST), 0-based lines of
 BEFORE, the text then, and of AFTER, the text now, the last of each in it;
-stretches on a line in common made one."
+stretches on a line in common made one. A stretch just after a carriage
+return takes in its line too: what follows the return decides whether it
+ends a line."
   (let ((lines '()))
-    (loop for (old-start old-end new-start new-end) in stretches
-          do (let ((line (list (tuatara.text:byte->line before old-start) (tuatara.text:byte->line before old-end)
-                               (tuatara.text:byte->line after new-start) (tuatara.text:byte->line after new-end)))
+    (flet ((first-line (rope start)
+             (tuatara.text:byte->line rope (if (and (plusp start) (= 13 (tuatara.text:rope-octet rope (1- start))))
+                                               (1- start)
+                                               start))))
+      (loop for (old-start old-end new-start new-end) in stretches
+            do (let ((line (list (first-line before old-start) (tuatara.text:byte->line before old-end)
+                                 (first-line after new-start) (tuatara.text:byte->line after new-end)))
                    (last (first lines)))
-               (if (and last (<= (first line) (second last)))
-                   (setf (second last) (second line) (fourth last) (fourth line))
-                   (push line lines))))
+                 (if (and last (<= (first line) (second last)))
+                     (setf (second last) (second line) (fourth last) (fourth line))
+                     (push line lines)))))
     (nreverse lines)))
 
 (defun org-blocks-read-again (buffer old lines)

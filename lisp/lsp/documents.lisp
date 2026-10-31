@@ -54,15 +54,14 @@ it returns what changed in that text instead, as DOC-CHANGES does, and that
 vector as it is now; NIL when it is to be sent whole.
 ROPE and SKIPPED keep that text and vector as last sent, positions being
 reckoned with them; SENT, the buffer's text as last sent (a
-TUATARA.TEXT:VERSION); LONE-RETURN, true when the text last sent whole holds
-a carriage return not before a line feed. SERVERS, the servers it is open
+TUATARA.TEXT:VERSION). SERVERS, the servers it is open
 in; VERSION, the number of the text last sent; KEPT, the texts last sent
 that a server may yet speak of, the newest first, each (VERSION SENT ROPE
 SKIPPED) as they were then (DOC-AS-SENT); HEARD, the number of the newest
 text each server has said what it found in, each (SERVER . VERSION); SAVED,
 the one of KEPT that was last sent when the file was last saved, kept while
 KEPT has room for what a check of the file saved says of it."
-  buffer language uri shadow rope skipped sent (lone-return nil) (servers '()) (version 0) (kept '()) (heard '()) (saved nil))
+  buffer language uri shadow rope skipped sent (servers '()) (version 0) (kept '()) (heard '()) (saved nil))
 
 (setf (documentation 'lsp-doc-p 'function) "True when OBJECT is an LSP-DOC.")
 
@@ -107,25 +106,16 @@ start of the text when POSITION is none; NIL when there is no such buffer."
                                   (lsp-byte server (tuatara.buffer:buffer-text buffer) position))
                               0))))))
 
-(defun lone-return-p (text)
-  "True when TEXT, a string, holds a carriage return not before a line feed:
-a line end to a language server, though not to this editor."
-  (loop for at = (position #\Return text) then (position #\Return text :start (1+ at))
-        while at
-        thereis (or (= (1+ at) (length text)) (char/= #\Newline (char text (1+ at))))))
-
 (defun lsp-doc-text (doc)
-  "DOC's text as it is now, its ROPE, SKIPPED, SENT and LONE-RETURN made from it."
+  "DOC's text as it is now, its ROPE, SKIPPED and SENT made from it."
   (let ((buffer (lsp-doc-buffer doc)))
     (setf (lsp-doc-sent doc) (tuatara.buffer:buffer-version buffer))
-    (let ((text (if (null (lsp-doc-shadow doc))
-                    (tuatara.text:rope-string (tuatara.buffer:buffer-text buffer))
-                    (multiple-value-bind (text skipped) (funcall (lsp-doc-shadow doc) buffer)
-                      (setf (lsp-doc-rope doc) (tuatara.text:string->rope text)
-                            (lsp-doc-skipped doc) skipped)
-                      text))))
-      (setf (lsp-doc-lone-return doc) (lone-return-p text))
-      text)))
+    (if (null (lsp-doc-shadow doc))
+        (tuatara.text:rope-string (tuatara.buffer:buffer-text buffer))
+        (multiple-value-bind (text skipped) (funcall (lsp-doc-shadow doc) buffer)
+          (setf (lsp-doc-rope doc) (tuatara.text:string->rope text)
+                (lsp-doc-skipped doc) skipped)
+          text))))
 
 (defun lsp-doc-sent-rope (doc)
   "DOC's buffer's text as it was last sent, which what its servers say is of."
@@ -257,7 +247,8 @@ one past a line's end or the text's end kept to it; NIL when POSITION is none."
 them (LSP-BYTE): within that line, at the start of a character."
   (let* ((line (max 0 (min line (tuatara.text:rope-lines rope))))
          (start (tuatara.text:line->byte rope line))
-         (end (tuatara.text:rope-line-end rope start))
+         ;; before the line's end, a carriage return and a line feed taken as one
+         (end (tuatara.text:rope-line-text-end rope start (tuatara.text:rope-line-end rope start) t))
          (character (max 0 character)))
     (if (eq (lsp-server-encoding server) :utf-8)
         (tuatara.text:rope-char-start rope (min end (+ start character)))
@@ -508,10 +499,9 @@ more than it and one such range (DOC-CHANGES).")
 
 (defun changes-off-line-ends (rope changes)
   "CHANGES of ROPE (DOC-CHANGES), none of them beginning or ending between a
-carriage return and its line feed: each such edge taken over the return or
-the feed. NIL when a change would then reach into the one before it, or
-leaves a carriage return not before a line feed, which a server counts as a
-line end and this editor does not."
+carriage return and its line feed, where no position of a line a server
+counts stands: each such edge taken over the return or the feed. NIL when a
+change would then reach into the one before it."
   (let ((size (tuatara.text:rope-bytes rope)) (reach 0))
     (flet ((octet (at) (and (< -1 at size) (tuatara.text:rope-octet rope at))))
       (map 'simple-vector
@@ -521,9 +511,7 @@ line end and this editor does not."
                  (setf start (1- start) text (concatenate 'string (string #\Return) text)))
                (when (and (eql (octet (1- end)) 13) (eql (octet end) 10))
                  (setf end (1+ end) text (concatenate 'string text (string #\Newline))))
-               (when (or (< start reach)
-                         (lone-return-p (concatenate 'string (if (eql (octet (1- start)) 13) (string #\Return) "")
-                                                     text (if (eql (octet end) 10) (string #\Newline) "x"))))
+               (when (< start reach)
                  (return-from changes-off-line-ends nil))
                (setf reach end)
                (list start end text)))
@@ -535,7 +523,7 @@ order of (START END TEXT), the octets START below END of the text as last
 sent (LSP-DOC-SHOWN-ROPE) replaced by the string TEXT; for a note's source
 blocks, what SKIPPED is now as a second value. NIL when the text is to be sent
 whole: never sent, replaced whole since, changed within a character, not
-all UTF-8 or with a carriage return not before a line feed, more than *LSP-MOST-CHANGES* changes, or
+all UTF-8, more than *LSP-MOST-CHANGES* changes, or
 changes taking more octets than the whole text would, by more than one range
 \(+LSP-CHANGE-OCTETS+ for each beside its text). Complexity: O(the edits
 since and the text they changed), and for a note's blocks O(blocks) and the
@@ -544,7 +532,7 @@ lines of the blocks changed."
          (sent (lsp-doc-sent doc))
          (now (tuatara.buffer:buffer-version buffer))
          (rope (tuatara.text:version-rope now))
-         (stretches (if (and sent (not (lsp-doc-lone-return doc)) (zerop (tuatara.text:rope-invalid rope)))
+         (stretches (if (and sent (zerop (tuatara.text:rope-invalid rope)))
                         (tuatara.text:changed-stretches sent now)
                         :whole)))
     (when (and (listp stretches) (<= (length stretches) *lsp-most-changes*))

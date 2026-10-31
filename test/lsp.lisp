@@ -1576,10 +1576,24 @@ asked: each a JSON object, in order."
           (tuatara.defaults::lsp-server-capabilities server) (tuatara.text:json-object "textDocumentSync" 2))
     server))
 
+(defun text-lines (text)
+  "The lines of TEXT, a string, as a list: each ended by a line feed (a
+carriage return before it kept in the line) or by a carriage return no line
+feed follows, the last one too when nothing ends it."
+  (let ((lines '()) (from 0))
+    (dotimes (i (length text))
+      (let ((c (char text i)))
+        (when (or (char= c #\Newline)
+                  (and (char= c #\Return) (not (and (< (1+ i) (length text)) (char= (char text (1+ i)) #\Newline)))))
+          (push (subseq text from i) lines)
+          (setf from (1+ i)))))
+    (push (subseq text from) lines)
+    (nreverse lines)))
+
 (defun note-shadow-slowly (text language)
   "What a note's LANGUAGE blocks' document holds, TEXT the note: worked out
 line by line from the whole text, an oracle for ORG-BLOCKS-SHADOW."
-  (let* ((lines (coerce (uiop:split-string text :separator '(#\Newline)) 'vector))
+  (let* ((lines (coerce (text-lines text) 'vector))
          (shown (make-array (length lines) :initial-element ""))
          (open nil))
     (loop for line across lines
@@ -1671,13 +1685,14 @@ as ranges and how many whole."
 
 (define-test (lsp changes-sent-make-the-text)
   ;; a server counting octets or UTF-16 units, given what changed at each pause, has the buffer's
-  ;; text: random edits of letters of up to four octets, CR LF and LF, undone and done again
+  ;; text: random edits of letters of up to four octets, CR LF, LF and carriage returns alone,
+  ;; undone and done again; sent as ranges, lines ending at a carriage return alone as the
+  ;; server ends them
   (let ((ranges 0) (whole 0))
     (dotimes (round 40)
-      (let ((*alphabet* (if (< round 20) *note-pieces* (remove #\Return *note-pieces* :test #'find))))
+      (let ((*alphabet* (if (< round 20) (concatenate 'vector *note-pieces* (list (string #\Return) (string #\Return))) *note-pieces*)))
         (multiple-value-bind (r w) (random-sync-session (if (evenp round) :utf-16 :utf-8) (random-text 1000) nil)
-          ;; with no carriage returns, a stray one sending all whole from then on
-          (when (>= round 20) (incf ranges r) (incf whole w)))))
+          (incf ranges r) (incf whole w))))
     (true (> ranges (* 3 whole)) "~a sent as ranges, ~a whole" ranges whole)))
 
 (define-test (lsp block-changes-make-the-document)
