@@ -161,23 +161,49 @@ with \\`C-g', it is not asked again in this session."
 (defvar *grammar-asking* nil
   "True while the question whether to turn a grammar on is asked.")
 
+(defun grammar-question-pending-p (buffer)
+  "The language of BUFFER whose grammar is off and was never asked about in
+this session nor answered, or NIL."
+  (let ((language (and (tuatara.buffer:live-buffer-p buffer) (tuatara.buffer:buffer-local buffer :grammar-off))))
+    (and language
+         (let ((name (string-downcase (symbol-name (language-name language)))))
+           (and (not (member name *grammars-not-now* :test #'string=))
+                (null (gethash name (grammar-answers)))
+                (not (grammar-on-p language))))
+         language)))
+
 (defun ask-about-shown-grammar (editor)
-  "Post-command function: when the buffer of EDITOR's selected window is in a
-language whose grammar is off and was never asked about, ask whether to turn
-it on (ASK-TO-TURN-ON-GRAMMAR). Not while another question is open or
-recorded keys play."
+  "Post-command function while a buffer's grammar question is pending: when
+the buffer of EDITOR's selected window is in a language whose grammar is off
+and was never asked about, ask whether to turn it on
+\(ASK-TO-TURN-ON-GRAMMAR); not while another question is open or recorded
+keys play. Once no buffer has a question pending, it takes itself away, so
+that the commands after cost nothing more."
   (unless (or *grammar-asking* (editor-minibuffer-active editor) (keys-playing-p))
-    (let* ((buffer (tuatara.display:window-buffer (editor-window editor)))
-           (language (tuatara.buffer:buffer-local buffer :grammar-off)))
-      (when language
-        (let ((name (string-downcase (symbol-name (language-name language)))))
-          (unless (member name *grammars-not-now* :test #'string=)
-            ;; another session may have answered meanwhile
-            (let ((answer (gethash name (grammar-answers :again t))))
-              (cond ((grammar-on-p language) (grammars-changed))
-                    ((null answer)
-                     (let ((*grammar-asking* t))
-                       (ask-to-turn-on-grammar language)))))))))))
+    (let ((buffer (tuatara.display:window-buffer (editor-window editor))))
+      (when (tuatara.buffer:buffer-local buffer :grammar-off)
+        ;; another session may have answered meanwhile
+        (grammar-answers :again t)
+        (let ((language (grammar-question-pending-p buffer)))
+          (cond (language
+                 (let ((*grammar-asking* t))
+                   (ask-to-turn-on-grammar language)))
+                ((grammar-on-p (tuatara.buffer:buffer-local buffer :grammar-off))
+                 (grammars-changed))))))
+    (unless (some #'grammar-question-pending-p tuatara.buffer:*buffers*)
+      (setf (editor-post-command-functions editor)
+            (remove 'ask-about-shown-grammar (editor-post-command-functions editor))))))
+
+(defun grammar-question-wanted (buffer)
+  "Have the editor ask, as BUFFER is shown, whether to turn its language's
+grammar on (ASK-ABOUT-SHOWN-GRAMMAR), when that question is pending; from
+any thread."
+  (when (and (grammar-question-pending-p buffer) (running-editor))
+    (defer-action (lambda ()
+                    (let ((editor (or *editor* (running-editor))))
+                      (when editor
+                        (pushnew 'ask-about-shown-grammar (editor-post-command-functions editor))
+                        (ask-about-shown-grammar editor)))))))
 
 (defun grammar-language-candidates (on)
   "The languages to choose among, as candidates of their names: those whose
@@ -226,8 +252,3 @@ in later sessions too, and no file asks to turn it on again;
       (if (grammar-on-p language)
           (message "The ~a grammar stays on: *grammars-on* names it" (language-words language))
           (message "The ~a grammar is off" (language-words language))))))
-
-(defun install-grammar-questions (editor)
-  "Have EDITOR ask, as a file in a language whose grammar is off is shown,
-whether to turn that grammar on."
-  (pushnew 'ask-about-shown-grammar (editor-post-command-functions editor)))

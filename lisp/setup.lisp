@@ -232,7 +232,6 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-hex)
     (install-modes)
     (install-colouring editor)
-    (install-grammar-questions editor)
     (install-lisp-mode editor)
     (install-show-paren)
     (install-xref)

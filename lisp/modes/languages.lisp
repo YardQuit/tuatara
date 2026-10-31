@@ -473,8 +473,9 @@ language, when it has one, grammars that went wrong on it tried again."
 was visited safely (whose text no parser is given), the grammar is off
 \(GRAMMAR-ON-P: BUFFER is then marked, for the question whether to turn it
 on), or the grammar is missing."
-  (setf (tuatara.buffer:buffer-local buffer :grammar-off)
-        (and (not (tuatara.io:safe-visit-p buffer)) (not (grammar-on-p language)) language))
+  (when (setf (tuatara.buffer:buffer-local buffer :grammar-off)
+              (and (not (tuatara.io:safe-visit-p buffer)) (not (grammar-on-p language)) language))
+    (grammar-question-wanted buffer))
   (unless (or (tuatara.io:safe-visit-p buffer) (tuatara.buffer:buffer-local buffer :grammar-off))
     (let ((grammar (tuatara.syntax:find-grammar (language-grammar language))))
       (setf (tuatara.buffer:buffer-local buffer :syntax-pending)

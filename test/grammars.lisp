@@ -88,3 +88,14 @@ afterwards."
                    (false (tuatara.frontend.fake:fake-frame-showing f "grammar?"))
                    (false (tuatara.syntax:buffer-syntax buffer)))
               (tuatara.buffer:kill-buffer (tuatara.display:window-buffer (tuatara.command:editor-window editor))))))))))
+
+(define-test (grammars-on nothing-done-after-commands-unless-asking)
+  ;; nothing is looked at after each command while no question is pending,
+  ;; nor once the question is answered
+  (with-grammar-answers-forgotten ("awk")
+    (multiple-value-bind (f editor) (run-keys "a b c" :text "abc")
+      (declare (ignore f))
+      (false (member 'tuatara.defaults::ask-about-shown-grammar (tuatara.command:editor-post-command-functions editor))))
+    (with-file-session ((f editor) "n RET a b" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+      (false (member 'tuatara.defaults::ask-about-shown-grammar (tuatara.command:editor-post-command-functions editor))))))
