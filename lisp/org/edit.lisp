@@ -74,7 +74,8 @@ edit did not make changes, in a file of one kind of line end or of several."
                                         (push (cons (subseq old from i) (string #\Return)) lines)
                                         (setf from (1+ i))))))
                       (nreverse lines)))
-         (new-lines (uiop:split-string text :separator '(#\Newline)))
+         ;; an empty TEXT is one empty line
+         (new-lines (or (uiop:split-string text :separator '(#\Newline)) (list "")))
          (ended (butlast new-lines))
          (same-count (= (length ended) (length old-lines)))
          (by-text (make-hash-table :test 'equal))
