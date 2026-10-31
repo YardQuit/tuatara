@@ -261,14 +261,14 @@ sight and out of reach until \\[widen]."
 
 ;;; CSV and other delimited data: one colour per column, cycling
 
-(define-face :csv-column-0 "Delimited data: columns 1, 9, 17 ...")
-(define-face :csv-column-1 "Delimited data: columns 2, 10, 18 ..." :fg :red)
-(define-face :csv-column-2 "Delimited data: columns 3, 11, 19 ..." :fg :green)
-(define-face :csv-column-3 "Delimited data: columns 4, 12, 20 ..." :fg :yellow)
-(define-face :csv-column-4 "Delimited data: columns 5, 13, 21 ..." :fg :blue)
-(define-face :csv-column-5 "Delimited data: columns 6, 14, 22 ..." :fg :magenta)
-(define-face :csv-column-6 "Delimited data: columns 7, 15, 23 ..." :fg :cyan)
-(define-face :csv-column-7 "Delimited data: columns 8, 16, 24 ..." :fg :bright-black)
+(define-face :csv-column-0 "Delimited data: columns 0, 8, 16 ...")
+(define-face :csv-column-1 "Delimited data: columns 1, 9, 17 ..." :fg :red)
+(define-face :csv-column-2 "Delimited data: columns 2, 10, 18 ..." :fg :green)
+(define-face :csv-column-3 "Delimited data: columns 3, 11, 19 ..." :fg :yellow)
+(define-face :csv-column-4 "Delimited data: columns 4, 12, 20 ..." :fg :blue)
+(define-face :csv-column-5 "Delimited data: columns 5, 13, 21 ..." :fg :magenta)
+(define-face :csv-column-6 "Delimited data: columns 6, 14, 22 ..." :fg :cyan)
+(define-face :csv-column-7 "Delimited data: columns 7, 15, 23 ..." :fg :bright-black)
 (define-face :csv-separator "Delimited data coloured sparsely (set-colouring): the separators between fields." :fg :cyan)
 
 ;;; Folds

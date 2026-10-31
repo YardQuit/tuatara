@@ -75,3 +75,10 @@ found."
 (define-test (documentation docstrings-stand-on-their-own)
   (let ((found (borrowed-phrase-docstrings)))
     (true (null found) "Docstrings that explain by another program: ~{~a~^, ~}" found)))
+
+(define-test (documentation csv-column-faces-count-from-zero)
+  (dotimes (n 8)
+    (let* ((face (tuatara.display:find-face (intern (format nil "CSV-COLUMN-~d" n) :keyword)))
+           (doc (tuatara.display:face-doc face)))
+      (true (search (format nil "columns ~d, ~d, ~d" n (+ n 8) (+ n 16)) doc)
+            "The face for column ~d says ~s" n doc))))
