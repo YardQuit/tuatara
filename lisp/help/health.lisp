@@ -167,6 +167,7 @@ COLUMN (TUATARA.DISPLAY:FILL-WORDS)."
   (cond ((eq status :good) (values "✓" :list-good))
         ((eq status :none) (values "–" :list-dim))
         ((eq status :unchecked) (values "?" :list-dim))
+        ((eq status :off) (values "off" :list-dim))
         (t (values "✘" :list-bad))))
 
 (defun lisp-language-p (language)
@@ -265,6 +266,9 @@ editor's own buffers, never a file's."
       (fact "Grammars" (format nil "~a: ~:[no program to run them~;the program that runs them and ~d of ~d grammars~]"
                                (directory-words (tuatara.syntax:grammar-directories))
                                (tuatara.syntax:syntax-helper-program) (count-if-not #'null grammars) (length grammars)))
+      (fact "" (substitute-command-keys
+                (format nil "~d of them on (*grammars-on*); a file in a language whose grammar is off asks to turn it on, \\[turn-on-grammar] and \\[turn-off-grammar] change it"
+                        (loop for language in languages for grammar in grammars count (and grammar (grammar-on-p language))))))
       (fact "Parsing" (cond ((eq :ready (first (health-check-sandbox check)))
                              (format nil "grammars run shut in, in a program for the projects you trust and one for each other file or buffer, ~:[each held to its memory in its own address space only (no systemd-run scope here)~;each held to its memory with all it starts (a systemd-run scope)~]"
                                      (tuatara.io:sandbox-memory-scope-p)))
@@ -305,7 +309,9 @@ editor's own buffers, never a file's."
             for statuses in results
             for (formatter servers) in tools
             do (health-cell (string-downcase (language-name language)) (first widths))
-               (multiple-value-bind (text face) (status-cell (if grammar :good :missing))
+               (multiple-value-bind (text face) (status-cell (cond ((null grammar) :missing)
+                                                                    ((grammar-on-p language) :good)
+                                                                    (t :off)))
                  (health-cell text (second widths) face))
                (loop for (kind . status) in statuses
                      for width in (cddr widths)
@@ -314,7 +320,8 @@ editor's own buffers, never a file's."
                (health-cell (or formatter "–") 15 (if (and formatter (search "✓" formatter)) nil :list-dim))
                (health-put (or servers "–") (if (and servers (search "✓" servers)) nil :list-dim))
                (health-put (format nil "~%"))))
-    (health-put (substitute-command-keys (format nil "~%✓ there and working, ✘ failing (see below), – none, ? not checked without the grammar.
+    (health-put (substitute-command-keys (format nil "~%✓ there and working, ✘ failing (see below), – none, ? not checked without the grammar,
+off: the grammar is there but off (*grammars-on*, \\[turn-on-grammar]).
 Indent Lisp: by Lisp mode's own rules. Defuns brackets: \\[beginning-of-defun] and \\[end-of-defun] go by opening
 brackets at the start of a line. Formatter and Server: each language's usual programs, or *language-formatters* and
 *language-servers*; ✓ after one installed, the others not used until they are.~%")

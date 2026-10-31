@@ -2255,7 +2255,8 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
     (setf (tuatara.defaults::language-query language) nil
           (tuatara.defaults::language-injection-query language) nil
           (tuatara.defaults::language-locals-query language) nil)
-    (let ((tuatara.defaults::*rules-wait* 0))
+    (let ((tuatara.defaults::*rules-wait* 0)
+          (tuatara-user:*grammars-on* '(:common verilog)))
       (with-file-session ((f editor) "" (format nil "module m(input a, output b);~%  assign b = a;~%endmodule~%") "v")
         (let ((thread (gethash language tuatara.defaults::*warming*)))
           (when thread
@@ -2410,7 +2411,9 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
              result)))
     (is string= (format nil "-- select 1;~%") (after "C" (format nil "select 1;~%") "sql"))
     (is string= (format nil "%% f() -> ok.~%") (after "C" (format nil "f() -> ok.~%") "erl"))
-    (is string= (format nil "{# a #}~%") (after "C" (format nil "a~%") "j2"))))
+    ;; a language whose grammar is off would ask first, taking C as the answer
+    (let ((tuatara-user:*grammars-on* '(:common jinja)))
+      (is string= (format nil "{# a #}~%") (after "C" (format nil "a~%") "j2")))))
 
 (define-test (syntax indenting-lisp)
   ;; > indents Lisp: indent-before.lisp, indented whole, gives indent-after.lisp
@@ -2734,9 +2737,10 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
                       (colour-session "" (format nil "```~%#!/bin/bash~%echo $HOME~%```~%") "md"))
                      2)))
     (true (find :function spans :key (lambda (s) (let ((f (third s))) (if (listp f) (first f) f))))))
-  (let ((spans (aref (tuatara.frontend.fake:fake-spans
-                      (colour-session "" (format nil "run:~%    #!/usr/bin/env python3~%    def f(): pass~%") "just"))
-                     2)))
+  (let ((spans (let ((tuatara-user:*grammars-on* '(:common just)))
+                 (aref (tuatara.frontend.fake:fake-spans
+                        (colour-session "" (format nil "run:~%    #!/usr/bin/env python3~%    def f(): pass~%") "just"))
+                       2))))
     (true (find :keyword spans :key (lambda (s) (let ((f (third s))) (if (listp f) (first f) f))))))
   ;; names of languages this editor does not colour are passed over: the
   ;; block has Markdown's colour alone

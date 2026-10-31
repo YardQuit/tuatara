@@ -470,8 +470,12 @@ language, when it has one, grammars that went wrong on it tried again."
 
 (defun start-parsing (buffer language)
   "Keep a syntax tree of BUFFER's text in LANGUAGE's grammar, unless its file
-was visited safely (whose text no parser is given) or the grammar is missing."
-  (unless (tuatara.io:safe-visit-p buffer)
+was visited safely (whose text no parser is given), the grammar is off
+\(GRAMMAR-ON-P: BUFFER is then marked, for the question whether to turn it
+on), or the grammar is missing."
+  (setf (tuatara.buffer:buffer-local buffer :grammar-off)
+        (and (not (tuatara.io:safe-visit-p buffer)) (not (grammar-on-p language)) language))
+  (unless (or (tuatara.io:safe-visit-p buffer) (tuatara.buffer:buffer-local buffer :grammar-off))
     (let ((grammar (tuatara.syntax:find-grammar (language-grammar language))))
       (setf (tuatara.buffer:buffer-local buffer :syntax-pending)
             (and (null grammar) (tuatara.syntax:grammar-pending-p (language-grammar language)) language))
@@ -486,6 +490,7 @@ was visited safely (whose text no parser is given) or the grammar is missing."
 
 (defmethod mode-exit :after ((mode fundamental-mode) buffer)
   "Stop parsing BUFFER and forget its syntax tree."
+  (setf (tuatara.buffer:buffer-local buffer :grammar-off) nil)
   (tuatara.syntax:detach-syntax buffer))
 
 (defvar *rules-wait* 0.05
@@ -576,12 +581,14 @@ rules and rules for local names of the language meant, and the function giving
 the face in STYLE at LEVEL of each kind of definition, or NIL. The rules of a language not yet
 compiled are compiled in the background, the function waiting for them at
 most *RULES-WAIT* from when it is made, for all the languages it is asked for
-together."
+together. NIL for a language whose grammar is off (GRAMMAR-ON-P): its text is
+left plain."
   (let ((deadline (tuatara.runtime:deadline-in *rules-wait*)))
     (lambda (name)
       (let ((other (language-for-injection name)))
-        (when (and other (rules-at-hand other :wait (max 0 (/ (- deadline (get-internal-real-time))
-                                                             internal-time-units-per-second))))
+        (when (and other (grammar-on-p other)
+                   (rules-at-hand other :wait (max 0 (/ (- deadline (get-internal-real-time))
+                                                        internal-time-units-per-second))))
           (let ((grammar (tuatara.syntax:find-grammar (language-grammar other)))
                 (colours (language-compiled-query other :colouring)))
             (when (and grammar colours)

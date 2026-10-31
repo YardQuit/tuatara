@@ -1,0 +1,90 @@
+;;;; test/grammars.lisp --- Which grammars read text: the common ones, those turned on, the question.
+;;;; Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
+
+(in-package #:tuatara.tests)
+
+(define-test grammars-on
+  :description "Only the grammars on read text: the common ones and those turned on. A file in a
+language whose grammar is off asks once whether to turn it on, the answer kept between sessions;
+text in such a language inside another file is left plain; a file opened safely asks nothing.")
+
+(defmacro with-grammar-answers-forgotten ((&rest names) &body body)
+  "Run BODY with no answer kept for the grammars of the languages NAMES (strings),
+none given up in this session, and *GRAMMARS-ON* as it is by default; the same
+afterwards."
+  `(flet ((forget ()
+            (tuatara.defaults::state-list-drop tuatara.defaults::*grammar-answers* (list ,@names))
+            (setf tuatara.defaults::*grammar-answers-read* nil
+                  tuatara.defaults::*grammars-not-now* '())))
+     (forget)
+     ;; the grammars loaded first, as a session started earlier would have them
+     (tuatara.syntax:rules-helper)
+     (dolist (grammar '("awk" "markdown" "markdown_inline" "python")) (tuatara.syntax:find-grammar grammar))
+     (let ((tuatara-user:*grammars-on* '(:common)))
+       (unwind-protect (progn ,@body)
+         (forget)))))
+
+(defun row-faces (f row)
+  "The faces of the spans of ROW in the last frame of the fake frontend F, each once."
+  (remove-duplicates (alexandria:flatten (mapcar #'third (aref (tuatara.frontend.fake:fake-spans f) row)))))
+
+(defparameter *awk-in-markdown* (format nil "# Notes~%~%```awk~%BEGIN { print \"x\" }~%```~%")
+  "A Markdown file holding a code block in AWK, whose grammar is not a common one.")
+
+(define-test (grammars-on text-inside-left-plain-when-off)
+  ;; the AWK in a Markdown code block is coloured by AWK's grammar only once it is on
+  (with-grammar-answers-forgotten ("awk")
+    (let ((off (row-faces (colour-session "" *awk-in-markdown* "md") 3)))
+      (true (member :markup.raw.block off) "the code block is coloured as Markdown's")
+      (false (member :namespace off) "AWK's BEGIN not coloured while its grammar is off"))
+    (let ((tuatara-user:*grammars-on* '(:common awk)))
+      (true (member :namespace (row-faces (colour-session "" *awk-in-markdown* "md") 3))
+            "AWK's BEGIN coloured once its grammar is on"))))
+
+(define-test (grammars-on file-asks-and-yes-turns-on)
+  ;; a file in AWK asks; y turns the grammar on, the file is coloured, and the
+  ;; answer is kept: the next file in AWK asks nothing
+  (with-grammar-answers-forgotten ("awk")
+    (with-file-session ((f editor) "y RET" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+      (true (member :keyword (row-faces f 0)) "the file is coloured once its grammar is on"))
+    (is eq :on (gethash "awk" (tuatara.defaults::grammar-answers :again t)))
+    (with-file-session ((f editor) "" (format nil "BEGIN { print 1 }~%") "awk")
+      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?") "asked once only")
+      (true (member :keyword (row-faces f 0))))))
+
+(define-test (grammars-on file-asks-and-no-says-how-later)
+  ;; n keeps the grammar off, says how to turn it on later, and is kept: the
+  ;; next file asks nothing; turn-on-grammar turns it on after all
+  (with-grammar-answers-forgotten ("awk")
+    (with-file-session ((f editor) "n RET" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "The AWK grammar stays off: M-x turn-on-grammar turns it on"))
+      (false (member :keyword (row-faces f 0)) "not coloured while its grammar is off"))
+    (with-file-session ((f editor) (format nil "M-x ~a RET RET" (key-string "turn-on-grammar"))
+                        (format nil "BEGIN { print 1 }~%") "awk")
+      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?") "asked once only")
+      (true (tuatara.frontend.fake:fake-frame-showing f "The AWK grammar is on"))
+      (true (member :keyword (row-faces f 0)) "coloured once turned on by the command"))))
+
+(define-test (grammars-on common-grammar-asks-nothing)
+  ;; a file in a common language is parsed as it opens, without a question
+  (with-grammar-answers-forgotten ()
+    (with-file-session ((f editor) "" (format nil "def f(x):~%    return x~%") "py")
+      (false (tuatara.frontend.fake:fake-frame-showing f "grammar?"))
+      (true (row-faces f 0)))))
+
+(define-test (grammars-on safe-visit-asks-nothing)
+  ;; a file opened safely is never parsed, and asks nothing
+  (with-grammar-answers-forgotten ("awk")
+    (with-test-directory (directory)
+      (let ((path (merge-pathnames "evidence.awk" directory)))
+        (with-open-file (o path :direction :output) (format o "BEGIN { print 1 }~%"))
+        (let ((tuatara-user:*safe-directories* (list (namestring directory))))
+          (multiple-value-bind (f editor) (run-keys "" :file path :width 60)
+            (unwind-protect
+                 (let ((buffer (tuatara.display:window-buffer (tuatara.command:editor-window editor))))
+                   (true (tuatara.io:safe-visit-p buffer))
+                   (false (tuatara.frontend.fake:fake-frame-showing f "grammar?"))
+                   (false (tuatara.syntax:buffer-syntax buffer)))
+              (tuatara.buffer:kill-buffer (tuatara.display:window-buffer (tuatara.command:editor-window editor))))))))))

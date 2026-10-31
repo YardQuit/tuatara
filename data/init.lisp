@@ -221,6 +221,12 @@
   ;; Org's headlines, comments, keywords, tags and emphasis, no dates (:rich)
   ;; (set-colouring 'org-mode :sparse :level 2)
 
+  ;; The languages whose grammars colour and parse text without asking: the
+  ;; common ones, and Nix and AWK. A file in another language asks whether to
+  ;; turn its grammar on (M-x turn-on-grammar later); text in it inside other
+  ;; files stays plain. Not set: '(:common); without :common, only those named.
+  ;; (setf *grammars-on* '(:common nix awk))
+
   ;; The grammars run in programs of their own, shut in. Each held to 8 GB of
   ;; memory. Not set: 4 GB; nil: no limit.
   ;; (setf *syntax-helper-memory* (* 8 1024 1024 1024))
