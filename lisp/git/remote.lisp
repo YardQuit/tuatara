@@ -204,14 +204,45 @@ hooks. \\`C-h' there lists every action."
 
 ;;; Any git command
 
+(defvar *git-built-in-commands* nil
+  "The commands built into git, as git --list-cmds=builtins lists them, read
+the first time they are wanted.")
+
+(defun git-built-in-commands ()
+  "The commands built into git (*GIT-BUILT-IN-COMMANDS*): those it runs
+itself, never a program or an alias of a repository's or yours."
+  (or *git-built-in-commands*
+      (setf *git-built-in-commands*
+            (let ((git (tuatara.io:find-program "git")))
+              (and git (uiop:split-string (string-trim '(#\Newline) (or (ignore-errors (uiop:run-program (list git "--list-cmds=builtins") :output :string)) ""))
+                                          :separator '(#\Newline)))))))
+
+(defun git-command-refusal (words)
+  "Why git is not run with WORDS, typed for \\[git-run-command], in words; NIL
+when it may be. While evidence folders are named (*EVIDENCE-FOLDERS*), no
+setting given on the line (-c, --config-env), which could name a program
+for git to run, and no command but those built into git (an alias or a
+program of git's family runs what a repository or a setting names)."
+  (when (tuatara.io:writing-refused-anywhere-p)
+    (let ((command (first (git-command-words words))))
+      (cond ((some (lambda (word) (or (string= word "-c") (uiop:string-prefix-p "--config-env" word)
+                                      (and (uiop:string-prefix-p "-c" word) (> (length word) 2))))
+                   (ldiff words (git-command-words words)))
+             "while evidence folders are named, git is given no setting (-c, --config-env) here")
+            ((and command (not (member command (git-built-in-commands) :test #'string=)))
+             (format nil "while evidence folders are named, only git's own commands run here, not ~a (an alias, or a program of its family)" command))))))
+
 (define-command git-run-command ()
   "Run git with the words asked for (log --oneline -5, say; quotes group
 words as in a shell) in the repository at hand, no shell between, and show
-what it printed; for what the menus have no action for."
+what it printed; for what the menus have no action for. While evidence
+folders are named, only git's own commands, with no setting given on the
+line (GIT-COMMAND-REFUSAL)."
   (with-git-repository (top)
     (multiple-value-bind (words ok) (tuatara.io:command-words (read-string "Run git: "))
       (cond ((not ok) (message "A quote is left open: nothing run"))
             ((null words) (message "Nothing to run"))
+            ((git-command-refusal words) (message "Nothing run: ~a" (git-command-refusal words)))
             (t (git-show-output (format nil "Running git ~a" (first words)) top words "*git output*"
                                 :mode 'special-mode :empty (format nil "git ~a printed nothing" (first words))
                                 :environment (git-network-environment)

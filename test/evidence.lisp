@@ -365,7 +365,7 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
           (handler-case (progn (tuatara.defaults::run-git root writing) (false t "~s ran" writing))
             (tuatara.io:writing-refused (e)
               (true (search "is an evidence folder (*evidence-folders*: " (princ-to-string e)) "~s" writing)
-              (true (search (format nil "Could not run git ~a in " (first writing)) (princ-to-string e))))))
+              (true (search (format nil " git ~a " (first writing)) (princ-to-string e))))))
         (is string= "changed meanwhile by another program" (file-text (merge-pathnames "evidence/kept.txt" dir)))
         ;; reading runs
         (multiple-value-bind (octets ok) (tuatara.defaults::run-git root '("status" "--porcelain"))
@@ -572,6 +572,37 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
         (with-evidence-folders ('((:name "evidence")))
           (wait-for-evidence-links)
           (true (search "more than 100 folders" (tuatara.defaults::folder-holds-evidence-p (concatenate 'string root "src/")))))))))
+
+(define-test (evidence git-words-never-name-evidence)
+  ;; any word given to git that leads into evidence is refused, however its option is written
+  (with-test-directory (dir)
+    (let* ((repo (namestring (ensure-directories-exist (merge-pathnames "repo/" dir))))
+           (ev (namestring (ensure-directories-exist (merge-pathnames "ev/" dir))))
+           (link (concatenate 'string repo "into-ev")))
+      (scratch-repository repo)
+      (sb-posix:symlink (string-right-trim "/" ev) link)
+      (with-evidence-folders ((list ev))
+        (dolist (arguments `(("config" "--fil" ,(concatenate 'string ev "cfg") "a.b" "c")
+                             ("config" ,(format nil "-f~acfg" ev) "a.b" "c")
+                             ("checkout-index" "-a" ,(format nil "--prefix=~aout/" ev))
+                             ("merge-file" ,(concatenate 'string ev "m.txt") "a.txt" "a.txt")
+                             ("fast-export" ,(format nil "--export-marks=~amarks" ev) "HEAD")
+                             ("pack-objects" ,(concatenate 'string ev "pack"))
+                             ("index-pack" "-o" ,(concatenate 'string ev "x.idx") "x.pack")
+                             ("bugreport" "-o" ,ev) ("diagnose" "-o" ,ev)
+                             ("config" "--file" "into-ev/cfg" "a.b" "c")))
+          (true (refused-any (tuatara.defaults::run-git repo arguments)) "~s" arguments))
+        (is equal '() (uiop:directory-files ev))
+        (is equal '() (uiop:subdirectories ev))
+        ;; the safety options win over the line's own
+        (is string= (format nil "false~%")
+            (tuatara.text:octets-string (tuatara.defaults::run-git repo '("-c" "core.fsmonitor=true" "config" "--get" "core.fsmonitor"))))
+        ;; the ! command: no setting on the line, git's own commands only
+        (true (tuatara.defaults::git-command-refusal (list "-c" (format nil "alias.zz=!touch ~ax" ev) "zz")))
+        (true (tuatara.defaults::git-command-refusal '("zz")))
+        (false (tuatara.defaults::git-command-refusal '("log" "--oneline" "-5"))))
+      (with-evidence-folders ('())
+        (false (tuatara.defaults::git-command-refusal '("-c" "x.y=z" "zz")))))))
 
 (define-test (evidence folders-written-not-read)
   ;; a folder you may write in but not list (-wx) takes new files, as before, the setting on or off

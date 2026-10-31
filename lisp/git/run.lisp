@@ -140,9 +140,11 @@ found from where it runs (-C, --git-dir, --work-tree, GIT_DIR,
 GIT_WORK_TREE: GIT-PLACES), is in one, where it writes its .git; when it writes the repository's working files
 \(GIT-WRITES-WORK-TREE-P) and the repository holds one
 \(TUATARA.IO:CHECK-TREE-WRITING); or when a file or folder it is told to
-write (GIT-OUTPUT-PATHS) is in one. Returns true when the repository holds
-one, for its hooks to be left out (RUN-GIT-PROGRAM). Nothing is looked at
-while no place is refused."
+write (GIT-OUTPUT-PATHS), or any word given it taken as a path
+\(CHECK-GIT-ARGUMENTS), is in one. Whether the repository holds one is told
+from the setting (FOLDER-HOLDS-EVIDENCE-P); returns those words then, for
+its hooks to be left out (RUN-GIT-PROGRAM). Nothing is looked at while no
+place is refused."
   (when (tuatara.io:writing-refused-anywhere-p)
     (let* ((words (git-command-words arguments))
            (doing (format nil "run git ~a in" (or (first words) ""))))
@@ -154,10 +156,33 @@ while no place is refused."
             (when (and path (plusp (length path)))
               (tuatara.io:check-tree-writing (if (uiop:string-prefix-p "/" path) path (tuatara.io:path-join here path))
                                              (format nil "have git ~a write" (first words)))))
+          (check-git-arguments here arguments (format nil "have git ~a write" (first words)))
           (when top
-            (if (git-writes-work-tree-p arguments)
-                (progn (tuatara.io:check-tree-writing top doing) nil)
-                (folder-holds-evidence-p top))))))))
+            (let ((holding (folder-holds-evidence-p top)))
+              (when (and holding (git-writes-work-tree-p arguments))
+                (error 'tuatara.io:writing-refused :operation doing :path top :reason holding))
+              holding)))))))
+
+(defun git-argument-places (word)
+  "The paths a word given to git may name: the word itself, what follows its
+first =, and what follows a short option stuck to it (-fPATH)."
+  (remove-if (lambda (path) (zerop (length path)))
+             (append (and (not (uiop:string-prefix-p "-" word)) (list word))
+                     (let ((equals (position #\= word))) (and equals (list (subseq word (1+ equals)))))
+                     (and (> (length word) 2) (char= (char word 0) #\-) (alpha-char-p (char word 1))
+                          (list (subseq word 2))))))
+
+(defun check-git-arguments (here arguments doing)
+  "Signal TUATARA.IO:WRITING-REFUSED, DOING said, when a word of ARGUMENTS,
+taken as a path from HERE, where git runs (GIT-ARGUMENT-PLACES), lands in or
+under an evidence folder, or names a link into one: no option of git's can
+then write there, whatever it is called or however it is abbreviated."
+  (dolist (word arguments)
+    (dolist (place (git-argument-places word))
+      (let ((path (if (uiop:string-prefix-p "/" place) place (tuatara.io:path-join here place))))
+        (tuatara.io:check-writing path doing)
+        (let ((real (ignore-errors (tuatara.io:real-path path))))
+          (when real (tuatara.io:check-writing real doing)))))))
 
 (defun git-hash-p (text &key short)
   "True when TEXT is a commit's full hash as git writes it: 40 hexadecimal
@@ -229,14 +254,20 @@ failed (RUN-GIT with ERRORS); the rest is read and let go.")
   "Run the program GIT as RUN-GIT runs git, once it has found it. A command
 that would write in the working files of a repository holding an evidence
 folder is refused, never run (CHECK-GIT-WRITING); in a repository holding
-one, git runs no hook of the repository's (core.hooksPath=/dev/null)."
-  (let ((limit (or limit *program-output-limit*))
-        (arguments (if (check-git-writing directory arguments environment)
-                       (list* "-c" "core.hooksPath=/dev/null" arguments)
-                       arguments)))
+one, git runs no hook of the repository's (core.hooksPath=/dev/null). The
+options of *GIT-SAFETY* come after any of ARGUMENTS' own before its command,
+so that they are the ones in force."
+  (let* ((limit (or limit *program-output-limit*))
+         (words (git-command-words arguments))
+         (leading (ldiff arguments words))
+         ;; the editor's own options after yours, so that they are the ones in force
+         (arguments (append leading (git-safety arguments)
+                            (and (check-git-writing directory arguments environment)
+                                 (list "-c" "core.hooksPath=/dev/null"))
+                            words)))
     (handler-case
         (tuatara.io:call-with-program
-         (list* git "-C" (tuatara.io:native directory) (append (git-safety arguments) arguments))
+         (list* git "-C" (tuatara.io:native directory) arguments)
          (lambda (process)
            (let ((stream (sb-ext:process-output process))
                  (listener (and errors
