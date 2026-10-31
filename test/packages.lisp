@@ -747,3 +747,157 @@ before loading it again."
           (format t "~&~d of the API's ~d names are used by no package of ours:~%~{  ~a~%~}"
                   (length unused) (length tuatara.defaults::*api*) unused)
           (true (listp unused))))))
+
+(define-test (packages unused-sources-removed)
+  ;; package-remove-unused, in a packages folder of the test's own: a source nothing names goes,
+  ;; asked once with sizes; a package named, one left out (:disabled), a fetch's scratch folder
+  ;; and what a link points to stay; n deletes nothing
+  (with-test-directory (dir)
+    (let* ((top (namestring (ensure-directories-exist (merge-pathnames "packages/" dir))))
+           (outside (ensure-directories-exist (merge-pathnames "outside/" dir)))
+           (tuatara-user:*packages-directory* top)
+           (tuatara.defaults::*declared-packages* (list (list "used" "https://example.org/used" nil nil nil)))
+           (tuatara.defaults::*left-out-packages* '())
+           (tuatara.defaults::*package-sources* '())
+           (commit "0123456789abcdef0123456789abcdef01234567"))
+      (flet ((kept (where name)
+               (let ((file (merge-pathnames (format nil "~a/~a/~a/~a.lisp" (tuatara.io:path-file-name where) name commit name) top)))
+                 (alexandria:write-string-into-file (make-string 2000 :initial-element #\;) (ensure-directories-exist file))
+                 file)))
+        (let ((gone (kept "https://example.org/gone" "gone"))
+              (used (kept "https://example.org/used" "used"))
+              (other (kept "https://example.org/used" "other"))
+              (off (kept "https://example.org/off" "off"))
+              (scratch (ensure-directories-exist (merge-pathnames ".fetching-abc/probe/" top))))
+          (alexandria:write-string-into-file "theirs" (merge-pathnames "keep.txt" outside))
+          (sb-posix:symlink (string-right-trim "/" (namestring outside)) (concatenate 'string top "https%3A%2F%2Fexample.org%2Flink"))
+          (tuatara-user:load-package "off" :source "https://example.org/off" :disabled t)
+          ;; n: nothing deleted
+          (let ((f (auto-save-session
+                    (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+                          (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
+                          "n RET" (list :until (lambda () (echo-says "Nothing deleted"))))
+                    :width 160 :height 30)))
+            (true (tuatara.frontend.fake:fake-frame-showing f "https://example.org/gone, all of it"))
+            (true (tuatara.frontend.fake:fake-frame-showing f "other from https://example.org/used"))
+            (true (tuatara.frontend.fake:fake-frame-showing f "Delete 2 package sources no longer named"))
+            (false (tuatara.frontend.fake:fake-frame-showing f "example.org/off"))
+            (false (tuatara.frontend.fake:fake-frame-showing f "example.org/link")))
+          (true (probe-file gone))
+          (true (probe-file other))
+          ;; yes: those two go, the rest stays
+          (let ((pushed (push "used" tuatara.defaults::*fetching-packages*)))
+            (declare (ignore pushed))
+            (unwind-protect
+                 (auto-save-session
+                  (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+                        (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
+                        "y RET" (list :until (lambda () (echo-says "freed")))))
+              (setf tuatara.defaults::*fetching-packages* (remove "used" tuatara.defaults::*fetching-packages* :test #'string=))))
+          (false (probe-file gone))
+          (true (probe-file used))
+          (true (probe-file off))
+          (true (probe-file scratch))
+          (true (probe-file (merge-pathnames "keep.txt" outside)))
+          ;; "other" sat beside a package being fetched: left alone while it ran
+          (true (probe-file other)))))))
+
+(define-test (packages unused-sources-none)
+  ;; nothing unused: said, nothing asked
+  (with-test-directory (dir)
+    (let ((tuatara-user:*packages-directory* (namestring (ensure-directories-exist (merge-pathnames "packages/" dir))))
+          (tuatara.defaults::*declared-packages* '())
+          (tuatara.defaults::*package-sources* '()))
+      (let* ((said nil)
+             (f (auto-save-session
+                 (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+                       (list :until (lambda () (setf said (echo-says "No package source kept is unused")))))
+                 :width 160)))
+        (true said)
+        (false (tuatara.frontend.fake:fake-frame-showing f "no longer named,"))))))
+
+(defmacro with-unused-source ((top gone) &body body)
+  "Run BODY with TOP a packages folder of a test directory's own and GONE the
+entry file of a package of a source nothing names, kept in it."
+  (let ((dir (gensym "DIR")))
+    `(with-test-directory (,dir)
+       (let* ((,top (namestring (ensure-directories-exist (merge-pathnames "packages/" ,dir))))
+              (tuatara-user:*packages-directory* ,top)
+              (tuatara.defaults::*declared-packages* '())
+              (tuatara.defaults::*left-out-packages* '())
+              (tuatara.defaults::*package-sources* '())
+              (,gone (merge-pathnames (format nil "~a/gone/0123456789abcdef0123456789abcdef01234567/gone.lisp"
+                                              (tuatara.io:path-file-name "https://example.org/gone"))
+                                      ,top)))
+         (alexandria:write-string-into-file "(defvar *gone* t)" (ensure-directories-exist ,gone))
+         ,@body))))
+
+(define-test (packages unused-sources-looked-at-again)
+  ;; a source named while the question waits is not deleted: each is looked at again, as things are then
+  (with-unused-source (top gone)
+    (auto-save-session
+     (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+           (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
+           (list :until (lambda () (push (list "gone" "https://example.org/gone" nil nil nil) tuatara.defaults::*declared-packages*)))
+           "y RET" (list :until (lambda () (echo-says "no longer named deleted: 0")))))
+    (true (probe-file gone))))
+
+(define-test (packages unused-sources-init-file-read-through)
+  ;; an init file not read to its end: nothing looked for, nothing deleted, said why
+  (with-unused-source (top gone)
+    (let ((tuatara.defaults::*init-file-stop* (cons 12 "end of file")) (said nil))
+      (auto-save-session
+       (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+             (list :until (lambda () (setf said (echo-says "The init file was not read to its end (12: end of file); nothing is deleted until it is")))))
+       :width 200)
+      (true said)
+      (true (probe-file gone)))))
+
+(define-test (packages unused-sources-failure-said)
+  ;; looking failing is said, in plain words
+  (with-unused-source (top gone)
+    (let ((said nil))
+      (sb-int:encapsulate 'tuatara.defaults::unused-package-folders 'unused-sources-failure-said
+                          (lambda (function) (declare (ignore function)) (error "the folder could not be read")))
+      (unwind-protect
+           (auto-save-session
+            (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+                  (list :until (lambda () (setf said (echo-says "Looking for package sources no longer named failed")))))
+            :width 200)
+        (sb-int:unencapsulate 'tuatara.defaults::unused-package-folders 'unused-sources-failure-said))
+      (true said)
+      (true (probe-file gone)))))
+
+(define-test (packages unused-sources-parent-link-left)
+  ;; a source's folder swapped for a link before the deleting: what the link leads to stays
+  (with-test-directory (dir)
+    (let* ((top (namestring (ensure-directories-exist (merge-pathnames "packages/" dir))))
+           (outside (namestring (ensure-directories-exist (merge-pathnames "outside/" dir))))
+           (tuatara-user:*packages-directory* top)
+           (tuatara.defaults::*declared-packages* (list (list "used" "https://example.org/mixed" nil nil nil)))
+           (tuatara.defaults::*left-out-packages* '())
+           (tuatara.defaults::*package-sources* '())
+           (source (concatenate 'string top (tuatara.io:path-file-name "https://example.org/mixed")))
+           (theirs (merge-pathnames "other/c0ffee0123456789abcdef0123456789abcdef01/other.lisp" outside)))
+      (alexandria:write-string-into-file "x" (ensure-directories-exist (format nil "~a/other/c0ffee0123456789abcdef0123456789abcdef01/other.lisp" source)))
+      (alexandria:write-string-into-file "theirs" (ensure-directories-exist theirs))
+      (auto-save-session
+       (list "M-x p a c k a g e - r e m o v e - u n u s e d RET"
+             (list :until (lambda () (tuatara.command::editor-minibuffer-active tuatara.command:*editor*)))
+             (list :until (lambda ()
+                            (uiop:delete-directory-tree (pathname (format nil "~a/" source)) :validate t)
+                            (sb-posix:symlink (string-right-trim "/" outside) source)
+                            t))
+             "y RET" (list :until (lambda () (echo-says "no longer named deleted")))))
+      (true (probe-file theirs)))))
+
+(define-test (packages start-waits-quietly)
+  ;; a load at the start, or by a command or mode, of a package in hand waits without a word
+  (let ((tuatara.defaults::*packages-in-hand* (list (cons "pkgq" :deciding)))
+        (tuatara.defaults::*declared-packages* '())
+        (tuatara.defaults::*package-sources* '()))
+    (let ((f (auto-save-session
+              (list (list :until (lambda () (tuatara-user:load-package "pkgq" :source "https://example.org/pkgq") t))
+                    (list :wait 0.2))
+              :width 200)))
+      (false (tuatara.frontend.fake:fake-frame-showing f "already running")))))

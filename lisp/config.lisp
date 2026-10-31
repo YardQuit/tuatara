@@ -193,6 +193,11 @@ not, and why as a second value when it could not be."
         t)
     (error (e) (values nil (princ-to-string e)))))
 
+(defvar *init-file-stop* nil
+  "Where the init file was last read up to when its reading went wrong,
+\(LINE . WHY), or NIL when it was read to its end: a form that failed, or
+text that could not be read on.")
+
 (defun load-user-config ()
   "Load the init file if it exists, in the TUATARA-USER package, form by form
 \(READ-INIT-FILE), the packages it loads said with their times
@@ -206,7 +211,8 @@ is written there first (WRITE-STARTER-CONFIG) and said."
               (why (message "No starter init file written at ~a: ~a" (abbreviated-path file) why)))))
     (if (probe-file file)
         (let ((*package* (find-package :tuatara-user)))
-          (setf *init-file-outcome* :read)
+          (setf *init-file-outcome* :read
+                *init-file-stop* nil)
           (call-with-start-packages (lambda () (read-init-file file)))
           (eq *init-file-outcome* :read))
         (progn (setf *init-file-outcome* :none) nil))))
@@ -256,7 +262,8 @@ defined in FILE (NOTE-INIT-FILE-DEFINITION), where help shows them."
         (*load-pathname* (pathname file)))
     (flet ((fail (line e)
              (when (eq *init-file-outcome* :read)
-               (setf *init-file-outcome* (cons :error (princ-to-string e))))
+               (setf *init-file-outcome* (cons :error (princ-to-string e))
+                     *init-file-stop* (cons line (tuatara.text:one-line (princ-to-string e)))))
              (message "Error in ~a, line ~d: ~a" (namestring file) line e)))
       (let* ((path (namestring (truename file)))
              (stopped (map-text-forms text (lambda (form line)

@@ -1596,7 +1596,8 @@
 ;; A package from a source: fetched in the background the first time (the
 ;; repository's newest tag by date), its folder example alone, kept for the next
 ;; start; asked about before it is compiled and loaded. M-x package-manager
-;; lists them, M-x package-update fetches them again.
+;; lists them, M-x package-update fetches them again, and M-x
+;; package-remove-unused deletes what is kept of sources nothing names now.
 ;; (load-package "example" :source "mine")
 
 ;; Its settings and keys, set once it has loaded (for one fetched, once the
