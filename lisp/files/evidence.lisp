@@ -166,11 +166,14 @@ tell when it changes; ENTRIES, those read (EVIDENCE-ENTRY); PROBLEMS, each
 \(GIVEN . WHY) for an entry that could not be; FOLDERS, each folder's answer
 by its real path (FOLDER-EVIDENCE); HOLDING, each folder's answer of
 FOLDER-HOLDS-EVIDENCE-P; LINKED, true once the links its entries match have
-been looked for (EVIDENCE-KEEPER)."
+been looked for (EVIDENCE-KEEPER); FORGOTTEN, how many times FOLDERS and
+HOLDING were emptied (FORGET-KEPT-ANSWERS), so that an answer worked out
+before is not kept after."
   setting copy entries problems
   (folders (make-hash-table :test 'equal :synchronized t))
   (holding (make-hash-table :test 'equal :synchronized t))
-  (linked nil))
+  (linked nil)
+  (forgotten 0))
 
 (setf (documentation 'evidence-rules-setting 'function) "The value of *EVIDENCE-FOLDERS* the rules were read from."
       (documentation 'evidence-rules-copy 'function) "A copy of the value the rules were read from."
@@ -179,6 +182,7 @@ been looked for (EVIDENCE-KEEPER)."
       (documentation 'evidence-rules-folders 'function) "Each folder's answer so far, by its real path."
       (documentation 'evidence-rules-holding 'function) "Each folder's answer of FOLDER-HOLDS-EVIDENCE-P so far."
       (documentation 'evidence-rules-linked 'function) "True once the links the entries match have been looked for."
+      (documentation 'evidence-rules-forgotten 'function) "How many times the answers kept have been dropped."
       (documentation 'evidence-rules-p 'function) "True when OBJECT is an EVIDENCE-RULES.")
 
 (defvar *evidence-rules* nil
@@ -227,22 +231,41 @@ generation begun."
     (multiple-value-bind (targets how) (entry-link-targets entry)
       (setf (evidence-entry-targets entry) (union targets (evidence-entry-targets entry) :test #'string=)
             (evidence-entry-links entry) how)))
-  (clrhash (evidence-rules-folders rules))
-  (clrhash (evidence-rules-holding rules))
+  (forget-kept-answers rules)
   (setf (evidence-rules-linked rules) t)
   (incf *evidence-generation*))
+
+(defun forget-kept-answers (rules)
+  "Drop every answer RULES keep, of each folder (FOLDER-EVIDENCE) and of
+holding (FOLDER-HOLDS-EVIDENCE-P), counting it, so that an answer worked out
+meanwhile is not kept (KEEP-ANSWER)."
+  (sb-ext:with-locked-hash-table ((evidence-rules-holding rules))
+    (incf (evidence-rules-forgotten rules))
+    (clrhash (evidence-rules-folders rules))
+    (clrhash (evidence-rules-holding rules))))
+
+(defun keep-answer (rules table key value since)
+  "Keep VALUE for KEY in TABLE, one of RULES' tables, unless the answers were
+dropped since SINCE, the count of FORGET-KEPT-ANSWERS when it was worked out
+from. Returns VALUE."
+  (sb-ext:with-locked-hash-table ((evidence-rules-holding rules))
+    (when (= since (evidence-rules-forgotten rules))
+      (setf (gethash key table) value)))
+  value)
 
 (defun evidence-keeper (rules)
   "The work of the thread that keeps RULES, those in force: the links their
 entries match looked for, then the drives mounted looked at every
 *MOUNTS-LOOK-INTERVAL* seconds; when they change, the rules read again here,
 links and all, and put in force in one step, the old ones serving
-meanwhile. Ends once other rules are in force, or none."
-  (link-evidence-rules rules)
+meanwhile. Ends once other rules are in force, or none, or the setting
+names no folder."
+  (unless (evidence-rules-linked rules)
+    (link-evidence-rules rules))
   (let ((seen (ignore-errors (uiop:read-file-string *mounts-info-file*))))
     (loop
       (sleep (max 1/20 *mounts-look-interval*))
-      (unless (eq *evidence-rules* rules) (return))
+      (unless (and *evidence-folders* (eq *evidence-rules* rules)) (return))
       (let ((now (ignore-errors (uiop:read-file-string *mounts-info-file*))))
         (unless (equal now seen)
           (setf seen now)
@@ -254,26 +277,56 @@ meanwhile. Ends once other rules are in force, or none."
               (publish-evidence-rules fresh))
             (setf rules fresh)))))))
 
+(defvar *evidence-keeper* nil
+  "The thread keeping the rules in force (EVIDENCE-KEEPER), or NIL.")
+
+(defun start-evidence-keeper (rules)
+  "Have a thread of its own keep RULES (EVIDENCE-KEEPER)."
+  (setf *evidence-keeper*
+        (tuatara.runtime:make-guarded-thread (lambda () (evidence-keeper rules)) :name "tuatara evidence folders")))
+
 (defun evidence-rules ()
   "*EVIDENCE-FOLDERS* as read now (EVIDENCE-RULES), read again when it was
 changed: quickly, on whichever thread asks, the links its entries match and
 the drives mounted then followed in the background (EVIDENCE-KEEPER), which
-reads them again when the drives change. NIL at once when it names no
-folder."
+reads them again when the drives change, and is started again should it
+have ended. NIL at once when it names no folder; the rules read before are
+then let go of, and the thread keeping them ends."
   (let ((value *evidence-folders*))
-    (when value
-      (let ((rules *evidence-rules*))
-        (if (and rules (eq value (evidence-rules-setting rules)) (equal value (evidence-rules-copy rules)))
-            rules
-            (sb-thread:with-mutex (*evidence-lock*)
-              (let ((rules *evidence-rules*))
-                (if (and rules (eq value (evidence-rules-setting rules)) (equal value (evidence-rules-copy rules)))
-                    rules
-                    (let ((fresh (read-evidence-rules value)))
-                      (publish-evidence-rules fresh)
-                      (tuatara.runtime:make-guarded-thread (lambda () (evidence-keeper fresh))
-                                                           :name "tuatara evidence folders")
-                      fresh)))))))))
+    (if (null value)
+        (when *evidence-rules*
+          (sb-thread:with-mutex (*evidence-lock*)
+            (setf *evidence-rules* nil))
+          nil)
+        (let ((rules *evidence-rules*))
+          (if (and rules (eq value (evidence-rules-setting rules)) (equal value (evidence-rules-copy rules)))
+              (progn
+                (let ((keeper *evidence-keeper*))
+                  (unless (and keeper (sb-thread:thread-alive-p keeper))
+                    (sb-thread:with-mutex (*evidence-lock*)
+                      (let ((keeper *evidence-keeper*))
+                        (unless (and keeper (sb-thread:thread-alive-p keeper))
+                          (start-evidence-keeper rules))))))
+                rules)
+              (sb-thread:with-mutex (*evidence-lock*)
+                (let ((rules *evidence-rules*))
+                  (if (and rules (eq value (evidence-rules-setting rules)) (equal value (evidence-rules-copy rules)))
+                      rules
+                      (let ((fresh (read-evidence-rules value)))
+                        (publish-evidence-rules fresh)
+                        (start-evidence-keeper fresh)
+                        fresh)))))))))
+
+(defun stop-evidence-keeper ()
+  "Let go of the rules in force and wait, a few seconds at most, for the
+thread keeping them to end: none runs while the program is saved."
+  (setf *evidence-rules* nil)
+  (let ((keeper *evidence-keeper*))
+    (when (and keeper (sb-thread:thread-alive-p keeper))
+      (ignore-errors (sb-thread:join-thread keeper :timeout 5 :default nil))))
+  (setf *evidence-keeper* nil))
+
+(pushnew 'stop-evidence-keeper sb-ext:*save-hooks*)
 
 (defun evidence-links-learnt-p ()
   "True once the links the entries of *EVIDENCE-FOLDERS* match have been
@@ -416,7 +469,8 @@ root) is, or is within, by RULES, as (EVIDENCE-FOLDER . ENTRY), or NIL: by
 its own path or any folder above it, or by another path it is mounted at
 too. Each folder's answer is kept until RULES change or the folder is
 another (a drive mounted over it): one examination of it when kept."
-  (let* ((stamp (ignore-errors (tuatara.io:path-stamp folder)))
+  (let* ((since (evidence-rules-forgotten rules))
+         (stamp (ignore-errors (tuatara.io:path-stamp folder)))
          (key (and stamp (cons (tuatara.io:stamp-dev stamp) (tuatara.io:stamp-ino stamp))))
          (kept (and key (gethash folder (evidence-rules-folders rules)))))
     (if (and kept (equal (cdr kept) key) (not *aliases-followed*))
@@ -430,7 +484,7 @@ another (a drive mounted over it): one examination of it when kept."
                               (let ((*aliases-followed* t))
                                 (some (lambda (alias) (folder-evidence rules alias)) (folder-aliases folder)))))))
           (when (and key (not *aliases-followed*))
-            (setf (gethash folder (evidence-rules-folders rules)) (cons found key)))
+            (keep-answer rules (evidence-rules-folders rules) folder (cons found key) since))
           found))))
 
 (defun place-real-path (path)
@@ -465,8 +519,7 @@ folder dropped."
     (let ((real (ignore-errors (tuatara.io:real-path folder))))
       (when (and real (not (member (nfc-name real) (evidence-entry-targets entry) :test #'string-equal)))
         (push (nfc-name real) (evidence-entry-targets entry))
-        (clrhash (evidence-rules-folders rules))
-        (clrhash (evidence-rules-holding rules))))))
+        (forget-kept-answers rules)))))
 
 (defun absolute-native (path)
   "PATH as a native name from the root, as the system takes it: a relative
@@ -598,7 +651,9 @@ it alone; the disk is asked only whether a folder it names exactly is there."
 
 (defun search-holding (rules looks)
   "Look through LOOKS, each (ROOT . DEPTH), for a folder an entry of RULES
-matches, *EVIDENCE-HOLDING-SEARCH-FOLDERS* folders at most in all, links not
+is, or is in, an evidence folder of RULES, by its path, the paths it is
+mounted at too and the links learnt (FOLDER-EVIDENCE),
+*EVIDENCE-HOLDING-SEARCH-FOLDERS* folders at most in all, links not
 followed: the words saying which (EVIDENCE-WORDS), words saying not all
 could be looked through, or NIL."
   (let ((left *evidence-holding-search-folders*))
@@ -612,10 +667,9 @@ could be looked through, or NIL."
                                       (cond (found nil)
                                             ((null listed)
                                              (incf entered)
-                                             (let* ((path (string-right-trim "/" folder))
-                                                    (entry (find-if (lambda (entry) (evidence-entry-matches-p entry path))
-                                                                    (evidence-rules-entries rules))))
-                                               (when entry (setf found (cons path entry))))
+                                             (let ((match (let ((*mounts* :unread))
+                                                            (folder-evidence rules (string-right-trim "/" folder)))))
+                                               (when match (setf found match)))
                                              t)
                                             (t t)))
                                     :max-depth deep :limit left)
@@ -626,36 +680,50 @@ could be looked through, or NIL."
               (return (evidence-words (car found) (evidence-entry-given (cdr found)))))
             (decf left entered)))))))
 
+(defun rules-settled-p (rules)
+  "True when RULES alone tell whether a folder holds an evidence folder: the
+links every entry matches have been looked for, all of them."
+  (and (evidence-rules-linked rules)
+       (every (lambda (entry) (eq (evidence-entry-links entry) :whole)) (evidence-rules-entries rules))))
+
 (defun folder-holds-evidence-p (folder)
-  "Words saying which evidence folder FOLDER is, or holds within it, or NIL:
-told from the entries of *EVIDENCE-FOLDERS* and the links found for them
-\(ENTRY-HOLDING), the disk looked through only where an entry may match below
-FOLDER, there within *EVIDENCE-HOLDING-SEARCH-FOLDERS* folders, more counting
-as holding one. Kept for each reading of the setting. On the editor's
-thread a look that would take time is made in the background, FOLDER
-counting as holding one meanwhile, said so. NIL at once when the setting
-names no folder."
+  "Words saying which evidence folder FOLDER is, or holds within it, or NIL.
+Told from the entries of *EVIDENCE-FOLDERS* and the links found for them
+\(ENTRY-HOLDING), for FOLDER by its path, where it really is and the paths it
+is mounted at too (FOLDER-ALIASES); the disk looked through (SEARCH-HOLDING)
+where an entry may match below one of them, and, unless the entries settle
+it (RULES-SETTLED-P: some links not looked for, or not all), FOLDER itself
+where it really is; within *EVIDENCE-HOLDING-SEARCH-FOLDERS* folders, more
+counting as holding one. Kept for each reading of the setting. On the
+editor's thread a look that would take time is made in the background,
+FOLDER counting as holding one meanwhile, said so. NIL at once when the
+setting names no folder."
   (let ((rules (evidence-rules)))
     (when rules
       (let* ((folder (string-right-trim "/" (tuatara.io:native (tuatara.io:expand-path folder))))
              (folder (if (zerop (length folder)) "/" folder))
              (table (evidence-rules-holding rules))
+             (since (evidence-rules-forgotten rules))
              (kept (gethash folder table :unknown)))
         (if (not (eq kept :unknown))
             (if (eq kept :looking) (format nil "~a is being looked through for evidence folders" (abbreviated-path folder)) kept)
-            (let ((looks '()) (yes nil))
-              (dolist (place (remove-duplicates (list folder (real-folder-name folder)) :test #'string=))
+            (let* ((real (real-folder-name folder))
+                   (places (remove-duplicates (append (list folder real) (let ((*mounts* :unread)) (folder-aliases real)))
+                                              :test #'string=))
+                   (looks (if (rules-settled-p rules) '() (list (cons real nil))))
+                   (yes nil))
+              (dolist (place places)
                 (dolist (entry (evidence-rules-entries rules))
                   (let ((answer (entry-holding entry place)))
                     (cond ((eq answer :yes) (setf yes (evidence-words place (evidence-entry-given entry))))
                           ((consp answer) (setf looks (append looks answer)))))))
-              (cond (yes (setf (gethash folder table) yes))
-                    ((null looks) (setf (gethash folder table) nil))
+              (cond (yes (keep-answer rules table folder yes since))
+                    ((null looks) (keep-answer rules table folder nil since))
                     ((or (null (tuatara.command:running-editor)) (tuatara.command:away-from-editor-p))
-                     (setf (gethash folder table) (search-holding rules looks)))
-                    (t (setf (gethash folder table) :looking)
+                     (keep-answer rules table folder (search-holding rules looks) since))
+                    (t (keep-answer rules table folder :looking since)
                        (tuatara.runtime:make-guarded-thread
-                        (lambda () (setf (gethash folder table) (search-holding rules looks)))
+                        (lambda () (keep-answer rules table folder (search-holding rules looks) since))
                         :name "tuatara evidence holding")
                        (format nil "~a is being looked through for evidence folders" (abbreviated-path folder))))))))))
 
@@ -935,7 +1003,8 @@ or each entry with the folders it matches on disk, and those not read."
                                           ((nil) "the links it matches still being looked for")
                                           (:capped (format nil "links it matches looked for in ~:d folders only (*evidence-link-search-folders*); a folder a link leads to is evidence once the link is written through"
                                                            *evidence-link-search-folders*))
-                                          (:anywhere "links it matches not looked for, as it may match anywhere (give it :within); a folder a link leads to is evidence once the link is written through, and a folder of that name is found within a project only by looking through it")))))
+                                          (:anywhere (format nil "it may match anywhere, so links to it are not looked for (a folder a link leads to is evidence once the link is written through), and a repository or project of more than ~:d folders counts as holding an evidence folder: git's checkout, stash, pull and the like are refused there, and its language servers do not start; give it :within"
+                                                             *evidence-holding-search-folders*))))))
                 (loop for (given . why) in (evidence-rules-problems rules)
                       collect (format nil "  ~s: not read, left out: ~a" given why))))))
 
