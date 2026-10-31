@@ -42,13 +42,16 @@ becomes in-memory leaves of +TARGET-LEAF+.")
 
 (defstruct (node (:constructor nil) (:copier nil) (:predicate nil))
   "Summary slots shared by all nodes: the counts of the text below the node.
-BYTES is always known; CHARS, UTF16, LINES and INVALID (raw bytes) are -1 while
-unknown (unindexed spans)."
+BYTES is always known; CHARS, UTF16, LINES, INVALID (raw bytes), RETURNS
+\(carriage returns) and NEWLINES (newlines alone, as tree-sitter and git count
+lines) are -1 while unknown (unindexed spans)."
   (bytes 0 :type fixnum :read-only t)
   (chars -1 :type fixnum :read-only t)
   (utf16 -1 :type fixnum :read-only t)
   (lines -1 :type fixnum :read-only t)
-  (invalid -1 :type fixnum :read-only t))
+  (invalid -1 :type fixnum :read-only t)
+  (returns -1 :type fixnum :read-only t)
+  (newlines -1 :type fixnum :read-only t))
 
 (declaim (inline node-indexed-p))
 (defun node-indexed-p (node)
@@ -56,21 +59,21 @@ unknown (unindexed spans)."
   (>= (node-chars node) 0))
 
 (defstruct (leaf (:include node)
-                 (:constructor %make-leaf (octets start bytes chars utf16 lines invalid))
+                 (:constructor %make-leaf (octets start bytes chars utf16 lines invalid returns newlines))
                  (:copier nil))
   "An in-memory leaf: BYTES octets of the immutable vector OCTETS starting at START."
   (octets (make-octets 0) :type octets :read-only t)
   (start 0 :type fixnum :read-only t))
 
 (defstruct (span (:include node)
-                 (:constructor %make-span (mapping offset bytes chars utf16 lines invalid))
+                 (:constructor %make-span (mapping offset bytes chars utf16 lines invalid returns newlines))
                  (:copier nil))
   "A file-backed leaf: BYTES octets of MAPPING starting at OFFSET."
   (mapping nil :type mapping :read-only t)
   (offset 0 :type fixnum :read-only t))
 
 (defstruct (branch (:include node)
-                   (:constructor %make-branch (children height bytes chars utf16 lines invalid))
+                   (:constructor %make-branch (children height bytes chars utf16 lines invalid returns newlines))
                    (:copier nil))
   "A branch: an immutable vector of 1 to +MAX-FANOUT+ children, all of HEIGHT - 1."
   (children #() :type simple-vector :read-only t)
@@ -85,22 +88,22 @@ unknown (unindexed spans)."
   "Return a leaf viewing OCTETS from START below END, without copying. Counts
 are computed by one scan."
   (declare (type octets octets) (type fixnum start end))
-  (multiple-value-bind (chars utf16 lines invalid) (summarise octets start end)
-    (%make-leaf octets start (- end start) chars utf16 lines invalid)))
+  (multiple-value-bind (chars utf16 lines invalid returns newlines) (summarise octets start end)
+    (%make-leaf octets start (- end start) chars utf16 lines invalid returns newlines)))
 
 (defun make-branch (children)
   "Return a branch over CHILDREN, a simple-vector of nodes of equal height,
 summing their counts; unknown counts in any child make the branch's unknown."
   (declare (type simple-vector children))
-  (let ((bytes 0) (chars 0) (utf16 0) (lines 0) (invalid 0))
-    (declare (type fixnum bytes chars utf16 lines invalid))
+  (let ((bytes 0) (chars 0) (utf16 0) (lines 0) (invalid 0) (returns 0) (newlines 0))
+    (declare (type fixnum bytes chars utf16 lines invalid returns newlines))
     (loop for c across children
           do (incf bytes (node-bytes c))
              (if (and (>= chars 0) (node-indexed-p c))
                  (progn (incf chars (node-chars c)) (incf utf16 (node-utf16 c)) (incf lines (node-lines c))
-                        (incf invalid (node-invalid c)))
-                 (setf chars -1 utf16 -1 lines -1 invalid -1)))
-    (%make-branch children (1+ (node-height (aref children 0))) bytes chars utf16 lines invalid)))
+                        (incf invalid (node-invalid c)) (incf returns (node-returns c)) (incf newlines (node-newlines c)))
+                 (setf chars -1 utf16 -1 lines -1 invalid -1 returns -1 newlines -1)))
+    (%make-branch children (1+ (node-height (aref children 0))) bytes chars utf16 lines invalid returns newlines)))
 
 ;;; Piece access: the content of a leaf or span
 
@@ -169,24 +172,44 @@ left passed at once."
   (let ((n (node-bytes node)) (remaining lines))
     (declare (type fixnum n remaining))
     (with-piece-sap (sap base) node
-      (let ((i base) (end (+ base n)) (returns (sap-holds-return-p sap base (+ base n))))
+      (let ((i base) (end (+ base n))
+            (returns (if (node-indexed-p node) (plusp (node-returns node)) (sap-holds-return-p sap base (+ base n)))))
         (declare (type fixnum i end))
-        (loop while (<= (+ i 8) end)
-              do (let ((count (if returns
-                                  (word-line-ends-form (sb-sys:sap-ref-64 sap i)
-                                                       (and (< (+ i 8) end) (sb-sys:sap-ref-8 sap (+ i 8))))
-                                  (logcount (word-octets-of (sb-sys:sap-ref-64 sap i) +newlines+)))))
-                   (declare (type fixnum count))
-                   (when (>= count remaining) (return))
-                   (decf remaining count)
-                   (incf i 8)))
-        (loop while (< i end)
-              do (let ((b (sb-sys:sap-ref-8 sap i)))
-                   (when (and (or (= b 10) (= b 13))
-                              (line-end-octet-p b (and (< (1+ i) end) (sb-sys:sap-ref-8 sap (1+ i)))))
-                     (decf remaining)
-                     (when (zerop remaining) (return (- (1+ i) base)))))
-                 (incf i))))))
+        (if returns
+            (progn
+              (loop while (<= (+ i 8) end)
+                    do (let ((count (word-line-ends-form (sb-sys:sap-ref-64 sap i)
+                                                         (and (< (+ i 8) end) (sb-sys:sap-ref-8 sap (+ i 8))))))
+                         (declare (type fixnum count))
+                         (when (>= count remaining) (return))
+                         (decf remaining count)
+                         (incf i 8)))
+              (loop while (< i end)
+                    do (let ((b (sb-sys:sap-ref-8 sap i)))
+                         (when (and (or (= b 10) (= b 13))
+                                    (line-end-octet-p b (and (< (1+ i) end) (sb-sys:sap-ref-8 sap (1+ i)))))
+                           (decf remaining)
+                           (when (zerop remaining) (return (- (1+ i) base)))))
+                       (incf i)))
+            ;; no carriage return: newlines alone, two words at a time while fewer than are left
+            (progn
+              (loop while (<= (+ i 16) end)
+                    do (let ((count (logcount (logior (word-octets-of (sb-sys:sap-ref-64 sap i) +newlines+)
+                                                      (ash (word-octets-of (sb-sys:sap-ref-64 sap (+ i 8)) +newlines+) -1)))))
+                         (declare (type fixnum count))
+                         (when (>= count remaining) (return))
+                         (decf remaining count)
+                         (incf i 16)))
+              (loop while (<= (+ i 8) end)
+                    do (let ((count (logcount (word-octets-of (sb-sys:sap-ref-64 sap i) +newlines+))))
+                         (declare (type fixnum count))
+                         (when (>= count remaining) (return))
+                         (decf remaining count)
+                         (incf i 8)))
+              (loop while (< i end)
+                    do (when (and (= (sb-sys:sap-ref-8 sap i) 10) (zerop (decf remaining)))
+                         (return (- (1+ i) base)))
+                       (incf i))))))))
 
 (defun piece-summarise (node start end)
   "SUMMARISE octets START below END of NODE's content: characters, UTF-16 units,
@@ -209,10 +232,12 @@ counted already gives its count when the range is all of it."
       (etypecase node
         (leaf (let ((octets (leaf-octets node)) (base (leaf-start node)))
                 (sb-sys:with-pinned-objects (octets)
-                  (newlines-sap (sb-sys:vector-sap octets) (+ base start) (+ base end) (+ base (node-bytes node))))))
+                  (newlines-sap (sb-sys:vector-sap octets) (+ base start) (+ base end) (+ base (node-bytes node))
+                                (if (node-indexed-p node) (plusp (node-returns node)) :look)))))
         (span (let ((mapping (span-mapping node)) (base (span-offset node)))
                 (check-mapping mapping)
-                (newlines-sap (mapping-sap mapping) (+ base start) (+ base end) (+ base (node-bytes node))))))))
+                (newlines-sap (mapping-sap mapping) (+ base start) (+ base end) (+ base (node-bytes node))
+                              (if (node-indexed-p node) (plusp (node-returns node)) :look)))))))
 
 (defun piece-octet (node i)
   "Return octet I of NODE's content."
@@ -307,9 +332,9 @@ O(END - START)."
   (etypecase node
     (leaf (make-leaf (leaf-octets node) (+ (leaf-start node) start) (+ (leaf-start node) end)))
     (span (if (node-indexed-p node)
-              (multiple-value-bind (chars utf16 lines invalid) (piece-summarise node start end)
-                (%make-span (span-mapping node) (+ (span-offset node) start) (- end start) chars utf16 lines invalid))
-              (%make-span (span-mapping node) (+ (span-offset node) start) (- end start) -1 -1 -1 -1)))))
+              (multiple-value-bind (chars utf16 lines invalid returns newlines) (piece-summarise node start end)
+                (%make-span (span-mapping node) (+ (span-offset node) start) (- end start) chars utf16 lines invalid returns newlines))
+              (%make-span (span-mapping node) (+ (span-offset node) start) (- end start) -1 -1 -1 -1 -1 -1)))))
 
 (defun rope-pieces (rope start end)
   "The leaves and spans of ROPE holding octets START below END, in order, as a
@@ -378,7 +403,7 @@ re-cuts them. Nothing is read from the file. Complexity: O(number of spans)."
   (let ((spans (make-array (ceiling (- end start) +span-size+))))
     (loop for i from 0 below (length spans)
           for s = (+ start (* i +span-size+))
-          do (setf (aref spans i) (%make-span mapping s (min +span-size+ (- end s)) -1 -1 -1 -1)))
+          do (setf (aref spans i) (%make-span mapping s (min +span-size+ (- end s)) -1 -1 -1 -1 -1 -1)))
     spans))
 
 (defun mapping-rope (mapping &optional (start 0) (end (mapping-length mapping)))
@@ -412,6 +437,11 @@ INDEX-ROPE first. Complexity: O(file size / +SPAN-SIZE+), nothing is read."
   "Number of raw bytes in ROPE: octets that are not part of well-formed UTF-8.
 O(1). Signals an error while ROPE is unindexed."
   (check-indexed rope) (node-invalid (rope-root rope)))
+(defun rope-holds-return-p (rope)
+  "True when ROPE may hold a carriage return: it does, or its counts are not
+known yet. O(1)."
+  (/= 0 (node-returns (rope-root rope))))
+
 (defun rope-lines (rope)
   "Number of line ends in ROPE (LINE-END-OCTET-P: newlines, and carriage
 returns no newline follows); the number of lines is one more. O(1).
@@ -465,8 +495,8 @@ START and END must be character boundaries. Complexity: O(END - START)."
                (when (< cut end)
                  (loop while (and (> cut start) (not (sap-cut-p sap cut 0 length)))
                        do (decf cut)))
-               (multiple-value-bind (chars utf16 lines invalid) (summarise-sap sap start cut)
-                 (push (%make-span mapping start (- cut start) chars utf16 lines invalid) spans))
+               (multiple-value-bind (chars utf16 lines invalid returns newlines) (summarise-sap sap start cut)
+                 (push (%make-span mapping start (- cut start) chars utf16 lines invalid returns newlines) spans))
                (setf start cut)))
     (nreverse spans)))
 
@@ -901,6 +931,49 @@ the number of line ends, in which case the last line's start is returned."
       (multiple-value-bind (leaf lbytes llines) (locate-newline rope line)
         (+ lbytes (or (piece-line-octets leaf (- line llines))
                       (error "Newline ~a not found in its leaf; the rope is corrupt." line))))))
+
+(defun byte->row (rope byte)
+  "The row of byte offset BYTE in ROPE as newlines alone count rows, as
+tree-sitter and git do: how many newlines come before it, a carriage return
+ending no row. Complexity: O(log n + leaf size)."
+  (declare (type fixnum byte))
+  (check-indexed rope) (check-byte-offset rope byte)
+  (let ((node (rope-root rope)) (bytes 0) (rows 0))
+    (declare (type fixnum bytes rows))
+    (loop while (branch-p node)
+          do (let* ((children (branch-children node)) (last (1- (length children))))
+               (loop for i fixnum from 0 to last
+                     for child = (aref children i)
+                     do (when (or (= i last) (< byte (+ bytes (node-bytes child))))
+                          (setf node child)
+                          (return))
+                        (incf bytes (node-bytes child)) (incf rows (node-newlines child)))))
+    (with-piece-sap (sap base) node
+      (+ rows (newlines-sap sap base (+ base (- byte bytes)) (+ base (- byte bytes)) nil)))))
+
+(defun row->byte (rope row)
+  "The byte offset where ROW (from 0) of ROPE begins as newlines alone count
+rows (BYTE->ROW): after its ROW-th newline; the end of the text when it has
+fewer. Complexity: O(log n + leaf size)."
+  (declare (type fixnum row))
+  (check-indexed rope)
+  (if (or (<= row 0) (> row (node-newlines (rope-root rope))))
+      (if (<= row 0) 0 (rope-bytes rope))
+      (let ((node (rope-root rope)) (bytes 0) (rows 0))
+        (declare (type fixnum bytes rows))
+        (loop while (branch-p node)
+              do (let* ((children (branch-children node)) (last (1- (length children))))
+                   (loop for i fixnum from 0 to last
+                         for child = (aref children i)
+                         do (when (or (= i last) (<= row (+ rows (node-newlines child))))
+                              (setf node child)
+                              (return))
+                            (incf bytes (node-bytes child)) (incf rows (node-newlines child)))))
+        (with-piece-sap (sap base) node
+          (loop for i fixnum from base below (+ base (node-bytes node))
+                do (when (and (= 10 (sb-sys:sap-ref-8 sap i)) (= row (incf rows)))
+                     (return (+ bytes (- i base) 1)))
+                finally (return (+ bytes (node-bytes node))))))))
 
 (defmacro with-rope-window ((window base end) (rope from to size) &body body)
   "Run BODY with WINDOW holding ROPE's octets from FROM below TO, both clipped
@@ -1774,7 +1847,9 @@ parting a carriage return from the newline after it."
                      (if indexed
                          (unless (and (= (node-chars node) (reduce #'+ children :key #'node-chars))
                                       (= (node-utf16 node) (reduce #'+ children :key #'node-utf16))
-                                      (= (node-lines node) (reduce #'+ children :key #'node-lines)))
+                                      (= (node-lines node) (reduce #'+ children :key #'node-lines))
+                                      (= (node-returns node) (reduce #'+ children :key #'node-returns))
+                                      (= (node-newlines node) (reduce #'+ children :key #'node-newlines)))
                            (error "Branch counts disagree with its children."))
                          (when (node-indexed-p node)
                            (error "Branch claims counts but has an unindexed child.")))))
@@ -1783,11 +1858,12 @@ parting a carriage return from the newline after it."
                      (when (> (node-bytes node) most)
                        (error "Leaf of ~a octets exceeds ~a." (node-bytes node) most)))
                    (when (node-indexed-p node)
-                     (multiple-value-bind (c u l v) (piece-summarise node 0 (node-bytes node))
+                     (multiple-value-bind (c u l v r n) (piece-summarise node 0 (node-bytes node))
                        (unless (and (= (node-chars node) c) (= (node-utf16 node) u) (= (node-lines node) l)
-                                    (= (node-invalid node) v))
-                         (error "Leaf counts ~a/~a/~a/~a disagree with rescan ~a/~a/~a/~a."
-                                (node-chars node) (node-utf16 node) (node-lines node) (node-invalid node) c u l v))))))))
+                                    (= (node-invalid node) v) (= (node-returns node) r) (= (node-newlines node) n))
+                         (error "Leaf counts ~a/~a/~a/~a/~a/~a disagree with rescan ~a/~a/~a/~a/~a/~a."
+                                (node-chars node) (node-utf16 node) (node-lines node) (node-invalid node) (node-returns node)
+                                (node-newlines node) c u l v r n))))))))
     (check (rope-root rope) (node-height (rope-root rope)))
     ;; every indexed leaf starts where a character of the whole text starts, and
     ;; never with the newline of a carriage return that ends an indexed leaf before it
@@ -1795,12 +1871,12 @@ parting a carriage return from the newline after it."
       (map-leaves (lambda (node)
                     (when (and (node-indexed-p node) (plusp at) (not (char-boundary-p rope at)))
                       (error "An indexed leaf starts at ~a, inside a character." at))
-                    (when (and previous (node-indexed-p previous) (node-indexed-p node)
-                               (plusp (node-bytes previous)) (plusp (node-bytes node))
+                    (when (and previous (node-indexed-p previous) (node-indexed-p node) (plusp (node-bytes node))
                                (= 13 (piece-octet previous (1- (node-bytes previous))))
                                (= 10 (piece-octet node 0)))
                       (error "A leaf starts at ~a with the newline of a carriage return before it." at))
-                    (setf previous node)
+                    ;; an empty leaf between them parts nothing
+                    (when (plusp (node-bytes node)) (setf previous node))
                     (incf at (node-bytes node)))
                   rope))
     t))

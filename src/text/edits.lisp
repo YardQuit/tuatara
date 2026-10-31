@@ -82,13 +82,13 @@ Complexity: O(the edited stretch + edit sizes)."
          (hi (max lo hi))
          (middle (let ((octets (make-octets (- hi lo))))
                    (piece-copy node lo hi octets 0)
-                   (%make-leaf octets 0 (- hi lo) -1 -1 -1 -1)))
+                   (%make-leaf octets 0 (- hi lo) -1 -1 -1 -1 -1 -1)))
          (mapping (span-mapping node))
          (offset (span-offset node)))
     (concatenate 'simple-vector
-                 (if (plusp lo) (vector (%make-span mapping offset lo -1 -1 -1 -1)) #())
+                 (if (plusp lo) (vector (%make-span mapping offset lo -1 -1 -1 -1 -1 -1)) #())
                  (rebuild-leaf middle (+ leaf-start lo) edits i j scratch)
-                 (if (< hi size) (vector (%make-span mapping (+ offset hi) (- size hi) -1 -1 -1 -1)) #()))))
+                 (if (< hi size) (vector (%make-span mapping (+ offset hi) (- size hi) -1 -1 -1 -1 -1 -1)) #()))))
 
 (defun rebuild-leaf (node leaf-start edits i j scratch)
   "Apply EDITS[I..J) to NODE (a leaf or span), whose text starts at byte
@@ -110,16 +110,21 @@ Complexity: O(leaf size + edit sizes)."
          (old-len (node-bytes node))
          (new-len old-len)
          (indexed (node-indexed-p node))
-         (dchars 0) (dutf16 0) (dlines 0) (dinvalid 0)
+         (dchars 0) (dutf16 0) (dlines 0) (dinvalid 0) (dreturns 0) (ins-returns 0) (dnewlines 0) (ins-newlines 0)
          ;; Multi-cursor commands share one insertion vector across all edits:
          ;; summarise it once, not once per edit.
-         (last-ins nil) (ins-chars 0) (ins-utf16 0) (ins-lines 0) (ins-invalid 0) (ins-return nil)
+         (last-ins nil) (ins-chars 0) (ins-utf16 0) (ins-lines 0) (ins-invalid 0) (same 0)
          ;; a carriage return deleted, inserted or just before an edit may end a line
          ;; or not by what comes to follow it: the line ends are counted again
          (recount nil))
     (declare (type octets old)
-             (type fixnum base old-len new-len dchars dutf16 dlines dinvalid ins-chars ins-utf16 ins-lines ins-invalid)
+             (type fixnum base old-len new-len dchars dutf16 dlines dinvalid dreturns dnewlines ins-chars ins-utf16 ins-lines ins-invalid ins-returns ins-newlines same)
              (type (or null octets) last-ins))
+    (flet ((take-inserts ()
+             ;; the counts of the insert used SAME times since it was summarised
+             (incf dchars (* same ins-chars)) (incf dutf16 (* same ins-utf16)) (incf dlines (* same ins-lines))
+             (incf dinvalid (* same ins-invalid)) (incf dreturns (* same ins-returns)) (incf dnewlines (* same ins-newlines))
+             (setf same 0)))
     ;; Pass 1: the new length, the count deltas, and the deleted octets for undo.
     (loop for k of-type fixnum from i below j
           for e of-type edit = (aref edits k)
@@ -131,22 +136,23 @@ Complexity: O(leaf size + edit sizes)."
                (when (> en s)
                  (decf new-len (- en s))
                  (when indexed
-                   (multiple-value-bind (c u l v) (summarise old (+ base s) (+ base en))
-                     (declare (type fixnum c u l v))
-                     (decf dchars c) (decf dutf16 u) (decf dlines l) (decf dinvalid v))
-                   (when (find 13 old :start (+ base s) :end (+ base en))
-                     (setf recount t)))
+                   (multiple-value-bind (c u l v r n) (summarise old (+ base s) (+ base en))
+                     (declare (type fixnum c u l v r n))
+                     (decf dchars c) (decf dutf16 u) (decf dlines l) (decf dinvalid v) (decf dreturns r) (decf dnewlines n)
+                     (when (plusp r) (setf recount t))))
                  (push (subseq old (+ base s) (+ base en)) (edit-deleted e)))
                (when (and (edit-insert e) (>= (edit-start e) leaf-start))
                  (let ((ins (edit-insert e)))
                    (declare (type octets ins))
                    (when indexed
                      (unless (eq ins last-ins)
-                       (multiple-value-setq (ins-chars ins-utf16 ins-lines ins-invalid) (summarise ins 0 (length ins)))
-                       (setf last-ins ins ins-return (find 13 ins)))
-                     (incf dchars ins-chars) (incf dutf16 ins-utf16) (incf dlines ins-lines) (incf dinvalid ins-invalid)
-                     (when ins-return (setf recount t)))
+                       (take-inserts)
+                       (multiple-value-setq (ins-chars ins-utf16 ins-lines ins-invalid ins-returns ins-newlines) (summarise ins 0 (length ins)))
+                       (setf last-ins ins)
+                       (when (plusp ins-returns) (setf recount t)))
+                     (incf same))
                    (incf new-len (length ins))))))
+    (take-inserts))
     (if (zerop new-len)
         #()
         ;; Pass 2: build the new octets in one pass.
@@ -173,7 +179,9 @@ Complexity: O(leaf size + edit sizes)."
                                              (if recount
                                                  (nth-value 2 (summarise new 0 new-len))
                                                  (+ (node-lines node) dlines))
-                                             (+ (node-invalid node) dinvalid))))
+                                             (+ (node-invalid node) dinvalid)
+                                             (+ (node-returns node) dreturns)
+                                             (+ (node-newlines node) dnewlines))))
                 (t (vector (make-leaf new))))))))
 
 (defun merge-small-leaves (leaves)
@@ -198,7 +206,9 @@ pair fits in +MAX-LEAF+. Unindexed spans are left alone."
                                                  (+ (node-chars current) (node-chars next))
                                                  (+ (node-utf16 current) (node-utf16 next))
                                                  (+ (node-lines current) (node-lines next))
-                                                 (+ (node-invalid current) (node-invalid next)))))
+                                                 (+ (node-invalid current) (node-invalid next))
+                                                 (+ (node-returns current) (node-returns next))
+                                                 (+ (node-newlines current) (node-newlines next)))))
                      (progn (vector-push-extend current out) (setf current next))))
         (vector-push-extend current out)
         (coerce out 'simple-vector))))

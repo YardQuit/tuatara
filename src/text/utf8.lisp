@@ -351,15 +351,16 @@ are its newlines alone."
 
 (defun summarise-sap (sap start end)
   "Scan the octets at SAP from offset START, which must start a character,
-below END, and return four values: characters (a raw byte is one), UTF-16 code
-units (a raw byte is one), line ends (LINE-END-OCTET-P, a carriage return at
-END - 1 ending one), and raw bytes. Words of eight ASCII octets go at once,
-two at a time where no carriage return is. Complexity: O(END - START)."
+below END, and return five values: characters (a raw byte is one), UTF-16
+code units (a raw byte is one), line ends (LINE-END-OCTET-P, a carriage
+return at END - 1 ending one), raw bytes, carriage returns, and newlines. Words of
+eight ASCII octets go at once, two at a time where no carriage return is.
+Complexity: O(END - START)."
   (declare (type sb-sys:system-area-pointer sap) (type fixnum start end) (optimize speed (safety 0)))
-  (let ((chars 0) (utf16 0) (lines 0) (invalid 0) (state 0) (pending 0) (i start)
+  (let ((chars 0) (utf16 0) (lines 0) (invalid 0) (state 0) (pending 0) (i start) (crs 0) (lfs 0)
         (classes **utf8-classes**) (next **utf8-next**)
         (returns (sap-holds-return-p sap start end)))
-    (declare (type fixnum chars utf16 lines invalid state pending i)
+    (declare (type fixnum chars utf16 lines invalid state pending i crs lfs)
              (type (simple-array (unsigned-byte 8) (256)) classes)
              (type (simple-array (unsigned-byte 8) (96)) next))
     (loop
@@ -370,6 +371,8 @@ two at a time where no carriage return is. Complexity: O(END - START)."
                        (declare (type (unsigned-byte 64) word))
                        (unless (zerop (logand word +ascii-mask+)) (return))
                        (incf lines (the fixnum (word-line-ends-form word (and (< (+ i 8) end) (sb-sys:sap-ref-8 sap (+ i 8))))))
+                       (when (word-holds-p word +returns+) (incf crs (logcount (word-octets-of word +returns+))))
+                       (incf lfs (logcount (word-octets-of word +newlines+)))
                        (incf chars 8) (incf utf16 8) (incf i 8)))
             ;; no carriage return: the newlines of two words counted at once
             (progn
@@ -392,6 +395,8 @@ two at a time where no carriage return is. Complexity: O(END - START)."
         (declare (type (unsigned-byte 8) b n))
         (case n
           (0 (incf chars) (incf utf16 (if (= pending 3) 2 1))
+             (when (= b 13) (incf crs))
+             (when (= b 10) (incf lfs))
              (when (or (= b 10)
                        (and returns (= b 13) (line-end-octet-p b (and (< (1+ i) end) (sb-sys:sap-ref-8 sap (1+ i))))))
                (incf lines))
@@ -401,17 +406,19 @@ two at a time where no carriage return is. Complexity: O(END - START)."
           (8 (incf chars pending) (incf utf16 pending) (incf invalid pending)
              (setf state 0 pending 0))
           (t (setf state n) (incf pending) (incf i)))))
-    (values (+ chars pending) (+ utf16 pending) lines (+ invalid pending))))
+    (values (+ chars pending) (+ utf16 pending) lines (+ invalid pending) crs (if (zerop crs) lines lfs))))
 
-(defun newlines-sap (sap start end &optional (limit end))
+(defun newlines-sap (sap start end &optional (limit end) (returns :look))
   "Count the line ends (LINE-END-OCTET-P) at SAP from offset START below END,
 eight octets at a time, the text going on to LIMIT: a carriage return at
 END - 1 ends a line unless the octet at END, below LIMIT, is a newline. Line
-ends are never part of another character in UTF-8. Complexity: O(END - START)."
+ends are never part of another character in UTF-8. RETURNS says whether the
+octets hold a carriage return, when that is known; by default it is looked
+for. Complexity: O(END - START)."
   (declare (type sb-sys:system-area-pointer sap) (type fixnum start end limit) (optimize speed (safety 0)))
   (let ((lines 0) (i start))
     (declare (type fixnum lines i))
-    (if (sap-holds-return-p sap start end)
+    (if (if (eq returns :look) (sap-holds-return-p sap start end) returns)
         (progn
           (loop while (<= (+ i 8) end)
                 do (incf lines (the fixnum (word-line-ends-form (sb-sys:sap-ref-64 sap i)

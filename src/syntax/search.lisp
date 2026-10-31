@@ -1179,7 +1179,7 @@ crossing."
   (labels ((walk (x) (or (and (symbolp x) (member x keywords)) (and (consp x) (or (walk (car x)) (walk (cdr x)))))))
     (and (walk tree) t)))
 
-(defstruct (regex-traits (:constructor make-regex-traits (&key needle shape fold prefix line-bound end-anchored reach))
+(defstruct (regex-traits (:constructor make-regex-traits (&key needle shape fold prefix line-bound end-anchored reach plain))
                          (:copier nil))
   "What COMPILE-REGEX learnt about a pattern for scanning a rope: NEEDLE, the
 octets of text every match holds (ASCII case folded when FOLD), or NIL; SHAPE,
@@ -1190,7 +1190,7 @@ within a line; END-ANCHORED true when the pattern uses \\z or \\Z, which only
 match at the end of the text; REACH, the octets past the stretch a match starts
 in that a scan looks, +REGEX-OVERLAP+ or for a thorough scanner
 *REGEX-LONGEST-MATCH*."
-  (needle nil) (shape nil) (fold nil) (prefix nil) (line-bound nil) (end-anchored nil) (reach +regex-overlap+))
+  (needle nil) (shape nil) (fold nil) (prefix nil) (line-bound nil) (end-anchored nil) (reach +regex-overlap+) (plain nil))
 
 (setf (documentation 'make-regex-traits 'function) "Return the REGEX-TRAITS of a pattern from what its keys say."
       (documentation 'regex-traits-p 'function) "True when OBJECT is a REGEX-TRAITS."
@@ -1200,7 +1200,8 @@ in that a scan looks, +REGEX-OVERLAP+ or for a thorough scanner
       (documentation 'regex-traits-prefix 'function) "True when every match of the pattern starts with its needle or shape."
       (documentation 'regex-traits-line-bound 'function) "True when every match of the pattern lies within a line."
       (documentation 'regex-traits-end-anchored 'function) "True when the pattern matches only at the end of the text (\\z, \\Z)."
-      (documentation 'regex-traits-reach 'function) "Octets past the stretch a match starts in that a scan for the pattern looks.")
+      (documentation 'regex-traits-reach 'function) "Octets past the stretch a match starts in that a scan for the pattern looks."
+      (documentation 'regex-traits-plain 'function) "The pattern's scanner for text without a carriage return, or NIL when it is the same.")
 
 (defvar *regex-thorough* nil
   "True while a thorough command runs (regex-search-forward-thorough and the
@@ -1346,15 +1347,23 @@ words why)."
 (defun compile-engine-pattern (regex case-fold thorough)
   "COMPILE-REGEX's work on REGEX, as ENGINE-PATTERN gives it."
   (let* ((tree (ignore-errors (cl-ppcre:parse-string regex)))
+         (filtered (and tree (search *filter-mark* regex)))
+         (lines (and tree (line-tree tree)))
          (scanner (let ((cl-ppcre:*use-bmh-matchers* t))
                     ;; constant text found by skipping (Boyer-Moore-Horspool): three times faster
                     ;; where matches are many and case is folded
-                    (cl-ppcre:create-scanner (cond ((and tree (search *filter-mark* regex))
+                    (cl-ppcre:create-scanner (cond (filtered
                                                     ;; card numbers: read by code as they are matched
-                                                    (filter-tree (line-tree tree)))
-                                                   (tree (line-tree tree))
+                                                    (filter-tree lines))
+                                                   (tree lines)
                                                    (t regex))
-                                             :case-insensitive-mode case-fold :multi-line-mode t))))
+                                             :case-insensitive-mode case-fold :multi-line-mode t)))
+         ;; for text without a carriage return, where its lines end at newlines alone, the
+         ;; pattern as written does the same, and quicker
+         (plain (and tree (not (equal (if (stringp tree) (list :sequence tree) tree) lines))
+                     (let ((cl-ppcre:*use-bmh-matchers* t))
+                       (cl-ppcre:create-scanner (if filtered (filter-tree tree) regex)
+                                                :case-insensitive-mode case-fold :multi-line-mode t)))))
     (when tree
       ;; (?i) and the like, and a group's own, (?i:a): what a match must hold, and
       ;; whether it stays within a line, cannot be read from the text then
@@ -1377,7 +1386,7 @@ words why)."
           (setf (gethash scanner **regex-traits**)
                 (let ((line-bound (and (not flags) (not (crosses-lines-p tree)))))
                   (make-regex-traits :needle (and literal (needle-octets literal case-fold)) :fold case-fold
-                                     :shape shape
+                                     :shape shape :plain plain
                                      :prefix (and (or literal shape) prefix-p)
                                      :line-bound line-bound
                                      :end-anchored (tree-has tree :modeless-end-anchor :modeless-end-anchor-no-newline)
@@ -1521,7 +1530,8 @@ one does (WITH-DECODER)."
     (return-from map-slice-matches
       (with-decoder (spare) (map-slice-matches function rope scanner line start end :decoder spare :texts texts))))
   (multiple-value-bind (string count table) (decode-window decoder rope line end)
-    (let ((from (octet-index table (- start line) count)))
+    (let ((from (octet-index table (- start line) count))
+          (scanner (scanner-for-rope scanner rope)))
       (declare (type fixnum from))
       (loop
         (when (> from count) (return nil))
@@ -1535,6 +1545,14 @@ one does (WITH-DECODER)."
                                   (matched-groups texts string group-starts group-ends))))
             (when result (return result))
             (setf from (if (= ms me) (1+ ms) me))))))))
+
+(defun scanner-for-rope (scanner rope &optional (traits (gethash scanner **regex-traits**)))
+  "The scanner to match SCANNER's pattern with in ROPE: where ROPE holds no
+carriage return, its lines ending at newlines alone, the pattern as written
+\(REGEX-TRAITS-PLAIN), which matches the same there and quicker; else SCANNER.
+O(1)."
+  (let ((plain (and traits (regex-traits-plain traits))))
+    (if (and plain (not (tuatara.text:rope-holds-return-p rope))) plain scanner)))
 
 (defun needle-line (octets filled needle fold from)
   "The line of the first occurrence of NEEDLE (folded when FOLD) in the
@@ -1603,6 +1621,7 @@ new buffers."
          (pos (tuatara.text:rope-char-start rope (min start total)))
          (last-end -1)
          (traits (gethash scanner **regex-traits**))
+         (scanner (scanner-for-rope scanner rope traits))
          (needle (and traits (regex-traits-needle traits)))
          (shape (and traits (regex-traits-shape traits)))
          (needle-length (cond (needle (length needle)) (shape (length shape)) (t 0)))
