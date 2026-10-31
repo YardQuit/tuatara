@@ -43,6 +43,9 @@ the jobs and drops those marked.")
 (define-test (jobs mode-line-of-its-buffer)
   (let ((tuatara.defaults::*rewrite-piece-hook* (lambda () (sleep 0.3))))
     (with-background ()
+      ;; a buffer of that name left by a session before is not the new one
+      (let ((left (tuatara.buffer:find-buffer "other")))
+        (when left (tuatara.buffer:kill-buffer left)))
       ;; a job says nothing in the mode line of another buffer
       (let ((f (run-keys "r r % a / b RET C-x b o t h e r C-j" :text "a a a" :width 150)))
         (true (processing-shown f "TUATARA[" "*scratch*"))

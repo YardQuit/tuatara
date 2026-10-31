@@ -787,11 +787,15 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
     (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
       (wait-for-evidence-links)
       (false (tuatara.defaults::project-trusted-p root))
-      (true (tuatara.frontend.fake:fake-frame-showing
-             (run-keys "C-x g" :file (concatenate 'string work "notes.txt") :width 400 :height 20)
-             "is not trusted: "))
-      (false (find-if (lambda (b) (eq (type-of (tuatara.defaults::buffer-major-mode b)) 'tuatara.defaults::git-status-mode))
-                      tuatara.buffer:*buffers*))
+      (flet ((statuses ()
+               (remove-if-not (lambda (b) (typep (tuatara.defaults::buffer-major-mode b) 'tuatara.defaults::git-status-mode))
+                              tuatara.buffer:*buffers*)))
+        ;; the statuses other tests left are theirs: no new one is made
+        (let ((before (statuses)))
+          (true (tuatara.frontend.fake:fake-frame-showing
+                 (run-keys "C-x g" :file (concatenate 'string work "notes.txt") :width 400 :height 20)
+                 "is not trusted: "))
+          (false (set-difference (statuses) before))))
       (handler-case (progn (tuatara.defaults::run-git root '("checkout" "--" ".")) (false t))
         (tuatara.io:writing-refused (e)
           (let ((words (princ-to-string e)))
