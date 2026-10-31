@@ -1047,7 +1047,7 @@
 
 (define-language ink
   "Ink: inkle's language for interactive stories, parsed with tree-sitter-ink."
-  :grammar "ink" :modes (ink-mode) :indent 4 :queries "ink" :injection-names "ink")
+  :grammar "ink" :modes (ink-mode) :indent 4 :queries "ink" :injection-names "ink" :definitions :textobjects)
 
 (define-major-mode inko-mode prog-mode
   "Inko source."

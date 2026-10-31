@@ -1,13 +1,13 @@
 diff --git a/src/scanner.c b/src/scanner.c
-index f58c8dd..f045549 100644
+index 03ee889..263dd5b 100644
 --- a/src/scanner.c
 +++ b/src/scanner.c
-@@ -276,7 +276,7 @@ static bool check_commment_start(TSLexer *lexer, const bool *valid_symbols) {
-         } else if (lexer->lookahead == '/') {
-             lexer->advance(lexer, false);
-             lexer->result_symbol = LINE_COMMENT;
--            while (lexer->lookahead != '\n' && lexer->lookahead != '\r') {
-+            while (lexer->lookahead != '\n' && lexer->lookahead != '\r' && !lexer->eof(lexer)) {
-                 lexer->advance(lexer, false);
-             }
-             return true;
+@@ -158,7 +158,7 @@ unsigned tree_sitter_ink_external_scanner_serialize(void *payload, char *buffer)
+   buffer[size++] = scanner->remaining_flow_marks;
+   buffer[size++] = scanner->block_type;
+ 
+-  for (uint32_t i = 0; i < scanner->blocks.size && size <= TREE_SITTER_SERIALIZATION_BUFFER_SIZE; i++) {
++  for (uint32_t i = 0; i < scanner->blocks.size && size < TREE_SITTER_SERIALIZATION_BUFFER_SIZE; i++) {
+     buffer[size] = (char) *array_get(&scanner->blocks, i);
+     size++;
+   }

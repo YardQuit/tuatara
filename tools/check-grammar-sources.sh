@@ -111,10 +111,13 @@ fetch_history() {
   echo "$dir"
 }
 
-# the files compiled from, at COMMIT of the repository fetched into DIR, fetched when missing
+# the files of COMMIT of the repository at URL, fetched when missing into
+# DIR, a repository of whole commits beside the one of histories alone
 fetch_files() {
   local dir="$1" url="$2" commit="$3"
-  grammar_git -C "$dir" cat-file -e "$commit^{tree}" 2>/dev/null || grammar_git -C "$dir" fetch -q --depth 1 "$url" "$commit" 2>/dev/null
+  [ -d "$dir" ] || grammar_git init -q --bare "$dir" || return 1
+  grammar_git -C "$dir" cat-file -e "$commit^{tree}" 2>/dev/null ||
+    grammar_git -C "$dir" fetch -q --depth 1 "$url" "$commit" 2>/dev/null
 }
 
 while IFS=$'\t' read -r name url commit; do
@@ -155,15 +158,17 @@ while IFS=$'\t' read -r name url commit; do
   read -r old old_url < <(committed_pin "$name"; echo)
   if [ -n "$old" ] && [ "$old" != "$commit" ]; then
     # the old commit from where it was fetched: a grammar may have moved to another repository
-    if fetch_files "$dir" "$old_url" "$old" && fetch_files "$dir" "$url" "$commit"; then
+    files="$work/${name//\//_}.files.git"
+    if fetch_files "$files" "$old_url" "$old" && fetch_files "$files" "$url" "$commit"; then
       out="$work/${name//\//_}.diff"
       { echo "$name: ${old:0:12} -> ${commit:0:12} (${old_url}${old_url:+ -> }$url)"
+        # the commits between, where the history has both
         grammar_git -C "$dir" log --oneline --no-decorate "$old..$commit" 2>/dev/null | head -50 || true
         echo
-        grammar_git -C "$dir" diff --stat "$old" "$commit"
+        grammar_git -C "$files" diff --stat "$old" "$commit"
         echo
         # the scanner and headers in full; the generated parser's size only
-        grammar_git -C "$dir" diff "$old" "$commit" -- grammar.js '*.h' '*scanner.c' '*scanner.cc' '*.c' ':!*parser.c'
+        grammar_git -C "$files" diff "$old" "$commit" -- grammar.js '*.h' '*scanner.c' '*scanner.cc' '*.c' ':!*parser.c'
       } > "$out"
       diffs+=("$name: $out")
     else

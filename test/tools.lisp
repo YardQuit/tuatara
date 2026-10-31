@@ -313,7 +313,9 @@ and the Quicklisp folder."
                    "Philipp-M/tree-sitter-yuck"
                    ;; copies of a grammar kept on elsewhere: taken from where it is kept
                    "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"
-                   "mtoohey31/tree-sitter-gitattributes" "numtide/tree-sitter-nix"))
+                   "mtoohey31/tree-sitter-gitattributes" "numtide/tree-sitter-nix"
+                   ;; its pin on a tag alone, the history rewritten: the grammar Helix takes in its place
+                   "rhizoome/tree-sitter-ink2"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)
              "~a has moved" old))
     ;; archived, their development carried on elsewhere

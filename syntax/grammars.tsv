@@ -223,7 +223,7 @@ haskell-literate	https://github.com/LaurentRDC/tree-sitter-haskell-literate	8ad7
 hdl	https://github.com/quantonganh/tree-sitter-hdl	2199fdf1d302100a53002ea2cf540999119836a0	MIT
 hoon	https://github.com/urbit-pilled/tree-sitter-hoon	1545137aadcc63660c47db9ad98d02fa602655d0	BSD-3-Clause
 hurl	https://github.com/pfeiferj/tree-sitter-hurl	597efbd7ce9a814bb058f48eabd055b1d1e12145	Apache-2.0
-ink	https://github.com/rhizoome/tree-sitter-ink2	8486e9b1627b0bc6b2deb9ee8102277a7c1281ac	Apache-2.0
+ink	https://github.com/wldmr/tree-sitter-ink	632072bab485ab4c705c39cb9aae9eaeac6893ba	MPL-2.0
 inko	https://codeberg.org/inko-lang/tree-sitter-inko	f58a87ac4dc6a7955c64c9e4408fbd693e804686	MPL-2.0
 jjdescription	https://github.com/kareigu/tree-sitter-jjdescription	1613b8c85b6ead48464d73668f39910dcbb41911	MIT
 kcl	https://github.com/KittyCAD/tree-sitter-kcl	8905e0bdbf5870b50bc3f24345f1af27746f42e8	MIT
