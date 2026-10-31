@@ -35,10 +35,12 @@ more than one octet in it, and once with its lines ending in CR LF."
       (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::org-parts) kept))))
 
 (defun org-parts-whole-view (buffer)
-  "An ORG-VIEW of all of BUFFER from its whole parse, as ORG-PARSE reads it."
-  (multiple-value-bind (text returns) (tuatara.defaults::org-strip-returns (tuatara.buffer:buffer-string buffer))
-    (tuatara.defaults::make-org-view (tuatara.defaults::org-parse text) text 0 (tuatara.buffer:buffer-size buffer)
-                                     (if (tuatara.defaults::buffer-crlf-p buffer) returns nil) t)))
+  "An ORG-VIEW of all of BUFFER from its whole parse, as ORG-PARSE reads it:
+the carriage returns before newlines left out only where lines end in CR LF."
+  (multiple-value-bind (text returns) (if (tuatara.defaults::buffer-crlf-p buffer)
+                                          (tuatara.defaults::org-strip-returns (tuatara.buffer:buffer-string buffer))
+                                          (values (tuatara.buffer:buffer-string buffer) nil))
+    (tuatara.defaults::make-org-view (tuatara.defaults::org-parse text) text 0 (tuatara.buffer:buffer-size buffer) returns t)))
 
 (defun org-parts-colours (buffer views)
   "The colours of all of BUFFER from VIEWS, in order of where they begin (code in its language's colours left out)."
@@ -60,6 +62,12 @@ more than one octet in it, and once with its lines ending in CR LF."
                     (expected (org-parts-colours buffer (list whole))))
                (true expected)
                (is equal expected (org-parts-colours buffer parts))
+               ;; and read from the whole parse, once one is made
+               (let ((tuatara.defaults::*org-parse-at-once* most-positive-fixnum))
+                 (tuatara.defaults::org-buffer-tree buffer))
+               (let ((from-whole (tuatara.defaults::org-views buffer 0 size)))
+                 (true (every #'tuatara.defaults::org-view-root from-whole))
+                 (is equal expected (org-parts-colours buffer from-whole)))
                (is equal (loop for (s . e) in (tuatara.defaults::org-hidden-chars (tuatara.defaults::org-view-tree whole) 0 (length (tuatara.defaults::org-view-text whole)))
                                collect (if (consp e)
                                            (list (tuatara.defaults::org-view-byte buffer whole s) (tuatara.defaults::org-view-byte buffer whole (first e)) (second e) nil)
@@ -305,4 +313,55 @@ headline's title objects too), to tell two parses apart."
              (is equalp (nth-value 1 (tuatara.defaults::org-strip-returns (tuatara.buffer:buffer-string buffer)))
                  (tuatara.defaults::org-returns-of buffer)))
            (true (< read 1000) "~:d octets read" read))
+      (tuatara.buffer:kill-buffer buffer))))
+
+(defun org-parts-many (count)
+  "A text of COUNT short parts, a headline and a line under each."
+  (with-output-to-string (out)
+    (dotimes (i count) (format out "* H~d~%text~%" i))))
+
+(define-test (org-internals edits-in-a-batch-cost-alike-however-many-parts)
+  ;; a batch of many edits (a replacement of every match) is taken in at once: each edit costs alike whatever
+  ;; the number of parts, where each moved every part after it (110 µs an edit at 100,000 parts)
+  (flet ((seconds (parts edits)
+           (let* ((text (org-parts-many parts))
+                  (buffer (org-parts-buffer text nil)))
+             (unwind-protect
+                  (progn
+                    (tuatara.defaults::org-buffer-parts buffer)
+                    (let ((step (floor (length text) edits)))
+                      (tuatara.buffer:buffer-edit buffer (coerce (loop for i below edits
+                                                                       collect (tuatara.text:make-edit (+ 3 (* i step)) (+ 3 (* i step))
+                                                                                                       (tuatara.text:string-octets "y")))
+                                                                 'vector)))
+                    (let ((start (get-internal-real-time)))
+                      (tuatara.defaults::org-buffer-parts buffer)
+                      (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
+               (tuatara.buffer:kill-buffer buffer)))))
+    (let ((per-edit (/ (- (seconds 80000 8000) (seconds 80000 2000)) 6000)))
+      (true (< per-edit 2/100000) "~,1f µs for each edit more, at 80,000 parts" (* 1000000 per-edit)))))
+
+(define-test (org-internals whole-parse-holds-the-parts)
+  ;; once the whole parse is made, the parts are read from it: no part keeps a parse of its own, nothing is
+  ;; held twice, and a large part is not parsed again
+  (let* ((big (with-output-to-string (out) (dotimes (i 600) (format out "- item ~d with *bold* text~%" i))))
+         (text (concatenate 'string (format nil "* A~%") big (org-parts-many 50)))
+         (buffer (org-parts-buffer text nil))
+         (parsed 0)
+         (parse (fdefinition 'tuatara.defaults::org-parse)))
+    (unwind-protect
+         (let ((tuatara.defaults::*org-parse-at-once* 8192))
+           (tuatara.defaults::org-views buffer 0 (tuatara.buffer:buffer-size buffer))
+           (let ((tuatara.defaults::*org-parse-at-once* most-positive-fixnum))
+             (tuatara.defaults::org-buffer-tree buffer))
+           (let ((parts (tuatara.defaults::org-buffer-parts buffer)))
+             (true (loop for i below (tuatara.defaults::org-parts-count parts)
+                         never (tuatara.defaults::org-part-parse (tuatara.defaults::org-part-at parts i)))))
+           (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text &rest arguments)
+                                                                     (incf parsed (length text))
+                                                                     (apply parse text arguments))))
+             (let ((views (tuatara.defaults::org-views buffer 0 (tuatara.buffer:buffer-size buffer))))
+               (true (every #'tuatara.defaults::org-view-current views))
+               (true (every #'tuatara.defaults::org-view-root views))))
+           (is = 0 parsed))
       (tuatara.buffer:kill-buffer buffer))))

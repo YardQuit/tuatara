@@ -249,8 +249,8 @@ BUFFER the part begins at, RETURNS those the part's text left out."
 
 (defun org-worker-parse (job)
   "Parse what JOB, as ORG-WANT-PARSE asks for it, holds: (TREE TEXT RETURNS
-MADE), MADE the parts parsed for a whole buffer's parse (ORG-ASSEMBLE); NIL
-for a text the parser cannot read."
+PLACES), PLACES where the parts are in a whole buffer's parse (ORG-ASSEMBLE);
+NIL for a text the parser cannot read."
   (destructuring-bind (version source crlf keywords) job
     (declare (ignore version))
     (if (org-snapshot-p source)
@@ -275,10 +275,10 @@ RESULT in one step, EDITOR, when given, woken for it."
                 (parse (org-worker-parse job)))
            (setf (org-state-parse-seconds state) (tuatara.runtime:seconds-since start))
            ;; the result put in whatever came of it: a text the parser cannot read is not asked for again and again
-           (destructuring-bind (&optional tree text returns made) parse
+           (destructuring-bind (&optional tree text returns places) parse
              (setf (org-state-result state)
                    (list tree text (first job) returns (and tree (org-src-language-names tree))
-                         (and made (cons (second job) made))))
+                         (and places (cons (second job) places))))
              (when (and tree editor) (wake-editor editor)))
            (sb-thread:with-mutex ((org-state-lock state))
              (sb-thread:condition-broadcast (org-state-done state))
@@ -350,7 +350,9 @@ code is coloured as soon as it is shown, the note redrawn as each is ready."
               (org-state-returns state) returns
               (org-state-version state) parsed)
         (when made
-          (org-keep-part-parses (car made) (cdr made)))
+          (org-keep-whole-places (car made) tree (cdr made))
+          ;; the parts are let go of with it, once taken
+          (setf (nth 5 result) nil))
         (org-warm-src-languages names)))))
 
 (defun org-await-parse (state version)
@@ -386,12 +388,12 @@ returned until that one is done; NIL while there has been none."
       (let ((parts (org-buffer-parts buffer)))
         (if (<= (tuatara.buffer:buffer-size buffer) *org-parse-at-once*)
             (let ((snapshot (org-parts-snapshot buffer parts)))
-              (multiple-value-bind (tree text returns made) (org-assemble snapshot)
+              (multiple-value-bind (tree text returns places) (org-assemble snapshot)
                 (setf (org-state-tree state) tree
                       (org-state-text state) text
                       (org-state-returns state) returns
                       (org-state-version state) version)
-                (org-keep-part-parses snapshot made)
+                (org-keep-whole-places snapshot tree places)
                 (org-warm-src-languages (org-src-language-names tree))))
             (progn
               (org-want-parse buffer state version (lambda () (org-parts-snapshot buffer parts)))
