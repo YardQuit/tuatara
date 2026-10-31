@@ -2000,11 +2000,13 @@ which the process is given apart too (PACKAGE-REQUEST-ALLOWED-P)."
 
 (defparameter *package-child-environment*
   '("PATH" "HOME" "USER" "LOGNAME" "LANG" "LC_ALL" "LC_CTYPE" "TZ" "TMPDIR"
-    "XDG_CONFIG_HOME" "XDG_CACHE_HOME" "XDG_DATA_HOME" "XDG_STATE_HOME" "XDG_RUNTIME_DIR"
+    "XDG_CONFIG_HOME" "XDG_CACHE_HOME" "XDG_DATA_HOME" "XDG_STATE_HOME"
     "SBCL_HOME" "QUICKLISP_SETUP")
   "The variables of the editor's environment a process compiling a package
-apart is given, and no others: none to reach the desktop, the keyring's
-agent or the session's message bus.")
+apart is given, and no others. This cuts down what it reaches by chance (the
+desktop, the keyring's agent, the session's message bus, whose sockets
+XDG_RUNTIME_DIR names); it is no sandbox: a package's code runs there with
+your full rights, as in the editor.")
 
 (defun package-child-environment (request token)
   "The environment of a process compiling a package apart, as REQUEST, a
