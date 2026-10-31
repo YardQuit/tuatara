@@ -230,7 +230,7 @@ typed: beside the repository's folder, named after it and the branch."
 (defun git-read-new-folder (prompt &key initial)
   "Ask with PROMPT for a folder that is not there yet, from INITIAL when
 given (READ-NEW-NATIVE-PATH); its path without its last /, or NIL, said so."
-  (let ((path (apply #'read-new-native-path prompt :kind :any (and initial (list :initial initial)))))
+  (let ((path (apply #'read-new-native-path prompt :kind :any :writing t (and initial (list :initial initial)))))
     (and path (string-right-trim "/" path))))
 
 (defun git-read-worktree-path (branch top)

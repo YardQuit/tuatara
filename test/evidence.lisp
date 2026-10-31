@@ -333,9 +333,11 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
   (true (tuatara.defaults::git-writes-work-tree-p '("apply" "--index" "-")))
   (true (tuatara.defaults::git-writes-work-tree-p '("restore" "--staged" "--worktree" "a.txt")))
   (true (tuatara.defaults::git-writes-work-tree-p '("a-command-not-known-yet")))
+  ;; commit and add run the repository's clean filters on its working files
+  (true (tuatara.defaults::git-writes-work-tree-p '("commit" "-m" "x")))
   (dolist (reading '(("status" "--porcelain") ("log" "-1") ("diff") ("blame" "a.txt") ("apply" "--cached" "-")
                      ("reset" "-q" "--" "a.txt") ("restore" "--staged" "a.txt") ("rm" "--cached" "a.txt")
-                     ("stash" "list") ("commit" "-m" "x") ("format-patch" "--stdout" "-1")))
+                     ("stash" "list") ("format-patch" "--stdout" "-1")))
     (false (tuatara.defaults::git-writes-work-tree-p reading) "~s" reading))
   (with-test-directory (dir)
     (let* ((root (namestring dir))
@@ -481,6 +483,32 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
         (put-file info (format nil "1 0 0:900 / / rw - x x rw~%2 1 0:901 / ~a rw - x x rw~%3 1 0:901 / ~a rw - x x rw~%"
                                (string-right-trim "/" (concatenate 'string root "cases")) (string-right-trim "/" other)))
         (is string= evidence (evidence-folder-of file))))))
+
+(define-test (evidence git-writes-nowhere-in-evidence)
+  ;; git's output files, other folders and repositories named, are refused in evidence; hooks off where a repository holds it
+  (with-test-directory (dir)
+    (let* ((repo (namestring (ensure-directories-exist (merge-pathnames "repo/" dir))))
+           (ev (namestring (ensure-directories-exist (merge-pathnames "ev/" dir))))
+           (inner (namestring (ensure-directories-exist (merge-pathnames "ev/inner/" dir)))))
+      (scratch-repository repo)
+      (scratch-repository inner)
+      (with-evidence-folders ((list ev))
+        (dolist (arguments `(("format-patch" "-o" ,ev "-1") ("format-patch" ,(format nil "--output-directory=~a" ev) "-1")
+                             ("bundle" "create" ,(concatenate 'string ev "b.bundle") "--all")
+                             ("log" ,(format nil "--output=~ax.txt" ev)) ("diff" "--output" ,(concatenate 'string ev "d.txt"))
+                             ("config" "--file" ,(concatenate 'string ev "cfg") "a.b" "c")
+                             ("worktree" "add" ,(concatenate 'string ev "wt"))
+                             ("-C" ,inner "status") (,(format nil "--work-tree=~a" ev) "checkout" "--" "a.txt")
+                             (,(format nil "--git-dir=~a.git" inner) "log")))
+          (true (refused-any (tuatara.defaults::run-git repo arguments)) "~s" arguments))
+        (is equal '("inner") (mapcar (lambda (p) (car (last (pathname-directory p)))) (uiop:subdirectories ev)))
+        (true (nth-value 1 (tuatara.defaults::run-git repo '("log" "-1"))))
+        ;; a repository holding evidence: no commit (its filters), its hooks never run
+        (let ((holding (namestring dir)))
+          (scratch-repository holding)
+          (true (refused-any (tuatara.defaults::run-git holding '("commit" "-m" "x" "--allow-empty"))))
+          (is string= (format nil "/dev/null~%")
+              (tuatara.text:octets-string (tuatara.defaults::run-git holding '("config" "--get" "core.hooksPath")))))))))
 
 (define-test (evidence projects-holding-evidence-untrusted)
   ;; a project holding an evidence folder runs no program of its own, trusted or not

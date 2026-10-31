@@ -23,29 +23,86 @@ those as names of files.")
 
 (defun git-safety (arguments)
   "The options of *GIT-SAFETY* git is given to run with ARGUMENTS."
-  (if (member (first arguments) *git-own-pathspecs* :test #'equal)
+  (if (member (first (git-command-words arguments)) *git-own-pathspecs* :test #'equal)
       (remove "--literal-pathspecs" *git-safety* :test #'string=)
       *git-safety*))
 
 (defparameter *git-commands-leaving-the-work-tree*
   '("status" "log" "diff" "show" "blame" "cat-file" "rev-parse" "ls-files" "ls-tree" "for-each-ref" "rev-list"
     "describe" "merge-base" "show-ref" "symbolic-ref" "config" "grep" "check-ignore" "check-attr" "shortlog"
-    "name-rev" "var" "version" "help" "hash-object" "branch" "tag" "commit" "add" "fetch" "push" "remote" "notes"
+    "name-rev" "var" "version" "help" "hash-object" "branch" "tag" "fetch" "push" "remote" "notes"
     "update-ref" "reflog" "count-objects" "fsck" "diff-tree" "diff-index" "diff-files" "cherry" "range-diff"
     "update-index" "write-tree" "commit-tree" "mktree" "ls-remote" "verify-commit" "verify-tag")
   "The git commands that write nothing in a repository's working files (its
 .git and its index aside). Every other command is taken to write there
 \(GIT-WRITES-WORK-TREE-P), so that a command not named here is held to it
-too.")
+too; add and commit among them, which run programs the repository names on
+its working files (clean filters).")
+
+(defparameter *git-options-taking-values*
+  '("-c" "-C" "--git-dir" "--work-tree" "--namespace" "--super-prefix" "--config-env" "--attr-source")
+  "The options before git's command that take the next word as their value
+when it is not written after an = (-C FOLDER).")
 
 (defun git-command-words (arguments)
   "ARGUMENTS of git with the options before the command (-c NAME=VALUE, -C
-FOLDER, --no-pager and the like) left out: the command, then its own."
+FOLDER, --git-dir DIR, --no-pager and the like) left out: the command, then
+its own."
   (loop while (and arguments (uiop:string-prefix-p "-" (first arguments)))
-        do (setf arguments (if (member (first arguments) '("-c" "-C") :test #'string=)
+        do (setf arguments (if (member (first arguments) *git-options-taking-values* :test #'string=)
                                (cddr arguments)
                                (rest arguments))))
   arguments)
+
+(defun git-option-value (option words)
+  "The values WORDS give OPTION (\"--output\"): written after an =, or as
+the next word, each time it is given."
+  (loop for (word next) on words
+        when (string= word option) collect next
+        when (uiop:string-prefix-p (concatenate 'string option "=") word)
+          collect (subseq word (1+ (length option)))))
+
+(defun git-places (directory arguments environment)
+  "Where git run with ARGUMENTS in DIRECTORY and ENVIRONMENT (NAME=VALUE
+strings) works, as three values, native names: the folder it runs in, each
+-C taken in turn; the repository folder --git-dir or GIT_DIR names, or NIL;
+the working folder --work-tree or GIT_WORK_TREE names, or NIL."
+  (let ((here (tuatara.io:native directory)) (git-dir nil) (work-tree nil))
+    (flet ((from-here (path) (tuatara.io:clean-path (if (uiop:string-prefix-p "/" path) path (tuatara.io:path-join here path)))))
+      (loop for (name . more) on arguments
+            while (uiop:string-prefix-p "-" name)
+            do (cond ((and (string= name "-C") more) (setf here (from-here (first more))))
+                     ((uiop:string-prefix-p "--git-dir=" name) (setf git-dir (subseq name 10)))
+                     ((and (string= name "--git-dir") more) (setf git-dir (first more)))
+                     ((uiop:string-prefix-p "--work-tree=" name) (setf work-tree (subseq name 12)))
+                     ((and (string= name "--work-tree") more) (setf work-tree (first more)))))
+      (dolist (setting environment)
+        (cond ((uiop:string-prefix-p "GIT_DIR=" setting) (setf git-dir (subseq setting 8)))
+              ((uiop:string-prefix-p "GIT_WORK_TREE=" setting) (setf work-tree (subseq setting 14)))))
+      (values here (and git-dir (from-here git-dir)) (and work-tree (from-here work-tree))))))
+
+(defun git-output-paths (words)
+  "The files and folders git's command WORDS (GIT-COMMAND-WORDS) writes
+elsewhere than in the repository: --output and --output-directory, -o of
+format-patch and archive, config's --file or -f, the bundle bundle create
+makes, the folder worktree add, move and remove name, the folder clone,
+init and submodule add make. As written: relative ones are from where git
+runs."
+  (destructuring-bind (&optional command &rest more) words
+    (let ((plain (remove-if (lambda (word) (uiop:string-prefix-p "-" word)) more)))
+      (append (git-option-value "--output" more)
+              (git-option-value "--output-directory" more)
+              (and (member command '("format-patch" "archive") :test #'equal)
+                   (append (git-option-value "-o" more)
+                           (loop for word in more
+                                 when (and (> (length word) 2) (string= "-o" word :end2 2)) collect (subseq word 2))))
+              (and (equal command "config") (append (git-option-value "--file" more) (git-option-value "-f" more)))
+              (and (equal command "bundle") (equal (first plain) "create") (list (second plain)))
+              (and (equal command "worktree") (member (first plain) '("add" "move" "remove") :test #'string=)
+                   (rest plain))
+              (and (equal command "clone") (rest plain) (last plain))
+              (and (equal command "init") (or plain (list ".")))
+              (and (equal command "submodule") (equal (first plain) "add") (cddr plain))))))
 
 (defun git-writes-work-tree-p (arguments)
   "True when git run with ARGUMENTS may write in the repository's working
@@ -75,16 +132,32 @@ and archive with no file to write."
             ((string= command "archive") (or (given "-o") (some (lambda (word) (uiop:string-prefix-p "--output" word)) more)))
             (t t)))))
 
-(defun check-git-writing (directory arguments)
-  "Signal TUATARA.IO:WRITING-REFUSED when git run with ARGUMENTS in DIRECTORY
-may write in its repository's working files (GIT-WRITES-WORK-TREE-P) and
-the repository is, or holds, a place nothing is written in, an evidence
-folder (TUATARA.IO:CHECK-TREE-WRITING), the folder named. Nothing is looked
-at while no place is refused."
-  (when (and (tuatara.io:writing-refused-anywhere-p) (git-writes-work-tree-p arguments))
-    (let ((top (ignore-errors (repository-top directory))))
-      (when top
-        (tuatara.io:check-tree-writing top (format nil "run git ~a in" (first (git-command-words arguments))))))))
+(defun check-git-writing (directory arguments &optional environment)
+  "Signal TUATARA.IO:WRITING-REFUSED, the folder named, when git run with
+ARGUMENTS in DIRECTORY and ENVIRONMENT would write in a place nothing is
+written in, an evidence folder: when its repository or working folder,
+found from where it runs (-C, --git-dir, --work-tree, GIT_DIR,
+GIT_WORK_TREE: GIT-PLACES), is in one, where it writes its .git; when it writes the repository's working files
+\(GIT-WRITES-WORK-TREE-P) and the repository holds one
+\(TUATARA.IO:CHECK-TREE-WRITING); or when a file or folder it is told to
+write (GIT-OUTPUT-PATHS) is in one. Returns true when the repository holds
+one, for its hooks to be left out (RUN-GIT-PROGRAM). Nothing is looked at
+while no place is refused."
+  (when (tuatara.io:writing-refused-anywhere-p)
+    (let* ((words (git-command-words arguments))
+           (doing (format nil "run git ~a in" (or (first words) ""))))
+      (multiple-value-bind (here git-dir work-tree) (git-places directory arguments environment)
+        (let ((top (or work-tree (ignore-errors (repository-top here)))))
+          (dolist (place (remove nil (list git-dir top)))
+            (tuatara.io:check-writing place doing))
+          (dolist (path (git-output-paths words))
+            (when (and path (plusp (length path)))
+              (tuatara.io:check-tree-writing (if (uiop:string-prefix-p "/" path) path (tuatara.io:path-join here path))
+                                             (format nil "have git ~a write" (first words)))))
+          (when top
+            (if (git-writes-work-tree-p arguments)
+                (progn (tuatara.io:check-tree-writing top doing) nil)
+                (folder-holds-evidence-p top))))))))
 
 (defun git-hash-p (text &key short)
   "True when TEXT is a commit's full hash as git writes it: 40 hexadecimal
@@ -155,9 +228,12 @@ failed (RUN-GIT with ERRORS); the rest is read and let go.")
 (defun run-git-program (git directory arguments &key cancel line environment errors input seconds limit)
   "Run the program GIT as RUN-GIT runs git, once it has found it. A command
 that would write in the working files of a repository holding an evidence
-folder is refused, never run (CHECK-GIT-WRITING)."
-  (check-git-writing directory arguments)
-  (let ((limit (or limit *program-output-limit*)))
+folder is refused, never run (CHECK-GIT-WRITING); in a repository holding
+one, git runs no hook of the repository's (core.hooksPath=/dev/null)."
+  (let ((limit (or limit *program-output-limit*))
+        (arguments (if (check-git-writing directory arguments environment)
+                       (list* "-c" "core.hooksPath=/dev/null" arguments)
+                       arguments)))
     (handler-case
         (tuatara.io:call-with-program
          (list* git "-C" (tuatara.io:native directory) (append (git-safety arguments) arguments))
