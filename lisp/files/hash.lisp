@@ -206,6 +206,32 @@ into, is made when not given."
                   (program-sum carrier source buffer *hash-program*))))
         (ignore-errors (sb-posix:close fd))))))
 
+(defun copy-file-checked (source target &key sum (cancel (list nil)))
+  "Copy the file SOURCE (where it leads, when it is a link) to TARGET, a new
+file, as TUATARA.IO:COPY-REGULAR-FILE copies (never over anything there,
+never in a place nothing may be written in, its mode and times kept), then
+check the copy's SHA-256 against SUM, the original's, summed from SOURCE
+first when not given. Returns the copy's sum and, as a second value, the
+original's; an error naming TARGET when the two differ, or SOURCE when it
+cannot be summed. Stopped when CANCEL's car turns true: what was copied
+taken away, a job's work ended there (TUATARA.RUNTIME:JOB-CHECK-STOP),
+else NIL returned."
+  (flet ((stopped ()
+           (tuatara.runtime:job-check-stop)
+           (return-from copy-file-checked nil)))
+    (let ((original (or sum (file-sha256 source :cancel cancel))))
+      (unless original
+        (when (car cancel) (stopped))
+        (error "~a could not be summed: nothing copied" source))
+      (unless (tuatara.io:copy-regular-file source target :cancel cancel)
+        (ignore-errors (tuatara.io:remove-file target))
+        (stopped))
+      (let ((copy (file-sha256 target :cancel cancel)))
+        (unless (equal original copy)
+          (when (car cancel) (stopped))
+          (error "the copy at ~a does not have its original's SHA-256" target))
+        (values copy original)))))
+
 (defun octets-sha256 (octets)
   "The SHA-256 sum, in hex, of OCTETS, summed as \\[sha256-sum] sums."
   (let* ((carrier (%make-hash-job :what "octets" :cancel (list nil) :done (list 0)))

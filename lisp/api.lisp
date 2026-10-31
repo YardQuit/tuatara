@@ -96,6 +96,7 @@ it is NIL, whatever *SENTENCE-END-DOUBLE-SPACE* says."
     tuatara.io:slash-ended tuatara.io:path-within-p tuatara.io:real-path-or-parent tuatara.io:path-join tuatara.io:path-kind tuatara.io:path-stamp tuatara.io:stamp-size tuatara.io:free-bytes
     tuatara.io:directory-entries walk-directory tuatara.io:call-with-file tuatara.io:file-head tuatara.io:binary-head-p tuatara.io:read-fd-start
     tuatara.io:read-fd-octets tuatara.io:write-octets tuatara.io:file-system-error tuatara.io:copy-regular-file tuatara.io:write-new-file tuatara.io:make-directory tuatara.io:remove-file tuatara.io:delete-tree
+    copy-file-checked
     tuatara.io:percent-decoded-octets file-kind tuatara.io:octets-kind tuatara.io:kind-name-disagrees-p
     tuatara.io:+binary-sample+ tuatara.io:*compound-file-signature*
     ;; octets, text and dates
