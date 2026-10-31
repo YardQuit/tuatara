@@ -477,6 +477,7 @@ OWN_QUERIES = {
     'ink': {'highlights', 'indents', 'locals', 'textobjects'},
     'xml': {'highlights'},
     'dtd': {'highlights'},
+    'svelte': {'highlights', 'indents', 'textobjects', 'injections', 'locals', 'tags'},
 }
 
 def copy_queries(name, done):

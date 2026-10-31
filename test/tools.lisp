@@ -316,6 +316,7 @@ and the Quicklisp folder."
                    "mtoohey31/tree-sitter-gitattributes" "numtide/tree-sitter-nix"
                    "RenjiSann/tree-sitter-xml" "KMikeeU/tree-sitter-dtd"
                    "ikatyang/tree-sitter-vue"
+                   "themixednuts/tree-sitter-htmlx"
                    ;; its pin on a tag alone, the history rewritten: the grammar Helix takes in its place
                    "rhizoome/tree-sitter-ink2"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)

@@ -1,0 +1,170 @@
+diff --git a/src/scanner.c b/src/scanner.c
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -214,46 +214,6 @@
+     return false;
+ }
+ 
+-// When you see a `{` in front of you in a JavaScript context, call this
+-// function to scan through until the next balanced (unescaped) brace.
+-static bool scan_javascript_balanced_brace(TSLexer *lexer) {
+-    if (lexer->lookahead != '{') {
+-        return false;
+-    }
+-    uint8_t brace_level = 0;
+-    advance(lexer);
+-    while (lexer->lookahead) {
+-        switch (lexer->lookahead) {
+-            case '`':
+-                scan_javascript_template_string(lexer);
+-                break;
+-            case '\\':
+-                // Escape character. Advance twice.
+-                advance(lexer);
+-                advance(lexer);
+-                break;
+-            case '\'':
+-            case '"':
+-                scan_javascript_quoted_string(lexer, lexer->lookahead);
+-                break;
+-            case '{':
+-                brace_level++;
+-                advance(lexer);
+-                break;
+-            case '}':
+-                advance(lexer);
+-                if (brace_level == 0) {
+-                    return true;
+-                }
+-                brace_level--;
+-                break;
+-            default:
+-                advance(lexer);
+-        }
+-    }
+-    return false;
+-}
+-
+ // When you see a single or double quote that starts a string, call this
+ // function to scan through until the end of the quoted string.
+ static bool scan_javascript_quoted_string(TSLexer *lexer, int32_t delimiter) {
+@@ -280,33 +240,79 @@
+ }
+ 
+ // When you see a backtick in a JavaScript context, call this function to scan
+-// through until the end of the template string.
++// through until the end of the template string. The template strings and the
++// `${...}` inside one another are followed on a stack of their own, not by
++// calls within calls, so that no depth of them ends the program: an entry is
++// a template string (TEMPLATE) or the braces opened inside a `${` (their
++// count).
++#define TEMPLATE UINT16_MAX
++
+ static bool scan_javascript_template_string(TSLexer *lexer) {
+     if (lexer->lookahead != '`') {
+         return false;
+     }
+     advance(lexer);
+-    while (lexer->lookahead) {
+-        switch (lexer->lookahead) {
+-            case '$':
+-                advance(lexer);
+-                if (lexer->lookahead == '{') {
+-                    scan_javascript_balanced_brace(lexer);
+-                }
+-                break;
+-            case '\\':
+-                // Escape character. Advance again.
+-                advance(lexer);
+-                advance(lexer);
+-                break;
+-            case '`':
+-                advance(lexer);
+-                return true;
+-            default:
+-                advance(lexer);
++    Array(uint16_t) stack = array_new();
++    array_push(&stack, TEMPLATE);
++    bool ended = false;
++    while (lexer->lookahead && !ended) {
++        uint16_t *top = array_back(&stack);
++        if (*top == TEMPLATE) {
++            switch (lexer->lookahead) {
++                case '$':
++                    advance(lexer);
++                    if (lexer->lookahead == '{') {
++                        advance(lexer);
++                        array_push(&stack, 0);
++                    }
++                    break;
++                case '\\':
++                    // Escape character. Advance again.
++                    advance(lexer);
++                    advance(lexer);
++                    break;
++                case '`':
++                    advance(lexer);
++                    (void)array_pop(&stack);
++                    ended = stack.size == 0;
++                    break;
++                default:
++                    advance(lexer);
++            }
++        } else {
++            switch (lexer->lookahead) {
++                case '`':
++                    advance(lexer);
++                    array_push(&stack, TEMPLATE);
++                    break;
++                case '\\':
++                    // Escape character. Advance twice.
++                    advance(lexer);
++                    advance(lexer);
++                    break;
++                case '\'':
++                case '"':
++                    scan_javascript_quoted_string(lexer, lexer->lookahead);
++                    break;
++                case '{':
++                    *top = (uint8_t)(*top + 1);
++                    advance(lexer);
++                    break;
++                case '}':
++                    advance(lexer);
++                    if (*top == 0) {
++                        (void)array_pop(&stack);
++                    } else {
++                        *top = *top - 1;
++                    }
++                    break;
++                default:
++                    advance(lexer);
++            }
+         }
+     }
+-    return false;
++    array_delete(&stack);
++    return ended;
+ }
+ 
+ static bool scan_raw_text(Scanner *scanner, TSLexer *lexer) {
+@@ -629,11 +635,17 @@
+         return scan_raw_text(scanner, lexer);
+     }
+ 
+-    if (valid_symbols[SVELTE_RAW_TEXT_SNIPPET_ARGUMENTS]) {
++    // A tag's name and the text in braces are never both wanted but while
++    // the parser recovers from an error, when it asks for every token at
++    // each place: the text in braces, read to its end from every place,
++    // would take a time growing as the square of the text's length.
++    bool is_error_recovery = valid_symbols[START_TAG_NAME] && valid_symbols[SVELTE_RAW_TEXT];
++
++    if (valid_symbols[SVELTE_RAW_TEXT_SNIPPET_ARGUMENTS] && !is_error_recovery) {
+         return scan_svelte_raw_text_snippet(lexer);
+     }
+ 
+-    if (valid_symbols[SVELTE_RAW_TEXT] || valid_symbols[SVELTE_RAW_TEXT_EACH]) {
++    if ((valid_symbols[SVELTE_RAW_TEXT] || valid_symbols[SVELTE_RAW_TEXT_EACH]) && !is_error_recovery) {
+         return scan_svelte_raw_text(lexer, valid_symbols);
+     }
+ 

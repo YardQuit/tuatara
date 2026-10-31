@@ -1,147 +1,50 @@
-; This Source Code Form is subject to the terms of the Mozilla Public
-; License, v. 2.0. If a copy of the MPL was not distributed with this
-; file, You can obtain one at https://mozilla.org/MPL/2.0/.
-;
-; The colouring rules for svelte: runtime/queries/svelte/highlights.scm of
-; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; The colouring rules for svelte: queries/highlights.scm of
+; tree-sitter-svelte (https://github.com/tree-sitter-grammars/tree-sitter-svelte)
+; at commit ae5199db4775, under the MIT License (its text goes with the
+; grammar), with the names of its captures changed to Tuatara's where they
+; differ (@keyword.conditional is @keyword.control.conditional), and the
+; words of a block ({:else if}, {@const}) coloured as keywords.
 
-; Tag names
-(tag_name) @tag
+; inherits: html
 
-; Erroneous/mismatched end tags
-(erroneous_end_tag_name) @error
-
-; DOCTYPE declaration
-(doctype) @constant
-
-; Attribute names
-(attribute_name) @attribute
-
-; Attribute values
-(attribute_value) @string
-(quoted_attribute_value) @string
-
-; Comments
-(comment) @comment
-
-; Character entities
-(entity) @string.special.symbol
-
-; Text content
-(text) @text
-
-; Raw text in script/style
 (raw_text) @none
 
-; HTML punctuation
 [
-  "<"
-  ">"
-  "</"
-  "/>"
-  "<!"
-] @punctuation.bracket
+  "as"
+  "key"
+  "html"
+  "snippet"
+  "render"
+] @keyword
 
-"=" @punctuation.delimiter
+"const" @keyword.storage.modifier
 
-; Component tags (PascalCase)
-((tag_name) @type (#match? @type "^[A-Z]"))
+[
+  "if"
+  "else"
+  "else if"
+  "then"
+] @keyword.control.conditional
 
-; Namespaced tags (svelte:component, svelte:self, etc.)
-(tag_name
-  namespace: (tag_namespace) @keyword
-  ":" @punctuation.delimiter
-  name: (tag_local_name) @tag)
+"each" @keyword.control.repeat
 
-; Tag member access (Foo.Bar)
-(tag_name
-  object: (tag_member) @type
-  "." @punctuation.delimiter
-  property: (tag_member) @tag)
+[
+  "await"
+  "then"
+] @keyword.control
 
-; Directives (on:click, bind:value, etc.)
-(attribute_directive) @keyword
-(attribute_name ":" @punctuation.delimiter)
-(attribute_identifier) @property
-(attribute_modifier) @attribute
-(attribute_modifiers "|" @punctuation.delimiter)
+"catch" @keyword.control.exception
 
-; Expressions
-(expression) @embedded
-(expression_value) @embedded
+"debug" @keyword
 
-; Shorthand/spread attributes
-(shorthand_attribute content: (_) @variable)
-
-; Curly braces (expression context)
 [
   "{"
   "}"
 ] @punctuation.bracket
 
-"|" @punctuation.delimiter
-
-; Comments inside tag attribute lists
-(tag_comment kind: (line_comment) @comment)
-(tag_comment kind: (block_comment) @comment)
-
-; Block keywords
 [
-  "if"
-  "each"
-  "await"
-  "key"
-  "snippet"
-  "else"
-  "html"
-  "debug"
-  "const"
-  "render"
-  "attach"
-  "as"
-] @keyword.control
-
-; Block end keywords ({/if}, {/each}, etc.)
-(block_keyword) @keyword.control
-
-; Block delimiters
-(block_open) @punctuation.bracket
-(block_close) @punctuation.bracket
-
-(shorthand_kind) @keyword.control
-(branch_kind) @keyword.control
-
-; If block
-(if_block expression: (expression) @embedded)
-(else_if_clause expression: (expression_value) @embedded)
-
-; Each block
-(each_block expression: (expression) @embedded)
-(each_block binding: (pattern) @variable)
-(each_block index: (pattern) @variable)
-(each_block key: (expression) @embedded)
-
-; Await block
-(await_block expression: (expression) @embedded)
-(await_branch (pattern) @variable)
-(await_block (pattern) @variable)
-(orphan_branch (pattern) @variable)
-
-; Key block
-(key_block expression: (expression) @embedded)
-
-; Snippet block
-(snippet_block name: (snippet_name) @function)
-(snippet_parameters parameter: (pattern) @variable)
-(snippet_type_parameters) @type
-
-; Malformed blocks
-(block_sigil) @keyword.control
-
-; Snippet/render punctuation
-[
-  "("
-  ")"
-  ","
-] @punctuation.delimiter
+  "#"
+  ":"
+  "/"
+  "@"
+] @punctuation.special

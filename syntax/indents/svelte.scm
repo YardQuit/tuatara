@@ -4,25 +4,28 @@
 ;
 ; The indentation rules for svelte: runtime/queries/svelte/indents.scm of
 ; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; with its node names changed to those of tree-sitter-svelte
+; (https://github.com/tree-sitter-grammars/tree-sitter-svelte) at commit
+; ae5199db4775.
 
 [
   (element)
-  (if_block)
-  (else_if_clause)
-  (else_clause)
-  (await_branch)
-  (each_block)
-  (key_block)
-  (snippet_block)
-  (await_block)
-  (expression)
+  (if_statement)
+  (each_statement)
+  (await_statement)
+  (key_statement)
+  (snippet_statement)
 ] @indent
 
 [
   (end_tag)
-  (block_end)
-  (else_if_clause)
-  (else_clause)
-  (await_branch)
+  (if_end)
+  (each_end)
+  (await_end)
+  (key_end)
+  (snippet_end)
+  (else_if_start)
+  (else_start)
+  (then_start)
+  (catch_start)
 ] @outdent

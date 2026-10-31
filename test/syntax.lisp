@@ -3164,7 +3164,9 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
 (define-test (syntax deeply-nested-text-parsed)
   ;; text nested hundreds of levels deep, a string open across lines in it:
   ;; the scanner keeps the indents it saves within the room the parser gives
-  ;; it, and the text is parsed, not the program parsing it ended
+  ;; it, and Svelte's scanner follows template strings nested thousands deep
+  ;; without a call within a call for each; the text is parsed, not the
+  ;; program parsing it ended
   (flet ((deep-yaml (n)
            (with-output-to-string (o)
              (dotimes (i n) (format o "~va:~%" i ""))
@@ -3177,12 +3179,31 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
                                       (list "mojo" (deep-python 600))
                                       ;; Typst's list items, each inside the one before
                                       (list "typst" (with-output-to-string (o)
-                                                      (dotimes (i 400) (format o "~va- item~%" (* 2 i) "")))))
+                                                      (dotimes (i 400) (format o "~va- item~%" (* 2 i) ""))))
+                                      ;; Svelte's template strings, each in a ${...} of the one before
+                                      (list "svelte" (with-output-to-string (o)
+                                                       (write-string "{" o)
+                                                       (dotimes (i 300000) (write-string "`${" o))
+                                                       (write-string "x" o)
+                                                       (dotimes (i 300000) (write-string "}`" o))
+                                                       (format o "}~%"))))
           do (let* ((parser (tuatara.syntax:make-parser (tuatara.syntax:find-grammar grammar) (tuatara.syntax::shared-helper))))
                (multiple-value-bind (tree why) (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text))
                  (true tree "~a nested deeply is parsed (~s)" grammar why)
                  (when tree (tuatara.syntax:delete-tree tree)))
                (ignore-errors (tuatara.syntax:delete-parser parser))))))
+
+(define-test (syntax brace-left-open-parsed-at-once)
+  ;; a brace left open in a long run of text: while Svelte's parser recovers
+  ;; from the error, its scanner does not read the rest of the text again
+  ;; from each place, so the parse takes a moment, not minutes
+  (let* ((run (make-string 100000 :initial-element #\M))
+         (parser (tuatara.syntax:make-parser (tuatara.syntax:find-grammar "svelte") (tuatara.syntax::shared-helper))))
+    (multiple-value-bind (tree why)
+        (tuatara.syntax:parse-rope parser (tuatara.text:string->rope (concatenate 'string run "{" run)) :limit 2)
+      (true tree "parsed within two seconds (~s)" why)
+      (when tree (tuatara.syntax:delete-tree tree)))
+    (ignore-errors (tuatara.syntax:delete-parser parser))))
 
 (define-test (syntax rules-not-answered-asked-again)
   ;; rules the program compiling them did not answer for (a busy moment) are

@@ -71,7 +71,7 @@ just	https://codeberg.org/poliorcetics/tree-sitter-just	f749ec853adcacc5f14e9ec3
 proto	https://github.com/sdoerner/tree-sitter-proto	35a6a3b543e418b7037328261f40e912c767c598	MIT
 graphql	https://github.com/bkegley/tree-sitter-graphql	5e66e961eee421786bdda8495ed1db045e06b5fe	MIT
 hcl	https://github.com/tree-sitter-grammars/tree-sitter-hcl	64ad62785d442eb4d45df3a1764962dafd5bc98b	Apache-2.0
-svelte	https://github.com/themixednuts/tree-sitter-htmlx	80c3e698ec7379772c7f2aecb9b4b4c4ac52ff0b	MIT	crates/tree-sitter-svelte
+svelte	https://github.com/tree-sitter-grammars/tree-sitter-svelte	ae5199db47757f785e43a14b332118a5474de1a2	MIT
 powershell	https://github.com/airbus-cert/tree-sitter-powershell	c9316be0faca5d5b9fd3b57350de650755f42dc0	MIT
 nginx	https://gitlab.com/joncoole/tree-sitter-nginx	f6d13cf6281b25f2ce342a49a41a10a0381e00f0	GPL-3.0-or-later
 ssh_client_config	https://github.com/metio/tree-sitter-ssh-client-config	4abd07dc3884124d60e37e1f2dd98a1676859ae0	CC0-1.0
