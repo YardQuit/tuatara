@@ -320,7 +320,8 @@ and the Quicklisp folder."
              "~a has moved" old))
     ;; archived, their development carried on elsewhere
     (dolist (old '("https://github.com/poliorcetics/tree-sitter-just" "https://github.com/inko-lang/tree-sitter-inko"
-                   "https://codeberg.org/maribu/tree-sitter-gnuplot" "https://codeberg.org/maribu/tree-sitter-proverif"))
+                   "https://codeberg.org/maribu/tree-sitter-gnuplot" "https://codeberg.org/maribu/tree-sitter-proverif"
+                   "https://github.com/tingerrr/tree-sitter-doxyfile/"))
       (false (find old rows :key #'second :test #'string-equal) "~a is archived" old))
     (dolist (orphan '("3d7c53b8038f9ebbb57cd2e61296180aa5c1cf64" "29f9c6707ce9dfc2fc915d175ec720b207f179f3"
                       "d98426109258b266e1e92358c5f11716d2e8f638"))
@@ -431,6 +432,80 @@ git checkout -q main; git branch -q -D gone tagged" repo)))
           (multiple-value-bind (status out) (check (first commits))
             (is = 1 status)
             (true (search "could not be fetched" out))))))))
+
+(define-test (tools grammar-source-check-asks-tangled-who-keeps-it)
+  ;; a grammar on tangled.org is named by its owner's DID, and the check asks
+  ;; the owner's records where the repository is: one declared by another
+  ;; owner, one gone, one named by a handle, or answers that cannot be had,
+  ;; stop it; the owner's own passes
+  (with-test-directory (directory)
+    (let* ((repo (uiop:native-namestring (merge-pathnames "repo/" directory)))
+           (tools (merge-pathnames "tools/" directory))
+           (bin (merge-pathnames "bin/" directory))
+           (answers (merge-pathnames "answers/" directory))
+           (url "https://tangled.org/did:plc:owner/g")
+           (commit (string-trim '(#\Newline)
+                                (bash-output (format nil "set -e
+git init -q '~a'; cd '~:*~a'
+git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m one; git rev-parse HEAD" repo)))))
+      (ensure-directories-exist tools)
+      (ensure-directories-exist answers)
+      (dolist (script '("check-grammar-sources.sh" "grammar-build.sh"))
+        (uiop:copy-file (tools-script script) (merge-pathnames script tools)))
+      ;; curl answers from answers/, a file named after the address asked, and
+      ;; fails as with no network for any other
+      (write-test-file bin "curl" (format nil "#!/bin/bash
+for word; do case \"$word\" in http*) url=\"$word\" ;; esac; done
+file='~a'\"$(printf %s \"$url\" | tr -c 'A-Za-z0-9' _)\"
+[ -f \"$file\" ] || exit 6
+cat \"$file\"~%" (uiop:native-namestring answers)))
+      (bash-output "chmod +x \"$1\"" (uiop:native-namestring (merge-pathnames "curl" bin)))
+      (flet ((answer (address text)
+               (write-test-file answers (map 'string (lambda (c) (if (alphanumericp c) c #\_)) address) text))
+             (check (address)
+               (write-test-file directory "syntax/grammars.tsv" (format nil "g	~a	~a	MIT~%" address commit))
+               (multiple-value-bind (out error status)
+                   (uiop:run-program (list "env" (format nil "PATH=~a:~a" (uiop:native-namestring bin) (uiop:getenv "PATH"))
+                                           "GIT_CONFIG_COUNT=2"
+                                           (format nil "GIT_CONFIG_KEY_0=url.file://~a.insteadOf" repo) (format nil "GIT_CONFIG_VALUE_0=~a" url)
+                                           (format nil "GIT_CONFIG_KEY_1=url.file://~a.insteadOf" repo)
+                                           "GIT_CONFIG_VALUE_1=https://tangled.org/owner.example/g"
+                                           "bash" (uiop:native-namestring (merge-pathnames "check-grammar-sources.sh" tools)))
+                                     :output :string :error-output nil :ignore-error-status t)
+                 (declare (ignore error))
+                 (values status out))))
+        (answer "https://plc.directory/did:plc:owner"
+                "{\"id\":\"did:plc:owner\",\"service\":[{\"id\":\"#atproto_pds\",\"serviceEndpoint\":\"https://pds.example\"}]}")
+        (answer "https://plc.directory/did:plc:repo"
+                "{\"id\":\"did:plc:repo\",\"service\":[{\"id\":\"#atproto_pds\",\"serviceEndpoint\":\"https://knot.example\"}]}")
+        (answer "https://pds.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:owner&collection=sh.tangled.repo&rkey=g"
+                "{\"value\":{\"knot\":\"knot.example\",\"repoDid\":\"did:plc:repo\"}}")
+        (flet ((declared (owner)
+                 (answer "https://knot.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:repo&collection=org.tangled.repo.manifest&rkey=self"
+                         (format nil "{\"value\":{\"declaration\":{\"name\":\"g\",\"owner\":\"~a\"}}}" owner))))
+          (declared "did:plc:owner")
+          (multiple-value-bind (status out) (check url)
+            (is = 0 status "~a" out))
+          ;; declared by another owner: moved
+          (declared "did:plc:other")
+          (multiple-value-bind (status out) (check url)
+            (is = 1 status)
+            (true (search "is now did:plc:other/g" out) "~a" out)))
+        ;; an owner named by a handle, which another may hold later
+        (multiple-value-bind (status out) (check "https://tangled.org/owner.example/g")
+          (is = 1 status)
+          (true (search "owner.example is a handle" out) "~a" out))
+        ;; the owner's record of it gone
+        (answer "https://pds.example/xrpc/com.atproto.repo.getRecord?repo=did:plc:owner&collection=sh.tangled.repo&rkey=g"
+                "{\"error\":\"RecordNotFound\",\"message\":\"Could not locate record\"}")
+        (multiple-value-bind (status out) (check url)
+          (is = 1 status)
+          (true (search "is gone" out) "~a" out))
+        ;; no answer from the directory of DIDs
+        (uiop:delete-file-if-exists (merge-pathnames "https___plc_directory_did_plc_owner" answers))
+        (multiple-value-bind (status out) (check url)
+          (is = 1 status)
+          (true (search "cannot be told" out) "~a" out))))))
 
 (define-test (tools archived-grammars-left-out)
   ;; a grammar whose repository is archived, with no source kept up in its

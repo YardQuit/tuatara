@@ -64,32 +64,91 @@ github() {
   fi
 }
 
-# field $2 of the JSON object $1 (a string, a number, true or false), or nothing
+# field $2 of the JSON object $1 (a string, a number, true or false), or
+# nothing; $2 may go down into objects and lists: value.repoDid, alsoKnownAs.0
 field() {
   printf '%s' "$1" | python3 -I -c 'import json,sys
 try:
-    v = json.load(sys.stdin).get(sys.argv[1])
+    v = json.load(sys.stdin)
+    for key in sys.argv[1].split("."):
+        v = v[int(key)] if isinstance(v, list) else v.get(key)
 except Exception:
     v = None
-print("" if v is None else (str(v).lower() if isinstance(v, bool) else v))' "$2"
+print("" if v is None or isinstance(v, (dict, list)) else (str(v).lower() if isinstance(v, bool) else v))' "$2"
 }
 
-# where URL's repository is now (OWNER/NAME as its host has it, empty when the
-# host says it is gone, ? when it cannot be asked), and whether it is archived
+# the endpoint of the service $2 (#atproto_pds) in the DID document $1, or nothing
+did_service() {
+  printf '%s' "$1" | python3 -I -c 'import json,sys
+try:
+    print(next(s["serviceEndpoint"] for s in json.load(sys.stdin)["service"] if s["id"] == sys.argv[1]))
+except Exception:
+    pass' "$2"
+}
+
+# the DID document of DID $1 (did:plc: from the PLC directory, did:web: from
+# its domain), or nothing
+did_document() {
+  case "$1" in
+    did:plc:*) curl -sSf --max-time 30 "https://plc.directory/$1" 2>/dev/null || true ;;
+    did:web:*) curl -sSf --max-time 30 "https://${1#did:web:}/.well-known/did.json" 2>/dev/null || true ;;
+  esac
+}
+
+# where the repository OWNER/NAME of tangled.org is now, as where_now says it.
+# tangled.org keeps a repository as a record of its owner's, under the owner's
+# DID, which stays the same through every change of the owner's handle (a
+# domain name, which someone else may hold later): the manifest names the
+# owner by that DID, and the repository is where the owner's record of it says
+# it is. A repository with a DID of its own declares its owner and name too,
+# and when those differ it has moved. When any of this cannot be asked, or the
+# owner is named by a handle, it cannot be told who keeps the repository, and
+# the check stops.
+tangled_where() {
+  local owner="${1%%/*}" name="${1#*/}" document pds record repo_did repo_document knot manifest
+  case "$owner" in
+    did:plc:*|did:web:*) ;;
+    *) echo "! ? $owner is a handle, which someone else may hold later: name the owner by its DID (tangled.org/did:.../$name)"; return ;;
+  esac
+  document=$(did_document "$owner")
+  pds=$(did_service "$document" "#atproto_pds")
+  if [ -z "$pds" ]; then echo "! ? the DID document of $owner, who keeps it, could not be read"; return; fi
+  record=$(curl -sS --max-time 30 "$pds/xrpc/com.atproto.repo.getRecord?repo=$owner&collection=sh.tangled.repo&rkey=$name" 2>/dev/null || true)
+  if [ "$(field "$record" error)" = RecordNotFound ]; then echo "- ?"; return; fi
+  if [ -z "$(field "$record" value.knot)" ]; then echo "! ? $owner's record of $name could not be read from $pds"; return; fi
+  repo_did=$(field "$record" value.repoDid)
+  if [ -n "$repo_did" ]; then
+    repo_document=$(did_document "$repo_did")
+    knot=$(did_service "$repo_document" "#atproto_pds")
+    manifest=$(curl -sS --max-time 30 "$knot/xrpc/com.atproto.repo.getRecord?repo=$repo_did&collection=org.tangled.repo.manifest&rkey=self" 2>/dev/null || true)
+    if [ -z "$knot" ] || [ -z "$(field "$manifest" value.declaration.owner)" ]; then
+      echo "! ? the repository $repo_did of $owner's record could not be asked who keeps it"; return
+    fi
+    echo "$(field "$manifest" value.declaration.owner)/$(field "$manifest" value.declaration.name) ?"
+  else
+    echo "$owner/$name ?"
+  fi
+}
+
+# where URL's repository is now: OWNER/NAME as its host has it (- when the
+# host says it is gone, ? when it is a host this check does not know, ! when
+# who keeps it cannot be told, followed by why), and whether it is archived
 where_now() {
   local url="$1" path answer
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
   case "$url" in
     https://github.com/*)
-      if ! command -v gh >/dev/null && [ -z "${GITHUB_TOKEN:-}" ]; then echo "! ?"; return; fi
+      if ! command -v gh >/dev/null && [ -z "${GITHUB_TOKEN:-}" ]; then
+        echo "! ? GitHub is asked through gh or with GITHUB_TOKEN, and there is neither"; return
+      fi
       answer=$(github "repos/$path")
-      echo "$(field "$answer" full_name) $(field "$answer" archived)" ;;
+      echo "$(gone_or "$(field "$answer" full_name)") $(field "$answer" archived)" ;;
     https://codeberg.org/*)
       answer=$(curl -sSf "https://codeberg.org/api/v1/repos/$path" 2>/dev/null || true)
-      echo "$(field "$answer" full_name) $(field "$answer" archived)" ;;
+      echo "$(gone_or "$(field "$answer" full_name)") $(field "$answer" archived)" ;;
     https://gitlab.com/*)
       answer=$(curl -sSf "https://gitlab.com/api/v4/projects/${path//\//%2F}" 2>/dev/null || true)
-      echo "$(field "$answer" path_with_namespace) $(field "$answer" archived)" ;;
+      echo "$(gone_or "$(field "$answer" path_with_namespace)") $(field "$answer" archived)" ;;
     https://git.sr.ht/*)
       # no API without a token: a repository moved answers with a redirect
       local code target
@@ -97,10 +156,16 @@ where_now() {
       case "$code" in
         200) echo "$path ?" ;;
         30*) echo "${target#https://git.sr.ht/} ?" ;;
-        *) echo " ?" ;;
+        *) echo "- ?" ;;
       esac ;;
+    https://tangled.org/*) tangled_where "$path" ;;
     *) echo "? ?" ;;
   esac
+}
+
+# $1, or - when it is empty
+gone_or() {
+  echo "${1:--}"
 }
 
 # fetch the history (commits only, no files) of every branch and tag of URL into $work/NAME.git
@@ -122,13 +187,13 @@ fetch_files() {
 
 while IFS=$'\t' read -r name url commit; do
   printf '%s ' "$name" >&2
-  read -r full archived < <(where_now "$url")
+  read -r full archived why < <(where_now "$url")
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
   if [ "$full" = "!" ]; then
-    stops+=("$name: $url not asked about: GitHub is asked through gh or with GITHUB_TOKEN, and there is neither")
+    stops+=("$name: who keeps $url cannot be told: $why")
   elif [ "$full" = "?" ]; then
     reports+=("$name: $url not asked about (a host this check does not know)")
-  elif [ -z "$full" ]; then
+  elif [ "$full" = - ]; then
     stops+=("$name: $url is gone (its host knows no such repository)")
     continue
   elif [ "${full,,}" != "${path,,}" ]; then
