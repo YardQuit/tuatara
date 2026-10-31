@@ -953,6 +953,15 @@ tiny pieces, a few lines each, so that a small text exercises it."
   ;; a .gitignore has no columns: the whole line, asked at once
   (is string= (format nil "build/~%") (list-records-after "C-x / k b u i l d RET" (format nil "build/~%*.o~%") :mode "gitignore-mode")))
 
+(define-test (search-filters columns-asked-before-any-grammar-question)
+  ;; the first file of a language whose grammar is off asks whether to turn it on in a session
+  ;; typing its own keys; the keys of these sessions must reach the column question
+  (dolist (mode '("todotxt-mode" "hosts-generic-mode" "pip-requirements-mode"))
+    (setf tuatara.defaults::*grammars-not-now* '()
+          tuatara.defaults::*grammar-answers-read* nil)
+    (is string= (format nil "keep~%")
+        (list-records-after "C-x / k RET k e e p RET" (format nil "keep~%drop~%") :mode mode))))
+
 (define-test (search-filters header-lock-in-a-log)
   (let ((log (format nil "time level message~%~{10:~2,'0d INFO line ~:*~d~%~}" (loop for i below 40 collect i))))
     ;; no header yet: said, nothing kept

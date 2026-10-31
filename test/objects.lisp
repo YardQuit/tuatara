@@ -785,8 +785,9 @@ first; point starts at POINT, and with MARK the mark is there and active."
                 f (lambda ()
                     (loop while (find-if #'tuatara.runtime:job-running-p tuatara.runtime:*jobs*)
                           do (sleep 0.01))))))
-    (values f (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
-                                            :buffer (tuatara.buffer:find-buffer "*scratch*")))))
+    (values f (without-grammar-questions
+                (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
+                                              :buffer (tuatara.buffer:find-buffer "*scratch*"))))))
 
 (defparameter *emacs-rectangle-cases*
   '(("ab<MARK>cdef~%ghijkl~%mno<POINT>pqr~%" "C-x r k" "abdef~%ghjkl~%mn<POINT>pqr~%" ("c" "i" "o"))

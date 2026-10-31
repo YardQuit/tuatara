@@ -42,6 +42,25 @@ for the editor woken there once, a function called there."
                  (tuatara.frontend.fake:fake-queue-keys f part)))))
       (tuatara.frontend.fake:fake-queue-keys f keys)))
 
+(defvar *grammar-questions-wanted* nil
+  "True while a test looks at the question whether to turn a grammar on
+\(WITH-GRAMMAR-ANSWERS-FORGOTTEN); otherwise a session asks none, as a key typed
+meanwhile would answer it.")
+
+(defun call-without-grammar-questions (function)
+  "Call FUNCTION, a session in it asked no grammar question (every language
+given up for this session), unless a test wants it asked."
+  (if *grammar-questions-wanted*
+      (funcall function)
+      (let ((tuatara.defaults::*grammars-not-now*
+              (mapcar (lambda (language) (string-downcase (symbol-name (tuatara.defaults::language-name language))))
+                      tuatara.defaults::*languages*)))
+        (funcall function))))
+
+(defmacro without-grammar-questions (&body body)
+  "Run BODY with no grammar question asked in it (CALL-WITHOUT-GRAMMAR-QUESTIONS)."
+  `(call-without-grammar-questions (lambda () ,@body)))
+
 (defun run-keys (keys &key (text "") (width 40) (height 8) file cell-pixels)
   "Run an editor session on a scratch buffer holding TEXT (or FILE) with KEYS
 typed (a string, or a list of strings and :WAIT, QUEUE-TEST-KEYS); return the
@@ -55,9 +74,10 @@ a list, has the frontend show pictures."
     (setf tuatara.defaults::*command-history* '() tuatara.defaults::*pattern-history* '()
           tuatara.defaults::*search-lit* nil tuatara.defaults::*search-lit-shown* nil)
     (queue-test-keys f keys)
-    (let ((editor (tuatara.command:run-editor f :files (and file (list file))
+    (let ((editor (without-grammar-questions
+                    (tuatara.command:run-editor f :files (and file (list file))
                                                   :setup #'tuatara.defaults:install-defaults
-                                                  :buffer (tuatara.buffer:find-buffer "*scratch*"))))
+                                                  :buffer (tuatara.buffer:find-buffer "*scratch*")))))
       (values f editor))))
 
 (defmacro with-functions-replaced ((&rest bindings) &body body)

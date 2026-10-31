@@ -20,7 +20,8 @@ afterwards."
      ;; the grammars loaded first, as a session started earlier would have them
      (tuatara.syntax:rules-helper)
      (dolist (grammar '("awk" "markdown" "markdown_inline" "python")) (tuatara.syntax:find-grammar grammar))
-     (let ((tuatara-user:*grammars-on* '(:common)))
+     (let ((tuatara-user:*grammars-on* '(:common))
+           (*grammar-questions-wanted* t))
        (unwind-protect (progn ,@body)
          (forget)))))
 
