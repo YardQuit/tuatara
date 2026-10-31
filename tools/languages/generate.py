@@ -458,6 +458,16 @@ QUERY_FIXES = {
     ],
     ('xml', 'injections'): [('((comment) @injection.content', '((Comment) @injection.content', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
     ('dtd', 'injections'): [('((comment) @injection.content', '((Comment) @injection.content', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
+    ('protobuf', 'indents'): [
+        ('  (oneof_body)\n  (service_body)\n  (rpc_body)', '  (oneof)\n  (service)\n  (rpc)', 'the grammar of coder3101, kept up, has no node for the braces of a oneof, a service or a method'),
+    ],
+    ('protobuf', 'textobjects'): [
+        ('(service (service_body) @class.inside) @class.around', '(service (service_name) (_)* @class.inside) @class.around', 'the grammar of coder3101, kept up, has no node for the braces of a oneof, a service or a method'),
+    ],
+    ('protobuf', 'tags'): [
+        ('(enum_variant_name (identifier) @definition.constant)', '(enum_field (identifier) @definition.constant)', 'the grammar of coder3101, kept up, has no node for the name of a field or of an enumeration value'),
+        ('(field_name (identifier) @definition.constant)', '(field (identifier) @definition.constant)', 'the grammar of coder3101, kept up, has no node for the name of a field or of an enumeration value'),
+    ],
     ('sway', 'textobjects'): [RUST_TEST],
     ('cairo', 'textobjects'): [RUST_TEST],
 }
@@ -479,6 +489,7 @@ OWN_QUERIES = {
     'dtd': {'highlights'},
     'svelte': {'highlights', 'indents', 'textobjects', 'injections', 'locals', 'tags'},
     'luau': {'highlights', 'indents', 'textobjects', 'injections', 'locals'},
+    'protobuf': {'highlights'},
 }
 
 def copy_queries(name, done):

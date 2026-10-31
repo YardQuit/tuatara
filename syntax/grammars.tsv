@@ -68,7 +68,7 @@ bibtex	https://github.com/latex-lsp/tree-sitter-bibtex	8d04ed27b3bc7929f14b7df92
 fish	https://github.com/ram02z/tree-sitter-fish	f435b0bd772578c70e5d158b85267bb886316f88	Unlicense
 awk	https://github.com/Beaglefoot/tree-sitter-awk	34bbdc7cce8e803096f47b625979e34c1be38127	MIT
 just	https://codeberg.org/poliorcetics/tree-sitter-just	f749ec853adcacc5f14e9ec375f244104e033d88	MIT
-proto	https://github.com/sdoerner/tree-sitter-proto	35a6a3b543e418b7037328261f40e912c767c598	MIT
+proto	https://github.com/coder3101/tree-sitter-proto	18366491f37d43d6d5d02cbb1e79b650b5728145	MIT
 graphql	https://github.com/bkegley/tree-sitter-graphql	5e66e961eee421786bdda8495ed1db045e06b5fe	MIT
 hcl	https://github.com/tree-sitter-grammars/tree-sitter-hcl	64ad62785d442eb4d45df3a1764962dafd5bc98b	Apache-2.0
 svelte	https://github.com/tree-sitter-grammars/tree-sitter-svelte	ae5199db47757f785e43a14b332118a5474de1a2	MIT
