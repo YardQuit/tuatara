@@ -20,17 +20,33 @@
 # grammar.js a parser is generated from) hashes as syntax/grammar-inputs.sha256
 # records. When a pin moves, tools/check-grammar-sources.sh says what changed
 # in that; once it is read, tools/grammars.sh --record NAME... records the new
-# hashes (--record alone, every grammar's).
+# hashes (--record --all, every grammar's).
 # Nothing is fetched or compiled while Tuatara runs.
 # Usage: tools/grammars.sh                 (does nothing when everything is up to date)
-#        tools/grammars.sh --record [NAME...]
+#        tools/grammars.sh --record NAME... | --all
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build/grammars"
 sources="$root/build/grammar-sources"
 stamp="$out/.built-from"
 record=""
-if [ "${1:-}" = --record ]; then shift; record="all $*"; fi
+if [ "${1:-}" = --record ]; then
+  shift
+  if [ $# -eq 0 ]; then
+    echo "Usage: tools/grammars.sh --record NAME... (or --all): name the grammars whose change you have read." >&2
+    exit 1
+  elif [ "$1" = --all ] && [ $# -eq 1 ]; then
+    record="all"
+  else
+    for name in "$@"; do
+      if ! grep -v "^#" "$root/syntax/grammars.tsv" | cut -f1 | grep -qxF -- "$name"; then
+        echo "tools/grammars.sh: no grammar called $name in syntax/grammars.tsv: nothing recorded." >&2
+        exit 1
+      fi
+    done
+    record="all $*"
+  fi
+fi
 wanted="$(cat "$root/syntax/grammars.tsv" "$root/syntax/grammar-inputs.sha256" "$root/syntax/syntax.c" "$root/syntax/helper.c" "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" "$root"/syntax/patches/*.patch "$root"/syntax/licenses/*.txt "$0" "$root/tools/grammar-build.sh" 2>/dev/null | sha256sum | cut -c1-16)"
 if [ -z "$record" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$wanted" ]; then exit 0; fi
 mkdir -p "$out" "$sources" "$root/build/tools"
