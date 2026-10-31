@@ -2101,3 +2101,17 @@ Shut in.
   ;; a template that says too little leaves the standard
   (false (tuatara.defaults::latex-template-text-characters "\\documentclass{article}"))
   (false (tuatara.defaults::latex-template-text-characters "\\usepackage[a4paper]{geometry}")))
+
+(define-test (latex-export enhanced-quotes)
+  (flet ((latex-in (language text &key enhanced)
+           (org-latex-of (format nil "#+language: ~a~%* One~%~a~%" language text) :enhanced enhanced)))
+    (let* ((text (format nil "He said \"hello there\" and 'quoted' it's (\"paren\") \"*bold*\" *\"x\"* \"=k=\" ~~\"c\"~~ ok.~%#+begin_example~%echo \"x\" 'y'~%#+end_example"))
+           (english (latex-in "en" text :enhanced t))
+           (swedish (latex-in "sv" text :enhanced t))
+           (plain (latex-in "en" text)))
+      (true (search "He said “hello there” and ‘quoted’ it’s (“paren”) “\\textbf{bold}” \\textbf{“x”} “\\texttt{k}” \\texttt{\"c\"} ok." english))
+      (true (search "He said ”hello there” and ’quoted’ it’s (”paren”) ”\\textbf{bold}” \\textbf{”x”} ”\\texttt{k}” \\texttt{\"c\"} ok." swedish))
+      ;; code blocks keep their straight quotes; so does the compatible export
+      (true (search "echo \"x\" 'y'" english))
+      (true (search "echo \"x\" 'y'" swedish))
+      (true (search "He said \"hello there\" and 'quoted'" plain)))))

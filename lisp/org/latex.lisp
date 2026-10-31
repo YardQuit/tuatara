@@ -468,17 +468,53 @@ written: the start of the call when it is inside what a call stood for."
 
 ;;; Text
 
-(defun latex-escape (string &key (special-strings t) (newlines nil))
+(defvar *latex-text-before* nil
+  "While the text between a paragraph's objects is written: the character
+before it in the note, :OBJECT when an object ends there, NIL at the start of
+the text.")
+
+(defvar *latex-text-after* nil
+  "While the text between a paragraph's objects is written: the character
+after it in the note, :OBJECT when an object begins there, NIL at the end.")
+
+(defun latex-quote-boundary-p (c)
+  "True when C, the character beside a quote mark, is a place a quotation
+begins or ends: nothing, a space, a bracket or a dash, or another quote mark."
+  (or (null c)
+      (and (characterp c)
+           (or (member c '(#\Space #\Tab #\Newline #\No-break_space))
+               (find c "([{<)]}>-–—/*_+\"'“‘”’")))))
+
+(defun latex-smart-quote (c before after)
+  "The typographic mark for the straight quote C (\" or ') between the
+characters BEFORE and AFTER (:OBJECT where an object stands), in the style of
+the note's language (*EXPORT-QUOTE-MARKS*): opening where a word begins,
+closing everywhere else, and an apostrophe inside a word."
+  (destructuring-bind (open-double close-double open-single close-single) (export-quote-marks)
+    (let ((opening (and (latex-quote-boundary-p before)
+                        (not (and (characterp before) (find before ")]}>")))
+                        (not (latex-quote-boundary-p after)))))
+      (string (if (char= c #\")
+                  (if opening open-double close-double)
+                  (if opening open-single close-single))))))
+
+(defun latex-escape (string &key (special-strings t) (newlines nil) (quotes nil))
   "STRING with the characters LaTeX gives meanings to written so they print
 as themselves; with SPECIAL-STRINGS, ... as an ellipsis, \\- as a place to
 hyphenate, and the words LaTeX and TeX as their logos; with NEWLINES, each
-line break kept as one. A zero-width space, which in a note only keeps the
-text beside it from being read as markup, is left out."
+line break kept as one; with QUOTES, each straight quote as the opening or
+closing mark of the note's language (LATEX-SMART-QUOTE). A zero-width space,
+which in a note only keeps the text beside it from being read as markup, is
+left out."
   (with-output-to-string (out)
     (loop with n = (length string)
           for i from 0 below n
           for c = (char string i)
-          do (cond ((and special-strings (char= c #\\) (< (1+ i) n) (char= (char string (1+ i)) #\-))
+          do (cond ((and quotes (find c "\"'"))
+                    (write-string (latex-smart-quote c (if (plusp i) (char string (1- i)) *latex-text-before*)
+                                                     (if (< (1+ i) n) (char string (1+ i)) *latex-text-after*))
+                                  out))
+                   ((and special-strings (char= c #\\) (< (1+ i) n) (char= (char string (1+ i)) #\-))
                     (write-string "\\-" out) (incf i))
                    ((and special-strings (char= c #\L) (<= (+ i 5) n) (string= "LaTeX" string :start2 i :end2 (+ i 5)))
                     (write-string "\\LaTeX{}" out) (incf i 4))
@@ -1456,21 +1492,31 @@ out to fit (ORG-LATEX-FITTED-TABLE)."
 it: the text between them as TEXT, a function of a string, gives it, each
 object by OBJECT, a function of it and OUT, and the spaces after one as
 BLANK, a function of how many, gives them."
-  (let ((p begin))
+  (let ((p begin) (blanks 0))
     (dolist (o objects)
-      (write-string (funcall text (subseq *org-latex-text* p (org-node-begin o))) out)
+      (let ((*latex-text-before* (cond ((and (> p begin) (plusp blanks)) #\Space)
+                                       ((> p begin) :object)
+                                       ((plusp p) (char *org-latex-text* (1- p)))))
+            (*latex-text-after* :object))
+        (write-string (funcall text (subseq *org-latex-text* p (org-node-begin o))) out))
       (funcall object o out)
       (when (plusp (org-node-post-blank o))
         (write-string (funcall blank (org-node-post-blank o)) out))
-      (setf p (org-node-end o)))
+      (setf blanks (org-node-post-blank o)
+            p (org-node-end o)))
     (when (and p end (< p end))
-      (write-string (funcall text (subseq *org-latex-text* p end)) out))))
+      (let ((*latex-text-before* (cond ((and (> p begin) (plusp blanks)) #\Space)
+                                       ((> p begin) :object)
+                                       ((plusp p) (char *org-latex-text* (1- p)))))
+            (*latex-text-after* (and (< end (length *org-latex-text*)) (char *org-latex-text* end))))
+        (write-string (funcall text (subseq *org-latex-text* p end)) out)))))
 
 (defun org-latex-objects-between (objects begin end out &key newlines)
   "Write the text from BEGIN below END to OUT, OBJECTS, the objects in it, as LaTeX and the rest escaped."
   (let ((special (org-latex-option "-" t)))
     (org-export-objects-between objects begin end out
-                                :text (lambda (s) (latex-escape s :newlines newlines :special-strings special))
+                                :text (lambda (s) (latex-escape s :newlines newlines :special-strings special
+                                                     :quotes (and *org-latex* (org-latex-enhanced *org-latex*))))
                                 :object #'org-latex-object
                                 :blank (lambda (n) (make-string n :initial-element #\Space)))))
 

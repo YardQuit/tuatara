@@ -112,3 +112,24 @@ one the export does not know."
       (:table (seventh row))
       (:figure (eighth row))
       (:contents (ninth row)))))
+
+(defparameter *english-quote-marks* '("“" "”" "‘" "’")
+  "The quotation marks of English: opening and closing double, opening and
+closing single.")
+
+(defparameter *export-quote-marks*
+  '(("sv" "”" "”" "’" "’")
+    ("fi" "”" "”" "’" "’")
+    ("de" "„" "“" "‚" "‘")
+    ("fr" "«" "»" "‹" "›"))
+  "How the enhanced export writes quotation marks for a language, by the
+language alone: (CODE OPENING-DOUBLE CLOSING-DOUBLE OPENING-SINGLE
+CLOSING-SINGLE). A language not here, or a note with none, gets
+*ENGLISH-QUOTE-MARKS*.")
+
+(defun export-quote-marks ()
+  "The four quotation marks (opening double, closing double, opening single,
+closing single) for the note being written, by its #+LANGUAGE:."
+  (let* ((code (or (export-language-code) "en"))
+         (language (string-downcase (subseq code 0 (position-if (lambda (c) (find c "-_")) code)))))
+    (or (rest (assoc language *export-quote-marks* :test #'string=)) *english-quote-marks*)))
