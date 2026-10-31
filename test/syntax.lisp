@@ -3161,7 +3161,10 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
              (dotimes (i n) (format o "~vaif x:~%" i ""))
              (format o "~vax = f\"\"\"a~%b~%\"\"\"~%" n ""))))
     (loop for (grammar text) in (list (list "yaml" (deep-yaml 300)) (list "python" (deep-python 600))
-                                      (list "mojo" (deep-python 600)))
+                                      (list "mojo" (deep-python 600))
+                                      ;; Typst's list items, each inside the one before
+                                      (list "typst" (with-output-to-string (o)
+                                                      (dotimes (i 400) (format o "~va- item~%" (* 2 i) "")))))
           do (let* ((parser (tuatara.syntax:make-parser (tuatara.syntax:find-grammar grammar) (tuatara.syntax::shared-helper))))
                (multiple-value-bind (tree why) (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text))
                  (true tree "~a nested deeply is parsed (~s)" grammar why)

@@ -1,0 +1,13 @@
+diff --git a/src/scanner.c b/src/scanner.c
+index 188fa2b..6ff626c 100644
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -459,7 +459,7 @@ static bool scan_preproc_unary_operator(TSLexer *lexer) {
+ static void track_labeled_do(Scanner *scanner, int32_t label) {
+     // check if label already exists
+     int i = scanner->depth - 1;
+-    if (scanner->labels[i] == label) {
++    if (i >= 0 && scanner->labels[i] == label) {
+         scanner->counts[i]++;
+         return;
+     }

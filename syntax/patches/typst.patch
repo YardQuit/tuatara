@@ -1,0 +1,23 @@
+diff --git a/src/scanner.c b/src/scanner.c
+index f44cf43..fb21047 100644
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -172,7 +172,8 @@ static void vec_u32_push(struct vec_u32* self, uint32_t value) {
+ static uint32_t vec_u32_pop(struct vec_u32* self) {
+ 	assert(self != NULL, "vec_u32_pop");
+ 	assert(self->len > 0, "vec_u32_pop: empty vec");
+-	return self->vec[self->len--];
++	if (self->len == 0) return 0;
++	return self->vec[--self->len];
+ }
+ static size_t vec_u32_serialize(struct vec_u32* self, char* buffer) {
+ 	assert(self != NULL, "vec_u32_serialize");
+@@ -344,6 +345,8 @@ unsigned tree_sitter_typst_external_scanner_serialize(
+ ) {
+ 	struct scanner* self = payload;
+ 	size_t written = 0;
++	if (2 * sizeof(size_t) + (self->indentation.len + self->containers.len) * sizeof(uint32_t) + 3
++	    > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) return 0;
+ 	written += vec_u32_serialize(&self->indentation, buffer + written);
+ 	written += vec_u32_serialize(&self->containers, buffer + written);
+ 	buffer[written++] = self->immediate;
