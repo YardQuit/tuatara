@@ -104,15 +104,7 @@ fi
 # only when what it compiles is what was recorded
 recorded="$root/syntax/grammar-inputs.sha256"
 pristine() { pristine_grammar "$sources/$1"; }
-inputs_of() {  # the SHA-256 of what compiling $1 (its manifest row $1 $2) reads, from its checkout as it is
-  local name="$1" subpath="$2" dir="$sources/$1" extra=()
-  case "$name" in
-    tree-sitter) grammar_inputs_hash "$dir" "$dir/lib/src" ;;
-    */*) grammar_inputs_hash "$dir" "$dir/src" grammar.js ;;
-    *) grep -q "^diff --git a/grammar.js" "$root/syntax/patches/$name.patch" 2>/dev/null && extra=("${subpath:+$subpath/}grammar.js")
-       grammar_inputs_hash "$dir" "$dir/${subpath:+$subpath/}src" ${extra[@]+"${extra[@]}"} ;;
-  esac
-}
+inputs_of() { grammar_inputs_of "$root" "$1" "$2"; }  # the SHA-256 of what compiling $1 (subfolder $2) reads
 checked() {  # stop unless the checkout of $1 (subpath $2) is its pinned commit as fetched, hashing as recorded
   grammar_checked "$1" "$sources/$1" "$recorded" "$(inputs_of "$1" "$2")" || exit 1
 }
@@ -164,20 +156,7 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
       [ -f "$patch" ] && made="$made $(sha256sum < "$patch" | cut -c1-16)"
       [ -f "$src/scanner.cc" ] && made="$made c++ ${grammar_cxxflags[*]}"
       if [ ! -f "$out/$name.so" ] || [ "$(cat "$out/$name.commit" 2>/dev/null)" != "$made" ]; then
-        [ -f "$patch" ] && pristine "$name"
-        checked "$name" "$subpath"
-        if [ -f "$patch" ]; then
-          grammar_git -C "$dir" apply "$patch"
-          # a changed grammar.js needs its parser generated again, a changed scanner not
-          if grep -q "^diff --git a/grammar.js" "$patch"; then
-            # what its grammar.js requires, checked as it is
-            for required in $(manifest | cut -f1 | grep "^$name/" || true); do checked "$required" ""; done
-            echo "  patching $name and generating its parser" >&2
-            generate_parser "$dir" "$cli"
-          else
-            echo "  patching $name" >&2
-          fi
-        fi
+        prepare_grammar "$root" "$name" "$subpath" "$cli" || exit 1
         compile_grammar "$src" "$out/$name.so"
         echo "$made" > "$out/$name.commit"
       fi ;;

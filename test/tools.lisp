@@ -478,3 +478,17 @@ grep -q 'int parser' src/parser.c && echo parser-back" repo cli)
     (multiple-value-bind (status error) (record "rust" "no-such-grammar")
       (is = 1 status)
       (true (search "no grammar called no-such-grammar" error)))))
+
+(define-test (tools fuzzed-grammars-shut-in)
+  ;; what fuzzing runs of a grammar's code reads its sources and writes only
+  ;; its scratch folder, with no environment of the caller's
+  (with-test-directory (directory)
+    (let ((out (grammar-build-output
+                (format nil "mkdir -p '~a/sources' '~:*~a/scratch'
+SECRET=caller run_shut_in '~:*~a/sources' '~:*~a/scratch' bash -c 'touch ../sources/x 2>/dev/null && echo wrote-sources
+touch y && echo wrote-scratch; echo \"secret=${SECRET:-none}\"'"
+                        (string-right-trim "/" (uiop:native-namestring directory)))
+                directory)))
+      (false (search "wrote-sources" out) "~a" out)
+      (true (search "wrote-scratch" out) "~a" out)
+      (true (search "secret=none" out) "~a" out))))

@@ -166,3 +166,59 @@ grammar_checked() {
     return 1
   fi
 }
+
+# grammar_inputs_of ROOT NAME SUBPATH: the SHA-256 of what compiling the row
+# NAME (its manifest row's subfolder SUBPATH) of ROOT's syntax/grammars.tsv
+# reads, from its checkout in ROOT/build/grammar-sources/ as it is
+grammar_inputs_of() {
+  local root="$1" name="$2" subpath="$3" dir="$1/build/grammar-sources/$2" extra=()
+  case "$name" in
+    tree-sitter) grammar_inputs_hash "$dir" "$dir/lib/src" ;;
+    */*) grammar_inputs_hash "$dir" "$dir/src" grammar.js ;;
+    *) grep -q "^diff --git a/grammar.js" "$root/syntax/patches/$name.patch" 2>/dev/null && extra=("${subpath:+$subpath/}grammar.js")
+       grammar_inputs_hash "$dir" "$dir/${subpath:+$subpath/}src" ${extra[@]+"${extra[@]}"} ;;
+  esac
+}
+
+# prepare_grammar ROOT NAME SUBPATH CLI: the checkout of grammar NAME in
+# ROOT/build/grammar-sources/ made ready to compile: put back to its commit
+# when it is patched, refused unless it is that commit with nothing changed
+# and hashes as ROOT/syntax/grammar-inputs.sha256 records (what its
+# grammar.js requires too), then patched as ROOT/syntax/patches/ says, its
+# parser generated again with the tree-sitter program CLI when the patch
+# changes its grammar.js. False, having said why, when refused.
+prepare_grammar() {
+  local root="$1" name="$2" subpath="$3" cli="$4" dir="$1/build/grammar-sources/$2"
+  local patch="$root/syntax/patches/$2.patch" recorded="$root/syntax/grammar-inputs.sha256" required
+  [ -f "$patch" ] && pristine_grammar "$dir"
+  grammar_checked "$name" "$dir" "$recorded" "$(grammar_inputs_of "$root" "$name" "$subpath")" || return 1
+  if [ -f "$patch" ]; then
+    grammar_git -C "$dir" apply "$patch" || return 1
+    if grep -q "^diff --git a/grammar.js" "$patch"; then
+      for required in $(grep -v "^#" "$root/syntax/grammars.tsv" | cut -f1 | grep "^$name/" || true); do
+        grammar_checked "$required" "$root/build/grammar-sources/$required" "$recorded" \
+                        "$(grammar_inputs_of "$root" "$required" "")" || return 1
+      done
+      echo "  patching $name and generating its parser" >&2
+      generate_parser "$dir" "$cli"
+    else
+      echo "  patching $name" >&2
+    fi
+  fi
+}
+
+# run_shut_in READABLE WRITABLE COMMAND...: COMMAND run in bubblewrap, as
+# fuzzing runs a grammar's code: no network, no environment but HOME, PATH
+# and the sanitizers' options, the system's programs and READABLE to read,
+# and nothing but WRITABLE (made first) to write
+run_shut_in() {
+  local readable="$1" writable="$2"
+  shift 2
+  mkdir -p "$writable"
+  bwrap --unshare-all --die-with-parent --new-session --clearenv \
+        --setenv HOME /tmp --setenv PATH /usr/bin \
+        --setenv ASAN_OPTIONS "${ASAN_OPTIONS:-}" --setenv UBSAN_OPTIONS "${UBSAN_OPTIONS:-}" \
+        --ro-bind /usr /usr --symlink usr/lib64 /lib64 --symlink usr/lib /lib --symlink usr/bin /bin \
+        --ro-bind "$readable" "$readable" --bind "$writable" "$writable" \
+        --tmpfs /tmp --proc /proc --dev /dev --chdir "$writable" -- "$@"
+}
