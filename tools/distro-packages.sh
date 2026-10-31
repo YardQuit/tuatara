@@ -178,7 +178,7 @@ arch=(x86_64)
 license=('${licences// AND /' '}')
 depends=(glibc gcc-libs gtk4 cairo ncurses openssl zstd)
 optdepends=('enchant: spelling'
-            'bubblewrap: pictures and programs run shut in'
+            'bubblewrap: pictures, programs and grammars run shut in'
             'imagemagick: pictures'
             'poppler: PDF files'
             'git: the git interface'

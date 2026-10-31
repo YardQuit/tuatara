@@ -3,7 +3,8 @@
 # Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
 # Put together build/release/tuatara/, Tuatara as it is given to others: the
 # program and what it reads beside it, so that the directory runs wherever it
-# is copied, nothing compiled there: grammars/ (tree-sitter and the grammars),
+# is copied, nothing compiled there: grammars/ (the grammars, and
+# tuatara-syntax-helper, the program with tree-sitter in it that runs them),
 # terminal/ (the terminal library, its layout, Ghostty's license and in
 # terminal/licenses/ those of what the library compiles in), syntax/
 # (the grammars' rules), icons/, the license and the README; grammars/licenses/
@@ -124,13 +125,14 @@ if [ -n "$unlicensed" ]; then
   echo "tools/release.sh: no licence for the Lisp systems:$unlicensed. Its text goes in data/licenses/NAME.txt." >&2
   exit 1
 fi
-cp build/grammars/*.so "$out/grammars/"
+cp build/grammars/*.so build/grammars/tuatara-syntax-helper "$out/grammars/"
 cp -r build/grammars/licenses "$out/grammars/licenses"
 cp build/terminal/libghostty-vt.so build/terminal/libtuatara-terminal.so build/terminal/layout.sexp \
    build/terminal/LICENSE-ghostty "$out/terminal/"
 cp -r build/terminal/licenses "$out/terminal/licenses"
 # their debugging information names the folders they were built in
-strip --strip-debug "$out/terminal/libghostty-vt.so" "$out/terminal/libtuatara-terminal.so"
+strip --strip-debug "$out/terminal/libghostty-vt.so" "$out/terminal/libtuatara-terminal.so" \
+      "$out/grammars/tuatara-syntax-helper"
 for kind in rules indents textobjects injections locals tags; do
   cp -r "syntax/$kind" "$out/syntax/$kind"
 done

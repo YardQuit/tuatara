@@ -395,7 +395,7 @@ MISSING, what to do about it (install readpst)."
 (defparameter *outside-programs*
   '((:spelling :name "Enchant" :what "spelling"
      :fedora ("enchant2") :debian ("libenchant-2-2") :arch ("enchant") :weight :recommends)
-    (:sandbox :name "bubblewrap" :what "pictures and programs run shut in"
+    (:sandbox :name "bubblewrap" :what "pictures, programs and grammars run shut in"
      :fedora ("bubblewrap") :debian ("bubblewrap") :arch ("bubblewrap") :weight :recommends)
     (:pictures :name "ImageMagick" :what "pictures"
      :fedora ("ImageMagick") :debian ("imagemagick") :arch ("imagemagick") :weight :recommends)
