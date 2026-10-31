@@ -20,16 +20,17 @@ language servers: what they find, hint at and colour is brought up to date
 that long after typing stops.")
 
 (defvar *lsp-largest-document* (* 8 1024 1024)
-  "The largest buffer, in octets, given to a language server.")
+  "The largest document, in octets, given to a language server: a file's
+whole text, or the code of a note's source blocks of one language, however
+large the note.")
 
 (defun lsp-refusal (buffer)
   "Why BUFFER is never given to a language server, in words, or NIL: no file,
-kept from other programs (OUTSIDE-PROGRAM-REFUSAL), too large, or not all
-UTF-8, which the protocol sends."
+kept from other programs (OUTSIDE-PROGRAM-REFUSAL), or not all UTF-8, which
+the protocol sends. What is too large is left out by LSP-DOC-SPECS."
   (let ((text (tuatara.buffer:buffer-text buffer)))
     (cond ((null (tuatara.buffer:buffer-file buffer)) "it has no file")
           ((outside-program-refusal buffer))
-          ((> (tuatara.buffer:buffer-size buffer) *lsp-largest-document*) "it is larger than *lsp-largest-document*")
           ((not (tuatara.text:rope-indexed-p text)) "it is still being read")
           ((plusp (tuatara.text:rope-invalid text)) "it is not valid UTF-8"))))
 
@@ -675,19 +676,24 @@ which is kept for what they say of it while there is room (SAVED)."
 
 (defvar *lsp-doc-spec-functions* '()
   "Functions of a buffer giving what servers see of it instead of its whole
-text, each a list of (LANGUAGE URI SHADOW), as an LSP-DOC is made from, or
-NIL to leave it to the next: a note's source blocks.")
+text, each a list of (LANGUAGE URI SHADOW SIZE), as an LSP-DOC is made from,
+SIZE the octets of the text SHADOW gives, or NIL to leave it to the next: a
+note's source blocks.")
 
-(defun lsp-doc-specs (buffer &key all)
-  "What servers see of BUFFER, as a list of (LANGUAGE URI SHADOW): its source
-blocks for a note (*LSP-DOC-SPEC-FUNCTIONS*), else its whole text in its
-language; NIL for a buffer no server may see (LSP-REFUSAL). Those of a
-language *LSP-LANGUAGES* leaves out are left out too, unless ALL."
+(defun lsp-doc-specs (buffer &key all any-size)
+  "What servers see of BUFFER, as a list of (LANGUAGE URI SHADOW SIZE): its
+source blocks for a note (*LSP-DOC-SPEC-FUNCTIONS*), else its whole text in
+its language, SIZE the octets of each; NIL for a buffer no server may see
+\(LSP-REFUSAL). Those of a language *LSP-LANGUAGES* leaves out are left out
+too, unless ALL, and those larger than *LSP-LARGEST-DOCUMENT*, unless
+ANY-SIZE."
   (when (null (lsp-refusal buffer))
-    (remove-if-not (lambda (spec) (or all (lsp-language-on-p (first spec))))
+    (remove-if-not (lambda (spec) (and (or all (lsp-language-on-p (first spec)))
+                                       (or any-size (<= (fourth spec) *lsp-largest-document*))))
                    (or (some (lambda (f) (funcall f buffer)) *lsp-doc-spec-functions*)
                        (let ((language (buffer-language buffer)))
-                         (and language (list (list language (path-uri (tuatara.buffer:buffer-file buffer)) nil))))))))
+                         (and language (list (list language (path-uri (tuatara.buffer:buffer-file buffer)) nil
+                                                   (tuatara.buffer:buffer-size buffer)))))))))
 
 (defun lsp-doc-specs-change-p (buffer)
   "True when what servers should see of BUFFER is no longer what they do (a
@@ -767,6 +773,9 @@ its servers installed (LSP-INSTALLED-SERVERS); NIL when one can."
   (let ((specs (lsp-doc-specs buffer))
         (refusal (lsp-refusal buffer)))
     (cond (refusal (format nil "No language server for ~a: ~a" (tuatara.buffer:buffer-name buffer) refusal))
+          ((and (null specs) (null (lsp-doc-specs buffer :all t)) (lsp-doc-specs buffer :all t :any-size t))
+           (format nil "No language server for ~a: what a server would see of it is larger than *lsp-largest-document*"
+                   (tuatara.buffer:buffer-name buffer)))
           ((and (null specs) (lsp-doc-specs buffer :all t))
            (format nil "Language servers are off for ~{~(~a~)~^, ~} (*lsp-languages*)"
                    (mapcar (lambda (spec) (language-name (first spec))) (lsp-doc-specs buffer :all t))))

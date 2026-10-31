@@ -391,10 +391,22 @@ a block written to a file open in one is seen by the note's own name."
               #'string<)
         (org-blocks-key buffer)))
 
+(defun org-blocks-size (buffer blocks language)
+  "About the octets of the code of LANGUAGE's source blocks of BUFFER, a note
+whose blocks are BLOCKS (ORG-NOTE-SOURCE-BLOCKS), as ORG-BLOCKS-SHADOW makes
+it: a line end for each of the note's lines and the octets of the blocks'
+lines, their indentation counted. Complexity: O(blocks x log of the text)."
+  (let ((rope (tuatara.buffer:buffer-text buffer)))
+    (+ (tuatara.text:rope-lines rope)
+       (loop for (name first last) in blocks
+             when (eq (org-src-language name) language)
+               sum (- (tuatara.text:line->byte rope last) (tuatara.text:line->byte rope first))))))
+
 (defun org-block-doc-specs (buffer)
   "What servers see of BUFFER when it is a note with source blocks of a
 language a server knows: for each such language, its blocks, as
-*LSP-DOC-SPEC-FUNCTIONS* has them; NIL for any other buffer. Worked out from
+*LSP-DOC-SPEC-FUNCTIONS* has them, each document's size as it was then;
+NIL for any other buffer. Worked out from
 the note's parse once for each change of what its blocks are (ORG-BLOCKS-KEY),
 not again for text typed elsewhere; again when the files open change
 \(ORG-BLOCK-SPECS-KEY)."
@@ -403,10 +415,12 @@ not again for text typed elsewhere; again when the files open change
           (kept (tuatara.buffer:buffer-local buffer 'org-block-specs)))
       (if (and kept (equal key (car kept)))
           (cdr kept)
-          (let ((specs (loop for language in (org-blocks-languages buffer)
-                             collect (let ((language language))
-                                       (list language (org-blocks-uri buffer language)
-                                             (lambda (b &optional doc stretches) (org-blocks-shadow b language doc stretches)))))))
+          (let* ((blocks (org-note-source-blocks buffer))
+                 (specs (loop for language in (org-blocks-languages buffer)
+                              collect (let ((language language))
+                                        (list language (org-blocks-uri buffer language)
+                                              (lambda (b &optional doc stretches) (org-blocks-shadow b language doc stretches))
+                                              (org-blocks-size buffer blocks language))))))
             ;; kept only when read from the parse of the text as it is now
             (when (and (org-buffer-tree buffer) (org-parse-current-p buffer))
               (setf (tuatara.buffer:buffer-local buffer 'org-block-specs) (cons key specs)))
