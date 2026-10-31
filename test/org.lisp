@@ -158,9 +158,17 @@ file of test/org/, the same nodes, positions and properties as tools/org-oracle.
     (true (org-faces-include f 3 "CLOSED:" :org-special-keyword))))
 
 (define-test (org coloured-as-org-colours)
-  (let ((f (let ((tuatara-user:*org-bullets* nil) (tuatara-user:*org-checkbox-signs* nil) (tuatara-user:*org-list-bullets* nil)
-                 (tuatara-user:*org-startup-indented* nil))
-             (run-keys "M-x o r g - m o d e RET" :text *org-coloured* :width 80 :height 16))))
+  ;; drawn again once the rules of the block's language are compiled, which the first time is done in
+  ;; the background (source-blocks-coloured-when-ready)
+  (let* ((lisp (tuatara.defaults::org-src-language "lisp"))
+         (f (let ((tuatara-user:*org-bullets* nil) (tuatara-user:*org-checkbox-signs* nil) (tuatara-user:*org-list-bullets* nil)
+                  (tuatara-user:*org-startup-indented* nil))
+              (run-keys (list "M-x o r g - m o d e RET"
+                              (lambda ()
+                                (loop repeat 1000 until (tuatara.defaults::rules-ready-p lisp) do (sleep 0.02)))
+                              :tick)
+                        :text *org-coloured* :width 80 :height 16))))
+    (true (tuatara.defaults::rules-ready-p lisp))
     (true (org-faces-include f 0 "#+title:" :org-document-info-keyword))
     (true (org-faces-include f 0 " Notes" :org-document-title))
     (true (org-faces-include f 1 "TODO" :org-todo))
@@ -193,10 +201,12 @@ file of test/org/, the same nodes, positions and properties as tools/org-oracle.
                      (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f #'check))
                      (tuatara.frontend.fake:fake-queue-keys f "j"))))
         (tuatara.frontend.fake:fake-queue-action f #'check))
-      (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
-                                    :buffer (let ((b (tuatara.buffer:make-buffer "background.org" :text *org-coloured*)))
-                                              (tuatara.defaults::set-major-mode b 'tuatara.defaults::org-mode)
-                                              b))
+      (let ((b (tuatara.buffer:make-buffer "background.org" :text *org-coloured*)))
+        (unwind-protect
+             (progn
+               (tuatara.defaults::set-major-mode b 'tuatara.defaults::org-mode)
+               (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults :buffer b))
+          (tuatara.buffer:kill-buffer b)))
       (true (org-faces-include f 1 "TODO" :org-todo)))))
 
 (defun org-plain-session (text)
