@@ -403,13 +403,16 @@ a recording of keys going on."
               ((and char (member char answers)) (return char))
               (t (setf asked (format nil "Answer ~a. ~a" (answer-keys-words answers) prompt))))))))
 
-(defun y-or-n-p* (prompt)
+(defun y-or-n-p* (prompt &key fresh)
   "Ask PROMPT, a question whose answer is easily undone, answered by one
 key, y or n, no RET (READ-ANSWER-KEY): true for y, false for n; any other
-key says which keys answer and asks again; \\`C-g' signals QUIT. A
-question whose yes destroys or writes over what cannot be had back asks
-for a typed answer instead (YES-OR-NO-P*)."
-  (eql #\y (read-answer-key (concatenate 'string prompt " (y or n) ") '(#\y #\n))))
+key says which keys answer and asks again; \\`C-g' signals QUIT. With
+FRESH, for a question that comes without a command of yours asking it (a
+language server's, one while you type), only a key pressed once it is shown
+answers it (READ-ANSWER-KEY's FRESH). A question whose yes destroys or
+writes over what cannot be had back asks for a typed answer instead
+\(YES-OR-NO-P*)."
+  (eql #\y (read-answer-key (concatenate 'string prompt " (y or n) ") '(#\y #\n) :fresh fresh)))
 
 (defun completing-read (prompt table &key annotate require-match history (initial "") (separator #\/) (filter t)
                                          select reselect preview source default keep-order none taken keymap)

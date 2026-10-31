@@ -504,7 +504,7 @@ for rimu's operations to finish. Returns the frontend and the editor."
   ;; the operations under way are asked about before exiting, and stopped only once the exit is certain
   (let ((tuatara.runtime:*jobs*
           (list (tuatara.defaults::make-rimu-operation :copy (list (cons "/a" "/b")) nil nil))))
-    (sb-int:encapsulate 'tuatara.command:y-or-n-p* 'test (lambda (f prompt) (declare (ignore f prompt)) t))
+    (sb-int:encapsulate 'tuatara.command:y-or-n-p* 'test (lambda (f prompt &rest how) (declare (ignore f prompt how)) t))
     (unwind-protect
          (let ((answer (tuatara.defaults::jobs-quit-query)))
            (true (functionp answer))

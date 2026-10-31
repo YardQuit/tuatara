@@ -70,7 +70,7 @@ questions asked, the first first."
   `(let ((,prompts '()))
      (dolist (asking '(tuatara.command:yes-or-no-p* tuatara.command:y-or-n-p*))
        (sb-int:encapsulate asking 'job-runner
-                           (lambda (f prompt) (declare (ignore f)) (setf ,prompts (append ,prompts (list prompt))) ,answer)))
+                           (lambda (f prompt &rest how) (declare (ignore f how)) (setf ,prompts (append ,prompts (list prompt))) ,answer)))
      (unwind-protect (progn ,@body)
        (dolist (asking '(tuatara.command:yes-or-no-p* tuatara.command:y-or-n-p*))
          (sb-int:unencapsulate asking 'job-runner)))))

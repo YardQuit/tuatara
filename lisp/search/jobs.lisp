@@ -472,7 +472,7 @@ spoil it. O(jobs of BUFFER) when none of them guards text."
             (error "~a" (tuatara.runtime:job-guard-refusal job)))
           (let ((version (tuatara.buffer:buffer-version buffer)))
             (if (let ((*edit-asked-about* buffer))
-                  (y-or-n-p* (tuatara.runtime:job-guard-question job)))
+                  (y-or-n-p* (tuatara.runtime:job-guard-question job) :fresh t))
                 (tuatara.runtime:job-stop job)
                 (progn (setf (getf (car notes) :spoiling-edits-refused) t)
                        (error "~a" (tuatara.runtime:job-guard-refusal job))))

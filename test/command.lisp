@@ -340,7 +340,7 @@ TEXTS with the mode line's sign of work, P, lit in :mode-line-sign."
   ;; the questions before exiting change nothing: what they stop is stopped only once the exit is certain
   (let* ((job (tuatara.defaults::%make-hash-job :what "a sum"))
          (tuatara.runtime:*jobs* (list job)))
-    (sb-int:encapsulate 'tuatara.command:y-or-n-p* 'test (lambda (f prompt) (declare (ignore f prompt)) t))
+    (sb-int:encapsulate 'tuatara.command:y-or-n-p* 'test (lambda (f prompt &rest how) (declare (ignore f prompt how)) t))
     (unwind-protect
          (let ((answer (tuatara.defaults::jobs-quit-query)))
            (true (functionp answer))

@@ -594,7 +594,7 @@ what was left alone, or NIL."
     (let ((paths (remove nil (mapcar (lambda (change) (uri-path (car change))) changes))))
       (when (or (null paths)
                 (not (or asked (notevery (lambda (p) (tuatara.io:really-within-p p (lsp-server-root server))) paths)))
-                (y-or-n-p* (workspace-edit-question server paths asked)))
+                (y-or-n-p* (workspace-edit-question server paths asked) :fresh asked))
         (let ((done 0) (left '()))
           (loop for (uri . edits) in changes
                 do (let ((outcome (lsp-apply-file-edits server uri edits)))
