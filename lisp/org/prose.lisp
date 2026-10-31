@@ -99,12 +99,16 @@ line before it leaving nothing open (HALF-TYPED-P)."
 
 (defun org-buffer-laid-out-ranges (buffer tree text)
   "ORG-LAID-OUT-RANGES of TREE, the parse of TEXT, BUFFER's text or a part of
-it, worked out once for each parse, the last asked for kept."
-  (let ((kept (tuatara.buffer:buffer-local buffer 'org-laid-out-ranges)))
-    (if (eq (car kept) tree)
-        (cdr kept)
+it, worked out once for each parse: the last two asked for kept, so that
+the whole parse (PROSE-TEST) and a part's (ORG-PROSE-P) do not put each
+other out."
+  (let* ((kept (tuatara.buffer:buffer-local buffer 'org-laid-out-ranges))
+         (hit (assoc tree kept :test #'eq)))
+    (if hit
+        (cdr hit)
         (let ((ranges (org-laid-out-ranges tree text)))
-          (setf (tuatara.buffer:buffer-local buffer 'org-laid-out-ranges) (cons tree ranges))
+          (setf (tuatara.buffer:buffer-local buffer 'org-laid-out-ranges)
+                (list (cons tree ranges) (first kept)))
           ranges))))
 
 (defun org-prose-p (buffer position)
@@ -114,7 +118,8 @@ it is now, else the parse of the section around POSITION (ORG-SECTION-AROUND)."
   (let ((view (org-view-at buffer position)))
     (if (and view (org-view-current view))
         (let ((text (org-view-text view)))
-          (org-text-prose-p (org-buffer-laid-out-ranges buffer (org-view-tree view) text) text
+          ;; a part read from the whole parse: the whole parse's ranges, shared with PROSE-TEST
+          (org-text-prose-p (org-buffer-laid-out-ranges buffer (or (org-view-root view) (org-view-tree view)) text) text
                             (min (length text) (org-view-char buffer view position))))
         (multiple-value-bind (text index) (org-section-around buffer position)
           (org-text-prose-p (org-laid-out-ranges (org-parse text) text) text index)))))

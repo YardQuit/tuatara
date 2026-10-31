@@ -365,3 +365,20 @@ headline's title objects too), to tell two parses apart."
                (true (every #'tuatara.defaults::org-view-root views))))
            (is = 0 parsed))
       (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals prose-ranges-kept-for-part-and-whole)
+  ;; telling prose from the whole parse and from a part's, one after the other, works each out once
+  (let* ((buffer (org-parts-buffer (org-parts-many 30) nil))
+         (worked 0)
+         (laid-out (fdefinition 'tuatara.defaults::org-laid-out-ranges)))
+    (unwind-protect
+         (progn
+           (tuatara.defaults::set-major-mode buffer 'tuatara.defaults::org-mode)
+           (with-functions-replaced ((tuatara.defaults::org-laid-out-ranges (lambda (&rest arguments)
+                                                                               (incf worked)
+                                                                               (apply laid-out arguments))))
+             (dotimes (i 3)
+               (funcall (tuatara.defaults::prose-test buffer) 20)
+               (tuatara.defaults::org-prose-p buffer 20)))
+           (true (<= worked 2) "worked out ~d times" worked))
+      (tuatara.buffer:kill-buffer buffer))))
