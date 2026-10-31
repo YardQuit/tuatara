@@ -600,6 +600,11 @@ in, one after another, through OUTPUT-PAST-RETURNS."
           "in pieces of ~d" size)))
   ;; X written over the first character after the last return: shorter text leaves the rest
   (is string= "X00%" (output-as-a-terminal-shows-it (list (format nil "100%~cX" #\Return))))
+  ;; a line too long to follow goes in as it came to its newline, and what follows is
+  ;; followed again; a carriage return making one too long gives it up too
+  (let ((tuatara.defaults::*compile-return-line-most* 4))
+    (is string= (format nil "abcdefABC~%Zy") (output-as-a-terminal-shows-it (list "abcdefAB" (format nil "C~%xy~c" #\Return) "Z")))
+    (is string= (format nil "xyzwv~cQ" #\Return) (output-as-a-terminal-shows-it (list (format nil "ab~cxyzwv" #\Return) (format nil "~cQ" #\Return)))))
   ;; in *compile*: the progress shows as one line, the places after it found where they are
   (with-compile-session (dir (format nil "printf '10%%\\r50%%\\r100%%\\n'~%printf 'a.c:2:11: error: bad\\n'~%"))
     (auto-save-session (compile-steps dir (list :until #'compile-ended-p) "M-g n" (reached '("a.c" 1 10)))

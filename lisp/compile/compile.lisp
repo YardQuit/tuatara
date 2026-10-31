@@ -600,13 +600,22 @@ and the newline after it end a line as they are. RETURNS, an OUTPUT-RETURNS,
 is kept up to date. Complexity: O(OCTETS and the line being written)."
   (declare (type tuatara.text:octets octets))
   (let ((shown (output-returns-shown returns)))
-    (if (or (output-returns-lost returns)
-            (and (not (output-returns-pending returns)) (null (output-returns-column returns)) (not (find 13 octets))))
+    (when (output-returns-lost returns)
+      ;; a line too long to follow goes in as it came, to its newline; what follows
+      ;; is taken in as any output is
+      (let ((newline (position 10 octets)))
+        (unless newline (return-from output-past-returns (values octets 0)))
+        (setf (output-returns-lost returns) nil (fill-pointer shown) 0
+              (output-returns-column returns) nil (output-returns-pending returns) nil)
+        (return-from output-past-returns
+          (values (concatenate 'tuatara.text:octets (subseq octets 0 (1+ newline))
+                               (output-past-returns returns (subseq octets (1+ newline))))
+                  0))))
+    (if (and (not (output-returns-pending returns)) (null (output-returns-column returns)) (not (find 13 octets)))
         ;; written at the end, as it came: only the line being written kept up to date
         (let ((newline (position 10 octets :from-end t)))
-          (when newline (setf (fill-pointer shown) 0 (output-returns-lost returns) nil))
-          (if (or (output-returns-lost returns)
-                  (> (+ (fill-pointer shown) (- (length octets) (if newline (1+ newline) 0))) *compile-return-line-most*))
+          (when newline (setf (fill-pointer shown) 0))
+          (if (> (+ (fill-pointer shown) (- (length octets) (if newline (1+ newline) 0))) *compile-return-line-most*)
               (setf (fill-pointer shown) 0 (output-returns-lost returns) t)
               (loop for i from (if newline (1+ newline) 0) below (length octets)
                     do (vector-push-extend (aref octets i) shown)))
@@ -644,7 +653,11 @@ is kept up to date. Complexity: O(OCTETS and the line being written)."
             (setf (fill-pointer shown) 0
                   (output-returns-column returns) column
                   (output-returns-pending returns) pending)
-            (loop for octet across now do (vector-push-extend octet shown)))
+            (if (> (length now) *compile-return-line-most*)
+                ;; too long to follow: not written again, to its newline
+                (setf (output-returns-lost returns) t (output-returns-column returns) nil
+                      (output-returns-pending returns) nil)
+                (loop for octet across now do (vector-push-extend octet shown))))
           (values (tuatara.text:string-octets (get-output-stream-string out)) back)))))
 
 (defun retract-output-scan (scan count)
