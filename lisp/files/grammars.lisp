@@ -69,16 +69,26 @@ ANSWERS . TABLE), TABLE holding the name of each grammar on, worked out from
   "The names of the languages whose question was given up in this session
 \(\\`C-g'): not asked again until Tuatara starts again.")
 
+(defvar *grammar-answers-entries* nil
+  "The entries of *GRAMMAR-ANSWERS* *GRAMMAR-ANSWERS-READ* was made from.")
+
 (defun grammar-answers (&key again)
   "The table of the answers to whether to turn a grammar on (see
 *GRAMMAR-ANSWERS-READ*), read from the list kept between sessions the first
-time, and again with AGAIN (another session may have answered meanwhile)."
-  (or (and (not again) *grammar-answers-read*)
-      (let ((table (make-hash-table :test 'equalp)))
-        ;; the latest first: an older answer for the same language is passed over
-        (dolist (answer (reverse (state-list-entries *grammar-answers*)) table)
-          (setf (gethash (car answer) table) (if (cdr answer) :on :off)))
-        (setf *grammar-answers-read* table))))
+time, and with AGAIN looked at again (another session may have answered
+meanwhile), made again only when the list has changed."
+  (let ((table *grammar-answers-read*))
+    (if (and table (not again))
+        table
+        (let ((entries (state-list-entries *grammar-answers*)))
+          (if (and table (eq entries *grammar-answers-entries*))
+              table
+              (let ((table (make-hash-table :test 'equalp)))
+                ;; the latest first: an older answer for the same language is passed over
+                (dolist (answer (reverse entries))
+                  (setf (gethash (car answer) table) (if (cdr answer) :on :off)))
+                (setf *grammar-answers-entries* entries
+                      *grammar-answers-read* table)))))))
 
 (defun grammars-on-table ()
   "A table holding the name of each grammar on: those of the languages
@@ -143,20 +153,25 @@ other languages coloured again by the grammars on."
           (language-words language) (substitute-command-keys "\\[turn-on-grammar]") (language-name language)))
 
 (defun ask-to-turn-on-grammar (language)
-  "Ask whether to turn LANGUAGE's grammar on, keep the answer, and act on it:
-on, the buffers in it are parsed; off, say how to turn it on later. Given up
-with \\`C-g', it is not asked again in this session."
-  (handler-case
-      (let ((on (yes-or-no-p* (format nil "Turn on the ~a grammar? It colours and parses ~a text with code from outside Tuatara, run shut in"
-                                      (language-words language) (language-words language)))))
-        (note-grammar-answer language on)
-        (if on
-            (progn (grammars-changed)
-                   (message "The ~a grammar is on" (language-words language)))
-            (message "~a" (grammar-stays-off-words language))))
-    (quit ()
-      (push (string-downcase (symbol-name (language-name language))) *grammars-not-now*)
-      (message "~a" (grammar-stays-off-words language)))))
+  "Ask whether to turn LANGUAGE's grammar on, answered by one key pressed
+once the question is shown (keys typed before are thrown away): y keeps it
+on and parses the buffers in it, n keeps it off and says how to turn it on
+later; any other key, or \\`C-g', is \"not now\": not asked again in this
+session, and nothing kept."
+  (let* ((words (language-words language))
+         (key (handler-case (read-key (format nil "Turn on the ~a grammar, to colour and parse it? (y or n) " words) :fresh t)
+                (quit () nil)))
+         (answer (and key (not (tuatara.frontend:key-ctrl key)) (not (tuatara.frontend:key-meta key))
+                      (characterp (tuatara.frontend:key-base key))
+                      (char-downcase (tuatara.frontend:key-base key)))))
+    (case answer
+      (#\y (note-grammar-answer language t)
+       (grammars-changed)
+       (message "The ~a grammar is on" words))
+      (#\n (note-grammar-answer language nil)
+       (message "~a" (grammar-stays-off-words language)))
+      (t (push (string-downcase (symbol-name (language-name language))) *grammars-not-now*)
+       (message "~a; asked again when Tuatara starts again" (grammar-stays-off-words language))))))
 
 (defvar *grammar-asking* nil
   "True while the question whether to turn a grammar on is asked.")

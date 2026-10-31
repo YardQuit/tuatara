@@ -338,16 +338,35 @@ when given, the debug log. With no editor showing, it simply waits."
 gives before reading any, and those read so far, newest first. So a key the
 command asks for is asked once and given at every place.")
 
-(defun read-key (prompt)
+(defun discard-typed-ahead (editor)
+  "Throw away the keys typed to EDITOR and not read yet, those waiting in
+the frontend too, so that a question asked now is answered only by a key
+pressed once it is shown. Reading stops at a wake-up (a tick); a window
+resized, closed, files dropped or text pasted are kept to be dealt with."
+  (setf (editor-unread editor)
+        (remove :key (editor-unread editor) :key #'tuatara.frontend:event-kind))
+  (let ((frontend (editor-frontend editor)) (kept '()))
+    (loop while (tuatara.frontend:frontend-input-pending-p frontend)
+          do (let ((event (tuatara.frontend:frontend-read-event-timeout frontend 0)))
+               (case (and event (tuatara.frontend:event-kind event))
+                 ((nil :tick) (return))
+                 (:key)
+                 (t (push event kept)))))
+    (setf (editor-unread editor) (append (editor-unread editor) (nreverse kept)))))
+
+(defun read-key (prompt &key fresh)
   "Show PROMPT in the echo area, redisplay, and return the next key pressed,
-the cursor standing after PROMPT meanwhile (*KEY-QUESTION*). Signals QUIT
-when the frontend has nothing more to deliver."
+the cursor standing after PROMPT meanwhile (*KEY-QUESTION*). With FRESH, the
+keys typed until PROMPT is shown are thrown away (DISCARD-TYPED-AHEAD):
+for a question no key typed ahead may answer. Signals QUIT when the frontend
+has nothing more to deliver."
   (let ((replay *read-key-replay*))
     (if (and replay (car replay))
         (pop (car replay))
         (let ((editor *editor*) (*key-question* t))
           (echo "~a" prompt)
           (redisplay-or-say editor)
+          (when fresh (discard-typed-ahead editor))
           (let* ((event (read-event editor))
                  (key (case (tuatara.frontend:event-kind event)
                         (:quit (keyboard-quit-signal))

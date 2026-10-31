@@ -45,25 +45,25 @@ afterwards."
   ;; a file in AWK asks; y turns the grammar on, the file is coloured, and the
   ;; answer is kept: the next file in AWK asks nothing
   (with-grammar-answers-forgotten ("awk")
-    (with-file-session ((f editor) "y RET" (format nil "BEGIN { print 1 }~%") "awk")
-      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+    (with-file-session ((f editor) "y" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar"))
       (true (member :keyword (row-faces f 0)) "the file is coloured once its grammar is on"))
     (is eq :on (gethash "awk" (tuatara.defaults::grammar-answers :again t)))
     (with-file-session ((f editor) "" (format nil "BEGIN { print 1 }~%") "awk")
-      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?") "asked once only")
+      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar") "asked once only")
       (true (member :keyword (row-faces f 0))))))
 
 (define-test (grammars-on file-asks-and-no-says-how-later)
   ;; n keeps the grammar off, says how to turn it on later, and is kept: the
   ;; next file asks nothing; turn-on-grammar turns it on after all
   (with-grammar-answers-forgotten ("awk")
-    (with-file-session ((f editor) "n RET" (format nil "BEGIN { print 1 }~%") "awk")
-      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+    (with-file-session ((f editor) "n" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar"))
       (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "The AWK grammar stays off: M-x turn-on-grammar turns it on"))
       (false (member :keyword (row-faces f 0)) "not coloured while its grammar is off"))
     (with-file-session ((f editor) (format nil "M-x ~a RET RET" (key-string "turn-on-grammar"))
                         (format nil "BEGIN { print 1 }~%") "awk")
-      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?") "asked once only")
+      (false (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar") "asked once only")
       (true (tuatara.frontend.fake:fake-frame-showing f "The AWK grammar is on"))
       (true (member :keyword (row-faces f 0)) "coloured once turned on by the command"))))
 
@@ -96,6 +96,50 @@ afterwards."
     (multiple-value-bind (f editor) (run-keys "a b c" :text "abc")
       (declare (ignore f))
       (false (member 'tuatara.defaults::ask-about-shown-grammar (tuatara.command:editor-post-command-functions editor))))
-    (with-file-session ((f editor) "n RET a b" (format nil "BEGIN { print 1 }~%") "awk")
-      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar?"))
+    (with-file-session ((f editor) "n a b" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the AWK grammar"))
       (false (member 'tuatara.defaults::ask-about-shown-grammar (tuatara.command:editor-post-command-functions editor))))))
+
+(defun typed-ahead-session (keys text extension)
+  "Run KEYS (as QUEUE-TEST-KEYS takes them) on a file with EXTENSION holding
+TEXT, every key queued counting as typed ahead, waiting in the frontend;
+return the fake frontend."
+  (with-test-directory (directory)
+    (let ((path (merge-pathnames (format nil "sample.~a" extension) directory))
+          (f (tuatara.frontend.fake:make-fake-frontend :width 60 :height 8)))
+      (with-open-file (o path :direction :output) (write-string text o))
+      (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (tuatara.frontend.fake::fake-events f)))
+      (queue-test-keys f keys)
+      (let ((editor (tuatara.command:run-editor f :files (list path) :setup #'tuatara.defaults:install-defaults)))
+        (tuatara.buffer:kill-buffer (tuatara.display:window-buffer (tuatara.command:editor-window editor))))
+      f)))
+
+(define-test (grammars-on keys-typed-ahead-never-answer)
+  ;; a key typed before the question shows never answers it: one pressed
+  ;; after does, one key alone; with none, it is "not now", nothing kept
+  (with-grammar-answers-forgotten ("awk")
+    (let ((f (typed-ahead-session (list "y" :tick "n") (format nil "BEGIN { print 1 }~%") "awk")))
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "The AWK grammar stays off"))
+      (is eq :off (gethash "awk" (tuatara.defaults::grammar-answers :again t)) "the n pressed after")))
+  (with-grammar-answers-forgotten ("awk")
+    (let ((f (typed-ahead-session "y" (format nil "BEGIN { print 1 }~%") "awk")))
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "asked again when Tuatara starts again"))
+      (false (gethash "awk" (tuatara.defaults::grammar-answers :again t)) "nothing kept")
+      (true (member "awk" tuatara.defaults::*grammars-not-now* :test #'string=) "not now"))))
+
+(define-test (grammars-on other-key-is-not-now)
+  ;; a key other than y or n is "not now" for this session, and nothing is kept
+  (with-grammar-answers-forgotten ("awk")
+    (with-file-session ((f editor) "x" (format nil "BEGIN { print 1 }~%") "awk")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "asked again when Tuatara starts again")))
+    (false (gethash "awk" (tuatara.defaults::grammar-answers :again t)))
+    (true (member "awk" tuatara.defaults::*grammars-not-now* :test #'string=))))
+
+(define-test (grammars-on answers-read-again-only-when-changed)
+  ;; looking at the answers again, as each command does while a question is
+  ;; pending, makes nothing new while no answer has changed
+  (with-grammar-answers-forgotten ("awk")
+    (let ((table (tuatara.defaults::grammar-answers :again t))
+          (on (tuatara.defaults::grammars-on-table)))
+      (is eq table (tuatara.defaults::grammar-answers :again t))
+      (is eq on (tuatara.defaults::grammars-on-table)))))
