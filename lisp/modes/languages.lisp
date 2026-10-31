@@ -273,9 +273,10 @@ error, and AFTER, when given, is called with the rules once compiled.")
 
 (defvar *rules-unanswered* (make-hash-table :test 'eq :synchronized t)
   "For each language whose rules the program compiling them did not answer
-for (a busy moment), (WHEN . WAIT): they are not asked for again before the
-internal real time WHEN, WAIT the seconds waited, doubled each time it does
-not answer again, up to *RULES-UNANSWERED-WAIT-MOST*.")
+for (a busy moment), (WHEN WAIT TIMES): they are not asked for again before
+the internal real time WHEN, WAIT the seconds waited, doubled each time it
+does not answer again, up to *RULES-UNANSWERED-WAIT-MOST*; TIMES how many
+times it has not answered.")
 
 (defparameter *rules-unanswered-wait* 0.5
   "The seconds before rules the program compiling them did not answer for are
@@ -289,16 +290,36 @@ for are asked for again.")
   "True while LANGUAGE's rules are not to be asked for again yet, the program
 compiling them not having answered (*RULES-UNANSWERED*)."
   (let ((entry (gethash language *rules-unanswered*)))
-    (and entry (< (get-internal-real-time) (car entry)))))
+    (and entry (< (get-internal-real-time) (first entry)))))
+
+(defparameter *rules-unanswered-most* 4
+  "How many times the program compiling a language's rules may not answer for
+them before they are given up on as failed until Tuatara starts again: each
+time it is ended, and with it the rules of every other language being
+compiled.")
 
 (defun note-rules-unanswered (language)
   "Have LANGUAGE's rules asked for again later, the program compiling them not
 having answered: after *RULES-UNANSWERED-WAIT*, twice as long as before when
-it did not answer again."
-  (let* ((before (gethash language *rules-unanswered*))
-         (wait (if before (min *rules-unanswered-wait-most* (* 2 (cdr before))) *rules-unanswered-wait*)))
-    (setf (gethash language *rules-unanswered*)
-          (cons (+ (get-internal-real-time) (round (* wait internal-time-units-per-second))) wait))))
+it did not answer again. True when it has not answered
+*RULES-UNANSWERED-MOST* times: they are not asked for again."
+  (sb-ext:with-locked-hash-table (*rules-unanswered*)
+    (let* ((before (gethash language *rules-unanswered*))
+           (wait (if before (min *rules-unanswered-wait-most* (* 2 (second before))) *rules-unanswered-wait*))
+           (times (1+ (if before (third before) 0))))
+      (setf (gethash language *rules-unanswered*)
+            (list (+ (get-internal-real-time) (round (* wait internal-time-units-per-second))) wait times))
+      (>= times *rules-unanswered-most*))))
+
+(defvar *rules-editor-wait* 2
+  "The seconds the editor's thread waits for a language's rules to be compiled
+when it needs them at once (to indent a line, select a function); past them
+it carries on as for a language without such rules, and they are kept once
+compiled in the background.")
+
+(defvar *compiling* (make-hash-table :test 'equal :synchronized t)
+  "The thread compiling each language's rules of a kind for the editor's
+thread, (LANGUAGE . KIND), while it runs (LANGUAGE-COMPILED-QUERY).")
 
 (defun language-compiled-query (language kind)
   "The compiled rules of LANGUAGE of KIND, one of *LANGUAGE-QUERIES* (such as
@@ -306,7 +327,30 @@ it did not answer again."
 it has none, its grammar is missing, or they do not compile, which is said
 once in *Messages* (RULES-FAILED). Rules the program compiling them did not
 answer for, at a busy moment, are not taken for failed: NIL now, and asked
-for again a little later (NOTE-RULES-UNANSWERED)."
+for again a little later (NOTE-RULES-UNANSWERED), until it has not answered
+*RULES-UNANSWERED-MOST* times. On the editor's thread they are compiled in
+the background, waited for at most *RULES-EDITOR-WAIT*: NIL past it, the
+editor carrying on as for a language without such rules, and the rules
+kept once compiled."
+  (let ((known (funcall (second (assoc kind *language-queries*)) language)))
+    (cond (known (and (tuatara.syntax:query-p known) known))
+          ((not (on-editor-thread-p)) (compile-language-query language kind))
+          ((rules-backing-off-p language) nil)
+          (t (let* ((key (cons language kind))
+                    (thread (or (gethash key *compiling*)
+                                (setf (gethash key *compiling*)
+                                      (tuatara.runtime:make-guarded-thread
+                                       (lambda ()
+                                         (unwind-protect (let ((*rules-quiet* t)) (compile-language-query language kind))
+                                           (remhash key *compiling*)))
+                                       :name "tuatara rules")))))
+               (sb-thread:join-thread thread :timeout *rules-editor-wait* :default nil)
+               (let ((now (funcall (second (assoc kind *language-queries*)) language)))
+                 (and (tuatara.syntax:query-p now) now)))))))
+
+(defun compile-language-query (language kind)
+  "The work of LANGUAGE-COMPILED-QUERY, on the thread it runs on: LANGUAGE's
+rules of KIND compiled, and kept."
   (destructuring-bind (kept source label failure &optional after) (rest (assoc kind *language-queries*))
     (let ((known (funcall kept language)))
       (if known
@@ -318,8 +362,10 @@ for again a little later (NOTE-RULES-UNANSWERED)."
                  (query (when (and grammar source)
                           (handler-case (prog1 (tuatara.syntax:compile-query grammar source label)
                                           (remhash language *rules-unanswered*))
-                            (tuatara.syntax:query-not-answered ()
-                              (note-rules-unanswered language)
+                            (tuatara.syntax:query-not-answered (e)
+                              (when (note-rules-unanswered language)
+                                (rules-failed failure (language-name language) e)
+                                (setf failed t))
                               nil)
                             (error (e)
                               (rules-failed failure (language-name language) e)
@@ -330,7 +376,7 @@ for again a little later (NOTE-RULES-UNANSWERED)."
             ;; while it does not answer
             (unless (or (and (null query) (not failed)
                              (or (tuatara.syntax:grammar-pending-p (language-grammar language)) (and grammar source)))
-                        (rules-backing-off-p language))
+                        (and (not failed) (rules-backing-off-p language)))
               (funcall (fdefinition (list 'setf kept)) (or query :failed) language))
             query)))))
 
@@ -723,12 +769,13 @@ or when rules not answered for may be asked for again (*RULES-UNANSWERED*)."
                           soonest (min (or soonest wait) wait)))))))))
     ;; rules the program compiling them did not answer for: the screen drawn
     ;; again, and they asked for again, once their wait is over
-    (maphash (lambda (language entry)
-               (declare (ignore language))
-               (let ((wait (/ (- (car entry) (get-internal-real-time)) internal-time-units-per-second)))
-                 (when (plusp wait)
-                   (setf soonest (if soonest (min soonest wait) wait)))))
-             *rules-unanswered*)
+    (sb-ext:with-locked-hash-table (*rules-unanswered*)
+      (maphash (lambda (language entry)
+                 (declare (ignore language))
+                 (let ((wait (/ (- (first entry) (get-internal-real-time)) internal-time-units-per-second)))
+                   (when (plusp wait)
+                     (setf soonest (if soonest (min soonest wait) wait)))))
+               *rules-unanswered*))
     (dolist (buffer tuatara.buffer:*buffers* soonest)
       (let* ((syntax (tuatara.syntax:buffer-syntax buffer))
              (wait (and syntax (tuatara.syntax:refresh-syntax syntax))))

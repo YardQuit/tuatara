@@ -3214,3 +3214,53 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
     (let ((keys (first asked)))
       (is eq :slow (getf keys :late))
       (true (and (getf keys :seconds) (> (getf keys :seconds) tuatara.syntax:*syntax-helper-wait*))))))
+
+(define-test (syntax slow-rules-never-hold-the-editor)
+  ;; a key needing rules not compiled yet (RET indenting) waits no longer
+  ;; than *rules-editor-wait*, however slow the compiling, and the rules
+  ;; are kept once compiled in the background
+  (let* ((language (tuatara.defaults::find-language 'rust))
+         (kept (tuatara.defaults::language-indent-query language))
+         (tuatara.defaults::*rules-editor-wait* 0.2))
+    (tuatara.syntax:rules-helper)
+    (setf (tuatara.defaults::language-indent-query language) nil)
+    (sb-int:encapsulate 'tuatara.syntax:compile-query 'slow
+                        (lambda (function grammar source &rest more)
+                          (when (equal (first more) "indentation") (sleep 3))
+                          (apply function grammar source more)))
+    (unwind-protect
+         (let ((began (get-internal-real-time)))
+           (with-file-session ((f editor) "C-e i RET" (format nil "fn f() {~%}~%") "rs")
+             (true (< (tuatara.runtime:seconds-since began) 2.5) "~,2f s" (tuatara.runtime:seconds-since began)))
+           (true (loop repeat 100 thereis (tuatara.syntax:query-p (tuatara.defaults::language-indent-query language))
+                       do (sleep 0.1))
+                 "kept once compiled"))
+      (sb-int:unencapsulate 'tuatara.syntax:compile-query 'slow)
+      (unless (tuatara.syntax:query-p (tuatara.defaults::language-indent-query language))
+        (setf (tuatara.defaults::language-indent-query language) kept)))))
+
+(define-test (syntax rules-unanswered-given-up-at-last)
+  ;; rules the program compiling them never answers for are given up on
+  ;; after *rules-unanswered-most* times, as each time it is ended
+  (let* ((language (tuatara.defaults::find-language 'toml))
+         (kept (tuatara.defaults::language-query language))
+         (tuatara.defaults::*rules-unanswered-wait* 0.01)
+         (tuatara.defaults::*rules-unanswered-most* 2)
+         (tuatara.defaults::*rules-quiet* t))
+    (tuatara.syntax:rules-helper)
+    (setf (tuatara.defaults::language-query language) nil)
+    (remhash language tuatara.defaults::*rules-unanswered*)
+    (sb-int:encapsulate 'tuatara.syntax::send-query 'dead
+                        (lambda (function call &rest arguments)
+                          (declare (ignore function arguments))
+                          (setf (tuatara.syntax::call-status call) :dead)))
+    (unwind-protect
+         (progn
+           (tuatara.defaults::language-compiled-query language :colouring)
+           (false (tuatara.defaults::language-query language) "asked again after the first")
+           (sleep 0.05)
+           (tuatara.defaults::language-compiled-query language :colouring)
+           (is eq :failed (tuatara.defaults::language-query language) "given up on after the second"))
+      (sb-int:unencapsulate 'tuatara.syntax::send-query 'dead)
+      (remhash language tuatara.defaults::*rules-unanswered*)
+      (setf (tuatara.defaults::language-query language) kept))))

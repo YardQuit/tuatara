@@ -62,7 +62,8 @@
 ;; the file questions list their entries in plain order, not by what earlier tests chose
 (setf tuatara-user:*last-used-first* nil)
 ;; a language's rules are compiled before its colours are checked, however long it takes
-(setf tuatara.defaults::*rules-wait* 60)
+(setf tuatara.defaults::*rules-wait* 60
+      tuatara.defaults::*rules-editor-wait* 60)
 ;; and the program parsing a file's text started before its first frame is
 ;; drawn, however busy the machine: a test reads the colours of that frame
 ;; (the tests of starting it on time bind their own wait)
