@@ -442,12 +442,14 @@ QUERY_FIXES = {
 # with no colours or structure
 DROPPED = {'rust-format-args', 'djot', 'cpon', 'move'}
 
-# rules taken from the grammar's own repository, which Helix's no longer fit
-# once its pin moved off a commit on no branch or tag: kept as they are
+# rules Helix's no longer fit, its grammar's pin moved off a commit on no
+# branch or tag or to a maintained source: the grammar's own, Helix's newer
+# ones, or Helix's with the maintained grammar's node names; kept as they are
 OWN_QUERIES = {
     'mojo': {'highlights', 'textobjects', 'locals'},
     'lean': {'highlights', 'injections'},
     'git-attributes': {'highlights'},
+    'ink': {'highlights', 'indents', 'locals', 'textobjects'},
 }
 
 def copy_queries(name, done):
@@ -456,10 +458,11 @@ def copy_queries(name, done):
     done[name] = set()
     qdir = os.path.join(HELIX, 'runtime', 'queries', name)
     for kind, directory, what in KINDS:
+        if kind in OWN_QUERIES.get(name, ()):
+            if os.path.exists(os.path.join(ROOT, 'syntax', directory, name + '.scm')): done[name].add(kind)
+            continue
         src = os.path.join(qdir, kind + '.scm')
         if not os.path.exists(src): continue
-        if kind in OWN_QUERIES.get(name, ()):
-            done[name].add(kind); continue
         text = open(src, encoding='utf-8').read()
         fixes = QUERY_FIXES.get((name, kind), [])
         for bad, good, why in fixes:
