@@ -32,7 +32,8 @@ that what is typed rarely shows in the colours of the parse before.")
 (defstruct (org-state (:constructor make-org-state ()) (:copier nil))
   "What the parse of an Org buffer, or of a part of one (ORG-PART), is: TREE,
 the parse of TEXT, the text at VERSION; RESULT, the latest parse a worker
-made, (TREE TEXT VERSION RETURNS LANGUAGES PLACES), put there in one step,
+made, (TREE TEXT VERSION RETURNS LANGUAGES PLACES FAILED), put there in one
+step, FAILED what went wrong when there is no TREE,
 PLACES where the parts are in a whole buffer's parse with the snapshot it
 was made of, let go once taken (ORG-KEEP-WHOLE-PLACES); WORKER,
 the thread parsing in the background, one at a time, and WANTED, the
@@ -40,9 +41,11 @@ the thread parsing in the background, one at a time, and WANTED, the
 \(ORG-WANT-PARSE), guarded by LOCK, DONE woken as each parse is put in
 RESULT, WAITED the last version colouring waited for. RETURNS, where TEXT,
 with the carriage returns before its newlines left out, lost one
-\(ORG-STRIP-RETURNS). PARSE-SECONDS, how long the worker's last parse took."
+\(ORG-STRIP-RETURNS). PARSE-SECONDS, how long the worker's last parse took.
+FAILED, what went wrong when the latest parse could not be made, the text
+then read as holding nothing Org shows (ORG-PARSE-FAILED)."
   (version -1) tree text returns result worker wanted (lock (sb-thread:make-mutex :name "org parse"))
-  (done (sb-thread:make-waitqueue)) waited parse-seconds)
+  (done (sb-thread:make-waitqueue)) waited parse-seconds failed)
 
 (setf (documentation 'org-state-p 'function) "True when OBJECT is an ORG-STATE.")
 
@@ -462,7 +465,7 @@ ORG-VIEW-BYTE)."
   "The text of BUFFER from the octet FROM below TO, a part of it, parsed with
 the TODO keywords KEYWORDS: (TREE TEXT RETURNS), as ORG-PART's PARSE has it."
   (let ((raw (tuatara.buffer:buffer-string buffer :start from :end to)))
-    (multiple-value-bind (text returns) (if (buffer-crlf-p buffer) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
+    (multiple-value-bind (text returns) (org-text-as-read raw (buffer-crlf-p buffer))
       (let ((tree (org-parse text :todo-keywords keywords)))
         (org-warm-src-languages (org-src-language-names tree))
         (list tree text returns)))))
@@ -757,6 +760,44 @@ text before the first); NIL when TREE's headlines are not the parts'."
                             (if returns (org-returns-before returns start) 0)
                             (if (zerop level) tree (pop headlines))))))))
 
+(defun org-entry-text (snapshot source)
+  "The text of a part as SOURCE, an entry of SNAPSHOT (ORG-SNAPSHOT's
+ENTRIES), holds it: four values, a text, where the part is in it, FROM and
+TO, and where its text lost a carriage return before a newline, counted from
+FROM; and a fifth, true when the part is still to be parsed, its text read
+from the buffer."
+  (cond ((and (consp source) (eq (first source) :whole))
+         (destructuring-bind (start length text whole-returns) (cddr source)
+           (values text start (+ start length) (org-returns-within whole-returns start (+ start length)))))
+        ((and (consp source) (org-node-p (first source)))
+         (destructuring-bind (text part-returns) (rest source)
+           (values text 0 (length text) part-returns)))
+        (t
+         (let ((raw (if (stringp source)
+                        source
+                        (destructuring-bind (rope from to) source
+                          (tuatara.text:rope-string rope :start from :end to)))))
+           (multiple-value-bind (text part-returns) (org-text-as-read raw (org-snapshot-crlf snapshot))
+             (values text 0 (length text) part-returns t))))))
+
+(defun org-snapshot-text (snapshot)
+  "The text of the whole buffer SNAPSHOT (an ORG-SNAPSHOT) was taken of, as
+Org reads it, without parsing it: two values, the text and where it lost a
+carriage return before a newline (ORG-STRIP-RETURNS). Complexity: O(the
+characters of the text)."
+  (let ((whole (org-snapshot-whole snapshot)))
+    (if whole
+        (let ((raw (if (stringp whole) whole (tuatara.text:rope-string whole))))
+          (org-text-as-read raw (org-snapshot-crlf snapshot)))
+        (let ((returns '()) (offset 0))
+          (values (with-output-to-string (out)
+                    (loop for (nil nil source) across (org-snapshot-entries snapshot)
+                          do (multiple-value-bind (text from to part-returns) (org-entry-text snapshot source)
+                               (write-string text out :start from :end to)
+                               (loop for r across (or part-returns #()) do (push (+ offset r) returns))
+                               (incf offset (- to from)))))
+                  (and returns (coerce (nreverse returns) '(simple-array fixnum (*)))))))))
+
 (defun org-assemble (snapshot)
   "The parse of a whole Org buffer made of its parts' (SNAPSHOT, an
 ORG-SNAPSHOT), as ORG-PARSE makes it of the whole text: four values, the
@@ -770,37 +811,24 @@ text when SNAPSHOT says so (its WHOLE). Complexity: O(the nodes of the
 parse and the characters of the text), and the parts parsed here."
   (let ((keywords (org-snapshot-keywords snapshot)))
     (when (org-snapshot-whole snapshot)
-      (let ((raw (let ((whole (org-snapshot-whole snapshot))) (if (stringp whole) whole (tuatara.text:rope-string whole)))))
-        (multiple-value-bind (text returns) (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
-          (let ((tree (org-parse text :todo-keywords keywords)))
-            (return-from org-assemble
-              (values tree text returns (org-whole-places tree text returns (org-snapshot-entries snapshot))))))))
+      (multiple-value-bind (text returns) (org-snapshot-text snapshot)
+        (let ((tree (org-parse text :todo-keywords keywords)))
+          (return-from org-assemble
+            (values tree text returns (org-whole-places tree text returns (org-snapshot-entries snapshot)))))))
     (let ((pieces '()) (returns '()) (places '()) (offset 0) (too-deep nil))
       ;; each part's tree, made or copied, where its text begins in the whole and the headlines it closes
       (let ((placed
               (loop for (part level source) across (org-snapshot-entries snapshot)
-                    collect (multiple-value-bind (node text from to part-returns)
-                                (cond ((eq (first source) :whole)
-                                       (destructuring-bind (node start length text whole-returns) (rest source)
-                                         (values (list node start (+ start length)) text start (+ start length)
-                                                 (org-returns-within whole-returns start (+ start length)))))
-                                      ((org-node-p (first source))
-                                       (destructuring-bind (tree text part-returns) source
-                                         (values tree text 0 (length text) part-returns)))
-                                      (t
-                                       (let ((raw (if (stringp source)
-                                                      source
-                                                      (destructuring-bind (rope from to) source
-                                                        (tuatara.text:rope-string rope :start from :end to)))))
-                                         (multiple-value-bind (text part-returns)
-                                             (if (org-snapshot-crlf snapshot) (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
-                                           (values (org-parse text :todo-keywords keywords) text 0 (length text) part-returns)))))
-                              (push (list text from to) pieces)
-                              (loop for r across (or part-returns #()) do (push (+ offset r) returns))
-                              (prog1 (list level node text from offset (- to from) part)
-                                (incf offset (- to from)))))))
+                    collect (multiple-value-bind (text from to part-returns unparsed) (org-entry-text snapshot source)
+                              (let ((node (cond (unparsed (org-parse text :todo-keywords keywords))
+                                                ((eq (first source) :whole) (list (second source) from to))
+                                                (t (first source)))))
+                                (push (list text from to) pieces)
+                                (loop for r across (or part-returns #()) do (push (+ offset r) returns))
+                                (prog1 (list level node text from offset (- to from) part)
+                                  (incf offset (- to from))))))))
         (let* ((total offset)
-               (root (make-org-node 'org-data :begin 0 :end total :contents-begin 0 :contents-end total :post-affiliated 0))
+               (root (org-empty-tree total))
                (root-children '())
                ;; the headlines whose subtrees are open, innermost first: (NODE LEVEL PART-END . CHILDREN reversed)
                (open '()))

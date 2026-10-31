@@ -162,6 +162,13 @@ line, made a newline: as long as STRING, every character where it was."
                      (not (and (< (1+ i) (length out)) (char= (char out (1+ i)) #\Newline))))
             (setf (char out i) #\Newline))))))
 
+(defun org-text-as-read (raw crlf)
+  "RAW, text of an Org buffer, as Org reads it, two values: the text and where
+it lost a carriage return before a newline (ORG-STRIP-RETURNS), for CRLF
+true, a buffer whose lines end with both; else a carriage return that ends a
+line alone read as a newline (LONE-RETURNS-AS-NEWLINES)."
+  (if crlf (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil)))
+
 (defun org-buffer-text (buffer &key (start 0) (end (tuatara.buffer:buffer-size buffer)))
   "The text Org reads of BUFFER from octet START below END, all of it unless
 they are given: in a buffer whose lines end with a carriage return and a
@@ -260,22 +267,43 @@ BUFFER the part begins at, RETURNS those the part's text left out."
   (or (tuatara.buffer:buffer-local buffer 'org-state)
       (setf (tuatara.buffer:buffer-local buffer 'org-state) (make-org-state))))
 
-(defun org-worker-parse (job)
-  "Parse what JOB, as ORG-WANT-PARSE asks for it, holds: (TREE TEXT RETURNS
-PLACES), PLACES where the parts are in a whole buffer's parse (ORG-ASSEMBLE);
-NIL for a text the parser cannot read."
+(defun org-job-text (job)
+  "The text JOB, as ORG-WANT-PARSE asks for it, has parsed, as Org reads it:
+two values, the text and where it lost a carriage return before a newline
+\(ORG-STRIP-RETURNS)."
   (destructuring-bind (version source crlf keywords) job
-    (declare (ignore version))
+    (declare (ignore version keywords))
     (if (org-snapshot-p source)
-        (ignore-errors (multiple-value-list (org-assemble source)))
+        (org-snapshot-text source)
         (let ((raw (if (stringp source)
                        source
                        (destructuring-bind (rope start end) source
-                         (ignore-errors (tuatara.text:rope-string rope :start start :end end))))))
-          (when raw
-            (multiple-value-bind (text returns) (if crlf (org-strip-returns raw) (values (lone-returns-as-newlines raw) nil))
-              (let ((tree (ignore-errors (org-parse text :todo-keywords keywords))))
-                (and tree (list tree text returns nil)))))))))
+                         (tuatara.text:rope-string rope :start start :end end)))))
+          (org-text-as-read raw crlf)))))
+
+(defun org-unparsed (text returns)
+  "What stands for the parse of TEXT, which lost RETURNS (ORG-STRIP-RETURNS),
+when the parser cannot read it, as ORG-WORKER-PARSE gives a parse: TEXT read
+as holding nothing Org shows (ORG-EMPTY-TREE)."
+  (list (org-empty-tree (length text)) text returns nil))
+
+(defun org-worker-parse (job)
+  "Parse what JOB, as ORG-WANT-PARSE asks for it, holds: (TREE TEXT RETURNS
+PLACES), PLACES where the parts are in a whole buffer's parse (ORG-ASSEMBLE).
+For a text the parser cannot read, the text read as holding nothing
+\(ORG-UNPARSED), what went wrong said in the debug log and given as a
+second value; NIL for a text that cannot be read at all."
+  (let ((source (second job)))
+    (handler-case
+        (if (org-snapshot-p source)
+            (multiple-value-list (org-assemble source))
+            (multiple-value-bind (text returns) (org-job-text job)
+              (list (org-parse text :todo-keywords (fourth job)) text returns nil)))
+      (error (condition)
+        (let ((failed (princ-to-string condition)))
+          (tuatara.runtime:debug-report :parse "the Org text at version ~a was not parsed, shown plain until it changes: ~a"
+                                        (org-version-number (first job)) failed)
+          (values (ignore-errors (multiple-value-call #'org-unparsed (org-job-text job))) failed))))))
 
 (defun org-parse-worker (state editor)
   "Parse in the background what STATE wants, the latest asked for, again as
@@ -284,15 +312,15 @@ RESULT in one step, EDITOR, when given, woken for it."
   (unwind-protect
        (loop
          (let* ((job (sb-thread:with-mutex ((org-state-lock state)) (org-state-wanted state)))
-                (start (get-internal-real-time))
-                (parse (org-worker-parse job)))
-           (setf (org-state-parse-seconds state) (tuatara.runtime:seconds-since start))
-           ;; the result put in whatever came of it: a text the parser cannot read is not asked for again and again
-           (destructuring-bind (&optional tree text returns places) parse
-             (setf (org-state-result state)
-                   (list tree text (first job) returns (and tree (org-src-language-names tree))
-                         (and places (cons (second job) places))))
-             (when (and tree editor) (wake-editor editor)))
+                (start (get-internal-real-time)))
+           (multiple-value-bind (parse failed) (org-worker-parse job)
+             (setf (org-state-parse-seconds state) (tuatara.runtime:seconds-since start))
+             ;; the result put in whatever came of it: a text the parser cannot read is not asked for again and again
+             (destructuring-bind (&optional tree text returns places) parse
+               (setf (org-state-result state)
+                     (list tree text (first job) returns (and tree (org-src-language-names tree))
+                           (and places (cons (second job) places)) failed))
+               (when editor (wake-editor editor))))
            (sb-thread:with-mutex ((org-state-lock state))
              (sb-thread:condition-broadcast (org-state-done state))
              (when (eq job (org-state-wanted state))
@@ -357,11 +385,12 @@ code is coloured as soon as it is shown, the note redrawn as each is ready."
   "Take into STATE the parse its worker finished last, when it is newer than STATE's own."
   (let ((result (org-state-result state)))
     (when (and result (> (org-version-number (third result)) (org-version-number (org-state-version state))))
-      (destructuring-bind (tree text parsed returns names made) result
+      (destructuring-bind (tree text parsed returns names made failed) result
         (setf (org-state-tree state) tree
               (org-state-text state) text
               (org-state-returns state) returns
-              (org-state-version state) parsed)
+              (org-state-version state) parsed
+              (org-state-failed state) failed)
         (when made
           (org-keep-whole-places (car made) tree (cdr made))
           ;; the parts are let go of with it, once taken
@@ -393,7 +422,10 @@ buffer). Made of the parses of BUFFER's parts (ORG-ASSEMBLE), each part
 parsed again only after a change within it, when BUFFER changed: at once
 while it is small (*ORG-PARSE-AT-ONCE*), else in the background, the latest
 text first, waited for a moment (*ORG-PARSE-WAIT*) and the parse before
-returned until that one is done; NIL while there has been none."
+returned until that one is done; NIL while there has been none. A text the
+parser cannot read is read as holding nothing (ORG-UNPARSED) until it
+changes, what went wrong kept in the ORG-STATE's FAILED and said in the
+debug log."
   (let ((state (org-buffer-state buffer))
         (version (tuatara.buffer:buffer-version buffer)))
     (org-take-parse state)
@@ -401,17 +433,31 @@ returned until that one is done; NIL while there has been none."
       (let ((parts (org-buffer-parts buffer)))
         (if (<= (tuatara.buffer:buffer-size buffer) *org-parse-at-once*)
             (let ((snapshot (org-parts-snapshot buffer parts)))
-              (multiple-value-bind (tree text returns places) (org-assemble snapshot)
-                (setf (org-state-tree state) tree
-                      (org-state-text state) text
-                      (org-state-returns state) returns
-                      (org-state-version state) version)
-                (org-keep-whole-places snapshot tree places)
-                (org-warm-src-languages (org-src-language-names tree))))
+              (multiple-value-bind (parse failed) (org-worker-parse (list version snapshot (buffer-crlf-p buffer) nil))
+                (destructuring-bind (&optional tree text returns places) parse
+                  (setf (org-state-tree state) tree
+                        (org-state-text state) text
+                        (org-state-returns state) returns
+                        (org-state-version state) version
+                        (org-state-failed state) failed)
+                  (when tree
+                    (org-keep-whole-places snapshot tree places)
+                    (org-warm-src-languages (org-src-language-names tree))))))
             (progn
               (org-want-parse buffer state version (lambda () (org-parts-snapshot buffer parts)))
               (when (org-await-parse state version)
                 (org-take-parse state))))))
+    (when (and (org-state-failed state) (null (org-state-tree state)))
+      ;; not even its text could be read where it was parsed: read as holding nothing, as it is now
+      (destructuring-bind (tree text returns places)
+          (multiple-value-call #'org-unparsed
+            (let ((raw (tuatara.buffer:buffer-string buffer)))
+              (org-text-as-read raw (buffer-crlf-p buffer))))
+        (declare (ignore places))
+        (setf (org-state-tree state) tree
+              (org-state-text state) text
+              (org-state-returns state) returns
+              (org-state-version state) version)))
     (values (org-state-tree state) (org-state-text state))))
 
 (defun org-parse-current-p (buffer)

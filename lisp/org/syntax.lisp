@@ -528,9 +528,13 @@ elsewhere; those TEXT's own lines set when not given (ORG-TODO-KEYWORDS-OF)."
          (*org-list-items* nil)
          (*org-line-misses* (cons text (make-hash-table :test 'equal :size 8)))
          (*org-parse-scanners* (make-hash-table :test 'eq :size 8))
-         (root (make-org-node 'org-data :begin 0 :end (length text) :contents-begin 0 :contents-end (length text)
-                                        :post-affiliated 0)))
+         (root (org-empty-tree (length text))))
     (org-adopt root (org-parse-elements 0 (length text) :first-section))))
+
+(defun org-empty-tree (length)
+  "The root of a parse of an Org text of LENGTH characters, with nothing in
+it yet: an ORG-NODE of type ORG-DATA over all of the text."
+  (make-org-node 'org-data :begin 0 :end length :contents-begin 0 :contents-end length :post-affiliated 0))
 
 (defparameter *org-standard-objects*
   '(bold code entity export-snippet footnote-reference inline-babel-call inline-src-block italic

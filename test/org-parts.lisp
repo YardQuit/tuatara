@@ -492,3 +492,63 @@ headline's title objects too), to tell two parses apart."
     (let* ((small (asked 2000)) (large (asked 4000))
            (each (/ (- large small) 2000.0)))
       (true (< each 100) "~,1f octets made for each part more" each))))
+
+(define-test (org-internals failed-parse-read-as-plain)
+  ;; a text the parser cannot read is read as holding nothing, at once or in the background, said in
+  ;; the debug log; never a parse of nothing taken as done
+  (let ((kept tuatara.runtime:*debug-reports*)
+        (on tuatara.runtime:*debug-on*)
+        (text (format nil "* One~%body~%* Two~%")))
+    (unwind-protect
+         (progn
+           ;; for the parser's thread too
+           (setf tuatara.runtime:*debug-reports* (sb-concurrency:make-queue)
+                 tuatara.runtime:*debug-on* t)
+           (with-functions-replaced ((tuatara.defaults::org-parse (lambda (text &rest arguments)
+                                                                     (declare (ignore text arguments))
+                                                                     (error "a parser fault"))))
+             (dolist (at-once (list most-positive-fixnum 0))
+               (let ((buffer (org-internals-buffer text))
+                     (tuatara.defaults::*org-parse-at-once* at-once)
+                     (tuatara.defaults::*org-parse-wait* 5))
+                 (unwind-protect
+                      (multiple-value-bind (tree whole) (tuatara.defaults::org-buffer-tree buffer)
+                        (true (tuatara.defaults::org-node-p tree) "~a characters at once" at-once)
+                        (is equal text whole)
+                        (false (tuatara.defaults::org-headlines tree))
+                        (is eql (tuatara.buffer:buffer-version buffer)
+                            (tuatara.defaults::org-state-version (tuatara.defaults::org-buffer-state buffer)))
+                        (true (search "a parser fault" (tuatara.defaults::org-state-failed (tuatara.defaults::org-buffer-state buffer)))))
+                   (tuatara.buffer:kill-buffer buffer)))))
+           (is = 2 (count-if (lambda (report) (search "was not parsed" (fourth report)))
+                             (sb-concurrency:list-queue-contents tuatara.runtime:*debug-reports*)))
+           ;; read again once the parser can, the fault forgotten
+           (let ((buffer (org-internals-buffer text)))
+             (unwind-protect
+                  (progn
+                    (with-functions-replaced ((tuatara.defaults::org-parse (lambda (&rest arguments)
+                                                                              (declare (ignore arguments))
+                                                                              (error "a parser fault"))))
+                      (tuatara.defaults::org-buffer-tree buffer))
+                    (tuatara.buffer:buffer-insert buffer (tuatara.buffer:buffer-size buffer) (format nil "* Three~%"))
+                    (is = 3 (length (tuatara.defaults::org-headlines (tuatara.defaults::org-buffer-tree buffer))))
+                    (false (tuatara.defaults::org-state-failed (tuatara.defaults::org-buffer-state buffer))))
+               (tuatara.buffer:kill-buffer buffer))))
+      (setf tuatara.runtime:*debug-reports* kept
+            tuatara.runtime:*debug-on* on))))
+
+(define-test (org-internals mapped-file-parts-assembled)
+  ;; a file mapped from disk gives the whole parse a copy of a part changed since the one before
+  (let ((buffer (org-internals-buffer (format nil "* One~%body~%* Two~%more~%"))))
+    (setf (tuatara.buffer:buffer-mapping buffer) :mapped)
+    (unwind-protect
+         (let ((tuatara.defaults::*org-parse-at-once* most-positive-fixnum))
+           (is = 2 (length (tuatara.defaults::org-headlines (tuatara.defaults::org-buffer-tree buffer))))
+           (tuatara.buffer:buffer-insert buffer (search "more" (tuatara.buffer:buffer-string buffer)) (format nil "** Three~%"))
+           (multiple-value-bind (tree text) (tuatara.defaults::org-buffer-tree buffer)
+             (is equal '("One" "Two" "Three")
+                 (mapcar (lambda (h) (tuatara.defaults::org-property h :raw-value)) (tuatara.defaults::org-headlines tree)))
+             (is equal (tuatara.buffer:buffer-string buffer) text)
+             (false (tuatara.defaults::org-state-failed (tuatara.defaults::org-buffer-state buffer)))))
+      (setf (tuatara.buffer:buffer-mapping buffer) nil)
+      (tuatara.buffer:kill-buffer buffer))))
