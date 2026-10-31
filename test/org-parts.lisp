@@ -366,6 +366,19 @@ headline's title objects too), to tell two parses apart."
            (is = 0 parsed))
       (tuatara.buffer:kill-buffer buffer))))
 
+(define-test (org-internals block-specs-follow-the-files-open)
+  ;; what language servers see of a note is worked out again when a file is opened, a block written to a
+  ;; file open in a buffer being seen by the note's own name
+  (let ((note (org-parts-buffer (format nil "#+begin_src python :tangle x.py~%x = 1~%#+end_src~%") nil)))
+    (unwind-protect
+         (let ((before (tuatara.defaults::org-block-specs-key note))
+               (other (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "x.py"))))
+           (unwind-protect
+                (progn (setf (tuatara.buffer:buffer-file other) #p"/tmp/x.py")
+                       (false (equal before (tuatara.defaults::org-block-specs-key note))))
+             (tuatara.buffer:kill-buffer other)))
+      (tuatara.buffer:kill-buffer note))))
+
 (define-test (org-internals prose-ranges-kept-for-part-and-whole)
   ;; telling prose from the whole parse and from a part's, one after the other, works each out once
   (let* ((buffer (org-parts-buffer (org-parts-many 30) nil))

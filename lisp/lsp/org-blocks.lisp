@@ -111,14 +111,25 @@ commented subtrees left out; from its text before there is one."
             (take (first block)))))
     (nreverse languages)))
 
+(defun org-block-specs-key (buffer)
+  "What ORG-BLOCK-DOC-SPECS's answer for BUFFER, a note, depends on, as data
+to compare: its blocks (ORG-BLOCKS-KEY) and the files open in buffers, as
+a block written to a file open in one is seen by the note's own name."
+  (cons (sort (loop for other in tuatara.buffer:*buffers*
+                    for file = (tuatara.buffer:buffer-file other)
+                    when file collect (namestring file))
+              #'string<)
+        (org-blocks-key buffer)))
+
 (defun org-block-doc-specs (buffer)
   "What servers see of BUFFER when it is a note with source blocks of a
 language a server knows: for each such language, its blocks, as
 *LSP-DOC-SPEC-FUNCTIONS* has them; NIL for any other buffer. Worked out from
 the note's parse once for each change of what its blocks are (ORG-BLOCKS-KEY),
-not again for text typed elsewhere."
+not again for text typed elsewhere; again when the files open change
+\(ORG-BLOCK-SPECS-KEY)."
   (when (and (typep (buffer-major-mode buffer) 'org-mode) (tuatara.buffer:buffer-file buffer))
-    (let ((key (org-blocks-key buffer))
+    (let ((key (org-block-specs-key buffer))
           (kept (tuatara.buffer:buffer-local buffer 'org-block-specs)))
       (if (and kept (equal key (car kept)))
           (cdr kept)
