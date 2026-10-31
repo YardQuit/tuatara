@@ -1169,6 +1169,15 @@ is shared: it must not be changed."
     (:cr (load-time-value (string #\Return) t))
     (t (load-time-value (string #\Newline) t))))
 
+(defun whole-line-ends (buffer start end)
+  "START and END, a stretch of BUFFER to delete, as two values, each widened
+over a carriage return and the newline after it that it would part: they
+end one line, and are deleted as one, never leaving the carriage return to
+end a line alone. Complexity: O(log n)."
+  (let ((rope (buffer-text buffer)))
+    (values (if (and (< 0 start end) (tuatara.text:rope-crlf-p rope (1- start))) (1- start) start)
+            (if (and (< start end) (tuatara.text:rope-crlf-p rope (1- end))) (1+ end) end))))
+
 (defun unjoined-line-ends (buffer at text)
   "TEXT, a string to put in BUFFER at AT, its line ends made never to join a
 line end there into one: a newline it begins with, after a carriage return

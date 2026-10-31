@@ -187,10 +187,11 @@
   ;; lines sorted with the line ends staying where they were
   (is string= (cr "a|b~%c|") (session-text (nth-value 1 (run-keys "C-x h M-x s o r t - l i n e s RET" :text (cr "c|b~%a|"))))))
 
-(defun ending-session (text ending parts &key (point 0) mode)
+(defun ending-session (text ending parts &key (point 0) mode mark modal)
   "Run an editor session on a scratch buffer holding TEXT, its lines ending as
-ENDING says (:LF, :CRLF or :CR), point at POINT, in MODE when given, with
-PARTS typed: each a key string, or (:PASTE TEXT) for text pasted into the
+ENDING says (:LF, :CRLF or :CR), point at POINT, the mark active at MARK
+when given, in MODE when given, in the modal states with MODAL, with PARTS
+typed: each a key string, or (:PASTE TEXT) for text pasted into the
 terminal. Returns the buffer's text."
   (let ((f (tuatara.frontend.fake:make-fake-frontend :width 80 :height 10)))
     (let ((scratch (tuatara.buffer:find-buffer "*scratch*")))
@@ -198,13 +199,14 @@ terminal. Returns the buffer's text."
     (let ((b (tuatara.buffer:make-buffer "*scratch*" :text text)))
       (setf (tuatara.buffer:buffer-local b :line-ending) ending
             (tuatara.buffer:buffer-point b) point)
+      (when mark (setf (tuatara.buffer:buffer-mark b) mark (tuatara.buffer:buffer-mark-active-p b) t))
       (when mode (tuatara.defaults::set-major-mode b mode)))
     (dolist (part parts)
       (if (consp part)
           (tuatara.frontend.fake:fake-queue-event f (tuatara.frontend:make-event :paste :text (second part)))
           (queue-test-keys f (list part))))
     (session-text (without-grammar-questions
-                    (let ((tuatara.defaults::*modal-editing* nil))
+                    (let ((tuatara.defaults::*modal-editing* modal))
                       (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
                                                     :buffer (tuatara.buffer:find-buffer "*scratch*")))))))
 
@@ -271,3 +273,12 @@ terminal. Returns the buffer's text."
     (is eq scanner (tuatara.syntax::scanner-for-rope scanner cr-rope))
     (is equal '(0 6) (map 'list #'first (tuatara.syntax:regex-search-all plain-rope scanner)))
     (is equal '(0 6) (map 'list #'first (tuatara.syntax:regex-search-all cr-rope scanner)))))
+
+(define-test (line-endings deletions-take-a-line-end-whole)
+  ;; in a buffer of newlines, a carriage return before a newline shows, but the two end one
+  ;; line: a deletion or kill that would part them takes both, so the lines join
+  (dolist (case (list (list "C-d" 2) (list "C-k" 2) (list "DEL" 3) (list "C-w" 2 1) (list "d" 2 nil t)))
+    (destructuring-bind (keys point &optional mark modal) case
+      (is string= "ab" (ending-session (cr "a|~%b") :lf (list keys) :point point :mark mark :modal modal) "~a" keys)))
+  ;; joining lines takes both too
+  (is string= "a b" (ending-session (cr "a|~%b") :lf '("M-^") :point 3)))

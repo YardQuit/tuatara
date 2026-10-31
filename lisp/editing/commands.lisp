@@ -891,7 +891,10 @@ goes ahead. Only the folds in that stretch are looked at."
 (defun kill-span (buffer start end &key prepend)
   "Kill the text of BUFFER from START below END (kill-text, PREPEND as it
 takes it) and delete it, unless that would take part of the text a fold
-hides (REFUSE-HIDDEN-DELETION). Returns START."
+hides (REFUSE-HIDDEN-DELETION); a carriage return and the newline after it
+that an edge would part go together (TUATARA.BUFFER:WHOLE-LINE-ENDS).
+Returns START."
+  (multiple-value-setq (start end) (tuatara.buffer:whole-line-ends buffer start end))
   (refuse-hidden-deletion buffer start end)
   (kill-text (region-text buffer start end) :prepend prepend)
   (tuatara.buffer:buffer-delete buffer start end)
@@ -1004,15 +1007,16 @@ spans."
 (define-command delete-char ()
   "Delete the character after point (with a count, that many; a negative one,
 before point), a letter with its accents or an emoji with its skin tone
-whole (CLUSTER-FORWARD). Typing and deleting one after another undo together.
+whole (CLUSTER-FORWARD), a carriage return and a newline both
+\(TUATARA.BUFFER:WHOLE-LINE-ENDS). Typing and deleting one after another undo together.
 Text a fold hides is not deleted unseen: the fold is shown instead, and the
 key pressed again deletes."
-  (let* ((b (current-buffer)) (p (point)) (other (cluster-forward b p (prefix)))
-         (start (min p other)) (end (max p other)))
+  (let* ((b (current-buffer)) (p (point)) (other (cluster-forward b p (prefix))))
+    (multiple-value-bind (start end) (tuatara.buffer:whole-line-ends b (min p other) (max p other))
     ;; with a negative count, the characters before point
-    (when (< start end)
-      (refuse-hidden-deletion b start end)
-      (tuatara.buffer:buffer-delete b start end :group (typing-goes-on-p)))))
+      (when (< start end)
+        (refuse-hidden-deletion b start end)
+        (tuatara.buffer:buffer-delete b start end :group (typing-goes-on-p))))))
 
 (define-command delete-backward-char ()
   "Delete the character before point (with a count, that many): of a letter
@@ -1021,10 +1025,7 @@ of a carriage return and a newline, both, which end one line. Typing and
 deleting one after another undo together. Text a fold hides is not deleted
 unseen: the fold is shown instead, and the key pressed again deletes."
   (let* ((b (current-buffer)) (p (point))
-         (start (tuatara.buffer:buffer-forward-char b p (- (prefix))))
-         (start (if (and (< 0 start p) (tuatara.text:rope-crlf-p (tuatara.buffer:buffer-text b) (1- start)))
-                    (1- start)
-                    start)))
+         (start (tuatara.buffer:whole-line-ends b (tuatara.buffer:buffer-forward-char b p (- (prefix))) p)))
     (unless (and (null (prefix-argument))
                  (some (lambda (f) (funcall f b)) *delete-backward-functions*))
       (when (< start p)

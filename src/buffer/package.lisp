@@ -21,5 +21,5 @@
            #:buffer-goto-line #:buffer-column
            #:buffer-local #:with-read-only-lifted #:buffer-mapping #:buffer-saved-number #:buffer-content-number #:buffer-mark-saved
            #:unique-buffer-name
-           #:buffer-line-ending #:buffer-crlf-p #:buffer-newline #:unjoined-line-ends #:lf-newlines #:crlf-newlines #:cr-newlines #:text-for-buffer #:detect-line-ending
+           #:buffer-line-ending #:buffer-crlf-p #:buffer-newline #:whole-line-ends #:unjoined-line-ends #:lf-newlines #:crlf-newlines #:cr-newlines #:text-for-buffer #:detect-line-ending
            #:*find-file-functions* #:*kill-buffer-functions* #:*before-edit-functions* #:run-before-edit))

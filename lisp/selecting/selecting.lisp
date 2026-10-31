@@ -235,6 +235,7 @@ fold hides, but not all of it, is not deleted: the fold is shown instead."
         (progn (setf (tuatara.buffer:buffer-mark (current-buffer)) start) (goto end)
                (kill-region) (line-selection-clear))
         (multiple-value-bind (s e) (char-span (prefix))
+          (when s (multiple-value-setq (s e) (tuatara.buffer:whole-line-ends (current-buffer) s e)))
           (when (and s (< s e))
             (refuse-hidden-deletion (current-buffer) s e)
             (tuatara.buffer:buffer-delete (current-buffer) s e) (goto s))))))
