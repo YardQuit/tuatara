@@ -225,11 +225,26 @@ folders are named: none that sets something or points git elsewhere.")
   '("--get" "--get-all" "--get-regexp" "--get-urlmatch" "--get-color" "--get-colorbool" "--list" "-l")
   "The options of git config that only read its settings.")
 
+(defparameter *git-config-writing-words*
+  '("--add" "--unset" "--unset-all" "--replace-all" "--rename-section" "--remove-section" "--edit" "-e"
+    "set" "unset" "edit" "rename-section" "remove-section")
+  "The words that have git config change its settings.")
+
 (defun git-config-reading-p (more)
-  "True when git config with the words MORE after it only reads: given one
-of *GIT-CONFIG-READING-OPTIONS*, or its get or list command."
-  (or (member (first more) '("get" "list") :test #'equal)
-      (some (lambda (word) (member word *git-config-reading-options* :test #'string=)) more)))
+  "True when git config with the words MORE after it only reads: its first
+word get or list, or its first option one of *GIT-CONFIG-READING-OPTIONS*,
+no word of *GIT-CONFIG-WRITING-WORDS* among them, and no more names and
+values than reading takes (a name and a pattern with --get, --get-all,
+--get-regexp and the others asking of one setting; none with --list), as
+git takes config NAME VALUE --get as setting NAME."
+  (let ((first-option (find-if (lambda (word) (uiop:string-prefix-p "-" word)) more))
+        (plain (count-if-not (lambda (word) (uiop:string-prefix-p "-" word)) more)))
+    (and (notany (lambda (word) (member word *git-config-writing-words* :test #'string=)) more)
+         (or (member (first more) '("get" "list") :test #'equal)
+             (and first-option
+                  (member first-option *git-config-reading-options* :test #'string=)
+                  (uiop:string-prefix-p "-" (first more))
+                  (<= plain (if (member first-option '("--list" "-l") :test #'string=) 0 2)))))))
 
 (defun git-command-refusal (words)
   "Why git is not run with WORDS, typed for \\[git-run-command], in words; NIL

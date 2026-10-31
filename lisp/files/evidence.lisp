@@ -280,10 +280,16 @@ names no folder."
 (defvar *evidence-keeper* nil
   "The thread keeping the rules in force (EVIDENCE-KEEPER), or NIL.")
 
+(defvar *evidence-saving* nil
+  "True while the program is being saved: no thread keeping the rules is
+started then (STOP-EVIDENCE-KEEPER).")
+
 (defun start-evidence-keeper (rules)
-  "Have a thread of its own keep RULES (EVIDENCE-KEEPER)."
-  (setf *evidence-keeper*
-        (tuatara.runtime:make-guarded-thread (lambda () (evidence-keeper rules)) :name "tuatara evidence folders")))
+  "Have a thread of its own keep RULES (EVIDENCE-KEEPER); none while the
+program is being saved (*EVIDENCE-SAVING*)."
+  (unless *evidence-saving*
+    (setf *evidence-keeper*
+          (tuatara.runtime:make-guarded-thread (lambda () (evidence-keeper rules)) :name "tuatara evidence folders"))))
 
 (defun evidence-rules ()
   "*EVIDENCE-FOLDERS* as read now (EVIDENCE-RULES), read again when it was
@@ -319,14 +325,21 @@ then let go of, and the thread keeping them ends."
 
 (defun stop-evidence-keeper ()
   "Let go of the rules in force and wait, a few seconds at most, for the
-thread keeping them to end: none runs while the program is saved."
-  (setf *evidence-rules* nil)
+thread keeping them to end, none started again until the saved program
+starts (*EVIDENCE-SAVING*): none runs while the program is saved."
+  (setf *evidence-saving* t
+        *evidence-rules* nil)
   (let ((keeper *evidence-keeper*))
     (when (and keeper (sb-thread:thread-alive-p keeper))
       (ignore-errors (sb-thread:join-thread keeper :timeout 5 :default nil))))
   (setf *evidence-keeper* nil))
 
+(defun evidence-saved ()
+  "In the saved program as it starts: threads keeping the rules may be started again."
+  (setf *evidence-saving* nil))
+
 (pushnew 'stop-evidence-keeper sb-ext:*save-hooks*)
+(pushnew 'evidence-saved sb-ext:*init-hooks*)
 
 (defun evidence-links-learnt-p ()
   "True once the links the entries of *EVIDENCE-FOLDERS* match have been

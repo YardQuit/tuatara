@@ -173,10 +173,12 @@ first =, and what follows a short option stuck to it (-fPATH)."
                           (list (subseq word 2))))))
 
 (defparameter *git-pathspecs-read-only*
-  (set-difference *git-commands-leaving-the-work-tree* '("config" "update-ref" "notes") :test #'string=)
-  "The git commands whose paths after a standalone -- are only read, files
-of evidence among them: those of *GIT-COMMANDS-LEAVING-THE-WORK-TREE* but
-config, update-ref and notes.")
+  '("log" "diff" "show" "blame" "grep" "ls-files" "ls-tree" "status" "check-attr" "check-ignore" "hash-object"
+    "update-index" "diff-tree" "diff-index" "diff-files" "cat-file" "rev-list" "shortlog" "describe")
+  "The git commands whose words after a standalone -- are paths of the
+working files, only read, files of evidence among them. Named one by one:
+for others (push, fetch, remote) the words after -- are repositories and
+what to take or give them.")
 
 (defun git-words-checked (arguments)
   "The words of ARGUMENTS that CHECK-GIT-ARGUMENTS looks at: all of them, but
