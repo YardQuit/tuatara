@@ -104,6 +104,50 @@ the programs found, and whether they run shut in by the sandbox."
         (format nil "PDFs of Org and LaTeX by none of ~{~a~^, ~}, on the PATH or in TeX Live's folders: ~a, or give their paths in *latex-engines*"
                 (latex-engine-names) (outside-program-install-words :latex)))))
 
+(defun kpsewhich-for (engine)
+  "The kpsewhich beside the LaTeX program ENGINE (a name of *LATEX-ENGINES*), else
+the one on the PATH; NIL when there is none."
+  (let ((path (cdr (assoc engine (latex-engines-found) :test #'string-equal))))
+    (or (and path (tuatara.io:find-program (tuatara.io:path-join (tuatara.io:parent-path path) "kpsewhich")))
+        (tuatara.io:find-program "kpsewhich"))))
+
+(defun hyphenation-files-found (kpsewhich patterns)
+  "The names among PATTERNS, endings of hyphenation files (loadhyph-NAME.tex),
+that the TeX KPSEWHICH belongs to has, or :UNKNOWN when it cannot be asked."
+  (let ((said (and kpsewhich
+                   (tuatara.io:program-output
+                    (cons kpsewhich (mapcar (lambda (name) (format nil "loadhyph-~a.tex" name)) patterns))
+                    :seconds 10))))
+    (if said
+        (remove-if-not (lambda (name) (search (format nil "/loadhyph-~a.tex" name) said)) patterns)
+        :unknown)))
+
+(defun latex-language-patterns-note (engine code)
+  "What to say when the hyphenation patterns of the language CODE (a row of
+*EXPORT-LANGUAGES*) are not in the TeX Live the LaTeX program ENGINE belongs to,
+so that words of the PDF are not broken at the line ends in it; NIL when they
+are there or cannot be asked."
+  (let* ((row (export-language code))
+         (found (and row (hyphenation-files-found (kpsewhich-for engine) (list (fifth row))))))
+    (when (and row (listp found) (null found))
+      (format nil "TeX Live has no hyphenation patterns for ~a, so its words are not broken at line ends: ~
+                   install ~a (tlmgr install ~:*~a, or your system's TeX Live language packages)"
+              (second row) (sixth row)))))
+
+(defun latex-language-words ()
+  "Which languages' hyphenation patterns are installed for the PDFs of Org and
+LaTeX, as M-x check-health says it; NIL when TeX Live cannot be asked."
+  (let* ((engine (first (first (latex-engines-found))))
+         (rows (remove-duplicates *export-languages* :key #'fifth :test #'string= :from-end t))
+         (found (and engine (hyphenation-files-found (kpsewhich-for engine) (mapcar #'fifth rows)))))
+    (when (listp found)
+      (flet ((names (present)
+               (format nil "~{~a~^, ~}"
+                       (loop for row in *export-languages*
+                             when (eq present (and (member (fifth row) found :test #'string=) t)) collect (first row)))))
+        (format nil "Hyphenation in PDFs by #+language: ~a~@[; patterns missing for ~a~]"
+                (names t) (let ((missing (names nil))) (and (plusp (length missing)) missing)))))))
+
 (defun intended-engine (tex)
   "The LaTeX program the file TEX says it is meant for, by its first lines, as
 a name in lower case; NIL when it says none."
@@ -428,9 +472,11 @@ file's full name."
   (setf (pdf-export-step job) "writing LaTeX")
   (let ((source (pdf-export-source job))
         (text (let ((rope (pdf-export-rope job))) (if (stringp rope) rope (tuatara.text:rope-string rope)))))
-    (multiple-value-bind (latex named map missing notes trusted pictures)
+    (multiple-value-bind (latex named map missing notes trusted pictures language)
         (org-latex-document text :file source :engine engine :enhanced (pdf-export-enhanced job)
                                  :lines (pdf-export-origins job))
+      (let ((note (and language (latex-language-patterns-note engine language))))
+        (when note (setf notes (append notes (list note)))))
       (setf (pdf-export-text job) text (pdf-export-map job) map (pdf-export-missing job) missing
             (pdf-export-notes job) notes (pdf-export-trusted job) trusted (pdf-export-pictures job) pictures)
       (let ((tex (or named (replaced-type source "tex"))))

@@ -111,7 +111,7 @@ them to start, and in a window, how it draws each way it can
              (append (list (pdf-decoder-words) (office-page-words) (image-decoder-words) (external-program-words) (notify-health-words) (encrypted-health-words) (git-health-words))
                      (remove nil (mapcar (lambda (f) (ignore-errors (funcall f))) *health-decoder-functions*)))
              (health-check-exporters check)
-             (list (latex-export-words))
+             (remove nil (list (latex-export-words) (latex-language-words)))
              (health-check-tools check)
              (mapcar (lambda (language) (multiple-value-list (language-tools-words language))) languages)
              (health-check-results check)

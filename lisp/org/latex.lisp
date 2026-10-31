@@ -68,6 +68,9 @@ ARGUMENTS, once however often it comes; NIL."
     (pushnew (apply #'format nil format arguments) (org-latex-notes *org-latex*) :test #'string=))
   nil)
 
+(defvar *org-latex-template* ""
+  "The text of the template the document being written is laid out by.")
+
 (defvar *org-latex-text* ""
   "The text whose nodes are being written as LaTeX: the document's, or a keyword's value.")
 
@@ -1707,7 +1710,7 @@ from the PDF as they are written."
           ((string= name "latex_class") (or (org-latex-keyword "LATEX_CLASS") "article"))
           ((string= name "latex_class_options") (or (org-latex-keyword "LATEX_CLASS_OPTIONS") "[11pt]"))
           ((string= name "packages")
-           (concatenate 'string (org-latex-packages engine)
+           (concatenate 'string (org-latex-packages engine) (org-latex-language-setup engine)
                         (if (org-latex-enhanced *org-latex*)
                             (format nil "\\usepackage{booktabs}~%\\usepackage{xltabular}~%\\usepackage{multicol}~%\\usepackage{float}~%~
                                          \\usepackage{xcolor}~%\\usepackage{fvextra}~%\\usepackage{pict2e}~%~a~
@@ -1842,7 +1845,9 @@ as a sixth the texts of its template and setup files that are your own
 with the files your own template asks the note for by its {{{NAME:path}}}
 places (a logo); and as a seventh the files its own pictures are drawn
 from (ORG-LATEX-IMAGE), the only ones of the note's folder a LaTeX program
-is shown when that folder may not be shown whole.
+is shown when that folder may not be shown whole; as an eighth the code
+of the language the note's #+LANGUAGE sets (sv), or NIL, for the
+hyphenation patterns it needs to be looked for (LATEX-LANGUAGE-PATTERNS-NOTE).
 LINES, for a part of a file exported alone, is the file's line of each line
 of TEXT, for the lines an error names."
   (let* ((directory (and file (tuatara.io:parent-path file)))
@@ -1887,7 +1892,8 @@ of TEXT, for the lines an error names."
       (multiple-value-bind (latex map)
           (progn
             (setf (org-latex-refused *org-latex*) (template-refused-pictures template))
-            (org-latex-unmark (fill-latex-template template (org-latex-field body))))
+            (let ((*org-latex-template* template))
+              (org-latex-unmark (fill-latex-template template (org-latex-field body)))))
         (values latex (org-latex-output-name) map
                 ;; each character no font here has, with the line of the LaTeX it is first on
                 (let ((start (or (search "\\begin{document}" latex) 0)))
@@ -1898,7 +1904,9 @@ of TEXT, for the lines an error names."
                 (if (or (null template-path) (export-trusted-path-p template-path))
                     (list* template (append (org-latex-paths *org-latex*) (org-latex-trusted *org-latex*)))
                     (org-latex-trusted *org-latex*))
-                (reverse (org-latex-pictures *org-latex*)))))))
+                (reverse (org-latex-pictures *org-latex*))
+                (let ((row (org-latex-language-row)))
+                  (and row (not (latex-loads-language-p template)) (first row))))))))
 
 (defun org-latex-header-fonts ()
   "The fonts the document's #+LATEX_HEADER lines set with fontspec, (PART .

@@ -460,11 +460,11 @@ comes after it."
                                     (eq (gethash node (docx-numbers *docx*)) :annex))))
                       (mapc #'walk (org-node-children node)))))
                  (table (when (getf (org-property node :affiliated) :caption)
-                          (setf (gethash node (docx-numbers *docx*)) (format nil "Table ~d" (incf (docx-tables *docx*))))))
+                          (setf (gethash node (docx-numbers *docx*)) (format nil "~a ~d" (export-language-word :table) (incf (docx-tables *docx*))))))
                  (paragraph (when (and (getf (org-property node :affiliated) :caption)
                                        (let ((children (org-node-children node)))
                                          (and (= 1 (length children)) (org-latex-image-link-p (first children)))))
-                              (setf (gethash node (docx-numbers *docx*)) (format nil "Figure ~d" (incf (docx-figures *docx*))))))
+                              (setf (gethash node (docx-numbers *docx*)) (format nil "~a ~d" (export-language-word :figure) (incf (docx-figures *docx*))))))
                  (t (mapc #'walk (org-node-children node))))))
       (walk tree))))
 
@@ -909,7 +909,7 @@ written already as part of another."
 level up to DEPTH, its number and title linked to it, the page it is on
 after a tab (a PAGEREF field, which Word and LibreOffice fill in)."
   (with-output-to-string (out)
-    (format out "<w:p><w:pPr><w:pStyle w:val=\"TOCHeading\"/></w:pPr>~a</w:p>~%" (docx-run "Contents"))
+    (format out "<w:p><w:pPr><w:pStyle w:val=\"TOCHeading\"/></w:pPr>~a</w:p>~%" (docx-run (export-language-word :contents)))
     (dolist (entry (reverse *docx-contents*))
       (destructuring-bind (level number title bookmark) entry
         (when (<= level depth)
