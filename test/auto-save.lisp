@@ -67,7 +67,7 @@ arguments is true. Returns the frontend and the editor."
         ;; visited again: said; recovered as one edit, which undo takes back; a save deletes the copy
         (multiple-value-bind (f editor)
             (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
-                                     (format nil "M-x ~{~a~^ ~} RET y RET" (map 'list #'string "recover-file"))))
+                                     (format nil "M-x ~{~a~^ ~} RET y" (map 'list #'string "recover-file"))))
           (declare (ignore editor))
           (true (tuatara.frontend.fake:fake-frame-showing f "has changes auto-saved"))
           (true (tuatara.frontend.fake:fake-frame-showing f "notes.txt recovered"))
@@ -76,7 +76,7 @@ arguments is true. Returns the frontend and the editor."
             (true (tuatara.buffer:buffer-modified-p buffer))
             (tuatara.buffer:kill-buffer buffer)))
         (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
-                                 (format nil "M-x ~{~a~^ ~} RET y RET" (map 'list #'string "recover-file"))
+                                 (format nil "M-x ~{~a~^ ~} RET y" (map 'list #'string "recover-file"))
                                  "C-x C-s" (list :until (lambda () (null (copy))))))
         (is string= "first line kea" (alexandria:read-file-into-string file))
         (false (copy))
@@ -99,7 +99,7 @@ arguments is true. Returns the frontend and the editor."
         (false (tuatara.command:lookup-key tuatara.defaults::*auto-saves-keymap* (tuatara.frontend:parse-key-sequence "R")))
         (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file)) "M-> SPC b i r d" (list :until (lambda () (copy)))))
         (tuatara.buffer:kill-buffer (tuatara.buffer:find-buffer "notes.txt"))
-        (auto-save-session (list (format nil "M-x ~{~a~^ ~} RET" (map 'list #'string "list-auto-saves")) "RET y RET"))
+        (auto-save-session (list (format nil "M-x ~{~a~^ ~} RET" (map 'list #'string "list-auto-saves")) "RET y"))
         (let ((buffer (tuatara.buffer:find-buffer "notes.txt")))
           (true buffer)
           (when buffer

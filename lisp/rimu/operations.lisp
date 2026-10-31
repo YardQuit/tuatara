@@ -808,7 +808,7 @@ second, plain yes."
            (when (and (yes-or-no-p* (format nil "~a for good?" (rimu-question "Delete" paths :here here)))
                       (yes-or-no-p* (format nil "~a for good? It cannot be put back." (rimu-question "Really delete" paths :here here))))
              (rimu-start-operation :delete (mapcar #'list paths) buffer)))
-          ((yes-or-no-p* (format nil "~a?" (rimu-question "Move" paths :here here :after "to the trash")))
+          ((y-or-n-p* (format nil "~a?" (rimu-question "Move" paths :here here :after "to the trash")))
            ;; whether a trash can be had is the same for every file of one directory
            (let ((trash-p (make-hash-table :test 'equal)) (to-trash '()) (no-trash '()))
              (dolist (path paths)

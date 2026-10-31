@@ -403,6 +403,14 @@ a recording of keys going on."
               ((and char (member char answers)) (return char))
               (t (setf asked (format nil "Answer ~a. ~a" (answer-keys-words answers) prompt))))))))
 
+(defun y-or-n-p* (prompt)
+  "Ask PROMPT, a question whose answer is easily undone, answered by one
+key, y or n, no RET (READ-ANSWER-KEY): true for y, false for n; any other
+key says which keys answer and asks again; \\`C-g' signals QUIT. A
+question whose yes destroys or writes over what cannot be had back asks
+for a typed answer instead (YES-OR-NO-P*)."
+  (eql #\y (read-answer-key (concatenate 'string prompt " (y or n) ") '(#\y #\n))))
+
 (defun completing-read (prompt table &key annotate require-match history (initial "") (separator #\/) (filter t)
                                          select reselect preview source default keep-order none taken keymap)
   "Read with completion: PROMPT is shown (a string, or a function of no
@@ -642,8 +650,11 @@ letter or a digit, then over the letters and digits before it."
   (define-key keymap "M-RET" 'minibuffer-submit-input))
 
 (defun yes-or-no-p* (prompt)
-  "Ask PROMPT in the minibuffer: true for the answer y or yes, in any case and
-with spaces around; false for any other answer, n, no, none at all (\`RET')
-or anything else, never asked again."
+  "Ask PROMPT in the minibuffer, an answer typed and ended with \`RET': for a
+question whose yes destroys or writes over what cannot be had back (a file
+deleted or written over, changes thrown away). True for the answer y or
+yes, in any case and with spaces around; false for any other answer, n, no,
+none at all (\`RET') or anything else, never asked again. A question whose
+answer is easily undone is answered by one key instead (Y-OR-N-P*)."
   (let ((answer (string-trim '(#\Space #\Tab) (read-string (concatenate 'string prompt " (y or n) ")))))
     (and (member answer '("y" "yes") :test #'string-equal) t)))

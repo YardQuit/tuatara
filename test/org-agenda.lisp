@@ -1802,8 +1802,8 @@ help left out."
       (is string= (format nil "* TODO Thing~%SCHEDULED: <2026-10-23 Fri +1d>~%")
           (written (format nil "C-c C-s C-r r ~a RET x C-x RET" (typed-keys "Daily"))))
       (is string= (format nil "* TODO Thing~%SCHEDULED: <2026-10-23 Fri +1d>~%")
-          (written (format nil "C-c C-s C-r r ~a RET C-g n RET RET" (typed-keys "Daily"))))
-      (is string= (format nil "* TODO Thing~%") (written (format nil "C-c C-s C-r r ~a RET C-g y RET" (typed-keys "Daily"))))
+          (written (format nil "C-c C-s C-r r ~a RET C-g n RET" (typed-keys "Daily"))))
+      (is string= (format nil "* TODO Thing~%") (written (format nil "C-c C-s C-r r ~a RET C-g y" (typed-keys "Daily"))))
       ;; C-g leaves it at once when nothing was set, nothing written
       (is string= (format nil "* TODO Thing~%") (written "C-c C-s C-r C-g")))
     (flet ((summary (&rest arguments) (tuatara.defaults::repeat-summary arguments)))

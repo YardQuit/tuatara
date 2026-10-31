@@ -375,7 +375,7 @@ queued; stop them, then exit? True to go on."
   (let ((waits (find :wait running :key #'tuatara.runtime:job-at-exit))
         (stops (or (find :stop running :key #'tuatara.runtime:job-at-exit) (plusp waiting)))
         (many (> (+ (length running) waiting) 1)))
-    (yes-or-no-p* (format nil "In the background: ~a; ~:[stop ~:[it~;them~]~*~;~*~:[wait for the saving~;wait for the saving, stop the rest~]~], then ~a?"
+    (y-or-n-p* (format nil "In the background: ~a; ~:[stop ~:[it~;them~]~*~;~*~:[wait for the saving~;wait for the saving, stop the rest~]~], then ~a?"
                           (jobs-question-words running waiting) waits many (and stops t) then))))
 
 (defun wait-for-saving (running)
@@ -442,7 +442,7 @@ asked to stop, and ending, is not asked about again."
                              (jobs-of (current-buffer) :running t)))
          (job (or (find-if #'tuatara.runtime:job-holds-queue-p running) (first running))))
     (cond ((null job) (message "Nothing is running in this buffer"))
-          ((yes-or-no-p* (tuatara.runtime:job-stop-question job))
+          ((y-or-n-p* (tuatara.runtime:job-stop-question job))
            (tuatara.runtime:job-stop job)
            (message "Stopping")))))
 
@@ -472,7 +472,7 @@ spoil it. O(jobs of BUFFER) when none of them guards text."
             (error "~a" (tuatara.runtime:job-guard-refusal job)))
           (let ((version (tuatara.buffer:buffer-version buffer)))
             (if (let ((*edit-asked-about* buffer))
-                  (yes-or-no-p* (tuatara.runtime:job-guard-question job)))
+                  (y-or-n-p* (tuatara.runtime:job-guard-question job)))
                 (tuatara.runtime:job-stop job)
                 (progn (setf (getf (car notes) :spoiling-edits-refused) t)
                        (error "~a" (tuatara.runtime:job-guard-refusal job))))
@@ -582,7 +582,7 @@ after one stopped move up."
   (declare (ignore mark))
   (let ((waiting (remove-if-not #'queued-job-p jobs))
         (running (remove-if #'queued-job-p jobs)))
-    (when (yes-or-no-p* (format nil "~@[Drop ~d waiting job~:p~]~:[~; and ~]~@[stop ~d running~]?"
+    (when (y-or-n-p* (format nil "~@[Drop ~d waiting job~:p~]~:[~; and ~]~@[stop ~d running~]?"
                                 (and waiting (length waiting)) (and waiting running) (and running (length running))))
       (mapc #'drop-queued-job waiting)
       (mapc #'tuatara.runtime:job-stop running)

@@ -29,15 +29,15 @@ work in the background the one before began is done."
     (true (tuatara.frontend.fake:fake-frame-showing
            (many-frame "m v j j j c" lines) "Hold all 4 cursors, with every key slow at that many (else those in sight)?"))
     ;; yes holds them all, no those in sight, and every one is written either way
-    (true (tuatara.frontend.fake:fake-frame-showing (many-frame "% f b RET y RET" lines) "Split: 4 places in the selection"))
-    (true (tuatara.frontend.fake:fake-frame-showing (many-frame "% f b RET n RET" lines) "Split: 2 places of 4 in the selection"))
+    (true (tuatara.frontend.fake:fake-frame-showing (many-frame "% f b RET y" lines) "Split: 4 places in the selection"))
+    (true (tuatara.frontend.fake:fake-frame-showing (many-frame "% f b RET n" lines) "Split: 2 places of 4 in the selection"))
     (dolist (answer '("y" "n"))
       (is string= (format nil "aXc~%aXc~%aXc~%aXc~%")
           (many-text (list (format nil "% f b RET ~a RET c X C-g" answer) "") lines) "f, ~a" answer)
       (is string= (format nil "Xabc~%Xabc~%Xabc~%Xabc~%")
-          (many-text (list (format nil "V j j j t ~a RET i X C-g" answer) "") lines) "t, ~a" answer)
+          (many-text (list (format nil "V j j j t ~a i X C-g" answer) "") lines) "t, ~a" answer)
       (is string= (format nil "Xbc~%Xbc~%Xbc~%Xbc~%")
-          (many-text (list (format nil "m v j j j c ~a RET X C-g" answer) "") lines) "c on a rectangle, ~a" answer))))
+          (many-text (list (format nil "m v j j j c ~a X C-g" answer) "") lines) "c on a rectangle, ~a" answer))))
 
 (define-test (many-places change-is-one-undo)
   ;; c empties and types at many places as one change: one u takes both back

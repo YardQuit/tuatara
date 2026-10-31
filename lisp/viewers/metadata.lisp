@@ -943,7 +943,7 @@ it says :ask, only of a file encrypted to keys it names."
             (and head
                  (eq (nth-value 1 (tuatara.io:octets-kind head)) :openpgp)
                  (openpgp-key-ids head)
-                 (yes-or-no-p* "It is encrypted to keys: look up whose in your keyring (runs gpg --list-keys)?"))))
+                 (y-or-n-p* "It is encrypted to keys: look up whose in your keyring (runs gpg --list-keys)?"))))
     (t t)))
 
 (define-command file-metadata ()

@@ -291,7 +291,7 @@ what marks a project; check-health saying which are installed.")
                         ;; renamed everywhere
                         "M-< C-n C-n C-n" (typed "lsp-rename") "C-a C-k s u m RET" (list :wait 0.3) (note :renamed)
                         ;; the files it changed saved, asked once
-                        "C-x s" "y RET" (list :wait 0.3)
+                        "C-x s" "y" (list :wait 0.3)
                         ;; laid out by the server, there being no formatter
                         (typed "format-buffer") (list :wait 0.5) (note :formatted)
                         ;; the server's fix for what it found
@@ -1245,11 +1245,11 @@ what marks a project; check-health saying which are installed.")
              (multiple-value-bind (f editor)
                  (auto-save-session (list (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
                                           (list :until (lambda () (member "answered unknown -32601" (told log) :test #'string=)))
-                                          (list :wait 0.3) "n RET"
+                                          (list :wait 0.3) "n"
                                           (list :until (lambda () (= 1 (length (applied)))))
                                           "C-x k RET" (list :wait 0.2)
                                           (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed file))
-                                          (list :wait 0.3) "y RET"
+                                          (list :wait 0.3) "y"
                                           (list :until (lambda () (= 2 (length (applied))))))
                                     :width 200)
                (declare (ignore editor))

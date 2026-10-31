@@ -371,7 +371,7 @@ desktop's program after asking (OPEN-ADDRESS)."
            (let ((path (uri-path address :hosts (list "localhost" (machine-instance)))))
              (cond ((null path)
                     (message "~a is no file of this computer" (escape-controls address)))
-                   ((not (yes-or-no-p* (format nil "Open ~a in Tuatara?" (escape-controls path))))
+                   ((not (y-or-n-p* (format nil "Open ~a in Tuatara?" (escape-controls path))))
                     (message "Not opened"))
                    (t (visit-path path :safe (and (safe-directory-of path) t)
                                        :show (lambda (buffer)

@@ -121,7 +121,7 @@ opened the file (a buffer open before keeps them). \\[keyboard-quit] at the
 question goes on with the quick edit. True when the file was saved."
   (let* ((buffer (rimu-preview-editing state))
          (modified (and (live-buffer-p buffer) (tuatara.buffer:buffer-modified-p buffer)))
-         (save (and modified (yes-or-no-p* (format nil "Save ~a?" (tuatara.buffer:buffer-name buffer))))))
+         (save (and modified (y-or-n-p* (format nil "Save ~a?" (tuatara.buffer:buffer-name buffer))))))
     (when save
       (save-buffer-with-care buffer))
     (when (rimu-quick-edit-end state :discard (and modified (not save)))

@@ -555,10 +555,10 @@ end its lines with a carriage return and a newline."
                                                       "Split: 2 cursors of 4")))
     ;; asked, not held in sight only: y makes every cursor
     (let ((tuatara-user:*split-limit-ask* t))
-      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l v j j j t y RET i X C-g") text))
-      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l v j j j t n RET i X C-g") text))
-      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l C-u 3 t y RET i X C-g") text))
-      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l C-u 3 t n RET i X C-g") text)))))
+      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l v j j j t y i X C-g") text))
+      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l v j j j t n i X C-g") text))
+      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l C-u 3 t y i X C-g") text))
+      (is string= (format nil "aXbc~%aXbc~%aX~%aXbc~%") (every-line-text '("l C-u 3 t n i X C-g") text)))))
 
 (define-test (split split-thorough)
   ;; f misses a match that needs text more than 4 KB past where the scan looks;

@@ -303,7 +303,7 @@ for rimu's operations to finish. Returns the frontend and the editor."
 (define-test (rimu-operations trash-and-delete)
   (with-operations-tree (dir)
     ;; D: to the trash, asked first, with a .trashinfo saying where it was
-    (let ((f (ops-session dir "g f b . t x t RET D y RET")))
+    (let ((f (ops-session dir "g f b . t x t RET D y")))
       (true (tuatara.frontend.fake:fake-frame-showing f "Move b.txt to the trash? (y or n)"))
       (true (tuatara.frontend.fake:fake-frame-showing f "Moved to the trash 1 file"))
       (false (probe-file (here dir "b.txt")))
@@ -314,7 +314,7 @@ for rimu's operations to finish. Returns the frontend and the editor."
         (true (search "DeletionDate=" info))))
     ;; the same name again: a name of its own in the trash
     (alexandria:write-string-into-file "beta 2" (here dir "b.txt"))
-    (ops-session dir "g f b . t x t RET D y RET")
+    (ops-session dir "g f b . t x t RET D y")
     (is string= "beta 2" (alexandria:read-file-into-string (here dir "data/Trash/files/b.txt.2")))
     ;; d and x: those marked for deletion, a directory too
     (let ((f (ops-session dir "g f s u b RET d x y RET")))
@@ -332,7 +332,7 @@ for rimu's operations to finish. Returns the frontend and the editor."
       (false (probe-file (here dir "data/Trash/files/a.txt"))))
     ;; the link: the link itself goes, not where it leads
     (alexandria:write-string-into-file "alpha" (here dir "a.txt"))
-    (ops-session dir "g f l i n k RET D y RET")
+    (ops-session dir "g f l i n k RET D y")
     (true (probe-file (here dir "a.txt")))
     (true (sb-posix:readlink (namestring (here dir "data/Trash/files/link"))))))
 
@@ -504,12 +504,12 @@ for rimu's operations to finish. Returns the frontend and the editor."
   ;; the operations under way are asked about before exiting, and stopped only once the exit is certain
   (let ((tuatara.runtime:*jobs*
           (list (tuatara.defaults::make-rimu-operation :copy (list (cons "/a" "/b")) nil nil))))
-    (sb-int:encapsulate 'tuatara.command:yes-or-no-p* 'test (lambda (f prompt) (declare (ignore f prompt)) t))
+    (sb-int:encapsulate 'tuatara.command:y-or-n-p* 'test (lambda (f prompt) (declare (ignore f prompt)) t))
     (unwind-protect
          (let ((answer (tuatara.defaults::jobs-quit-query)))
            (true (functionp answer))
            (false (car (tuatara.defaults::rimu-operation-cancel (first tuatara.runtime:*jobs*)))))
-      (sb-int:unencapsulate 'tuatara.command:yes-or-no-p* 'test))))
+      (sb-int:unencapsulate 'tuatara.command:y-or-n-p* 'test))))
 
 (define-test (rimu-operations trash-on-other-drives)
   ;; Path= on another drive is counted from its top, read back from it
@@ -978,31 +978,31 @@ it did."
 (define-test (rimu-operations trash-list)
   (with-operations-tree (dir)
     ;; g t lists the trash; R puts the one on the line back where it was, after asking
-    (ops-session dir "g f b . t x t RET D y RET")
+    (ops-session dir "g f b . t x t RET D y")
     (let ((f (ops-session dir "g t" :width 300)))
       (true (tuatara.frontend.fake:fake-frame-showing f "1 thing in the trash"))
       (true (tuatara.frontend.fake:fake-frame-showing f "b.txt")))
     ;; answered no: left in the trash
-    (let ((f (ops-session dir "g t R n RET" :width 300)))
+    (let ((f (ops-session dir "g t R n" :width 300)))
       (false (tuatara.frontend.fake:fake-frame-showing f "Put back:"))
       (false (probe-file (here dir "b.txt")))
       (true (probe-file (here dir "data/Trash/info/b.txt.trashinfo"))))
     (let ((f (ops-session dir "g t R" :width 300)))
       (true (tuatara.frontend.fake:fake-frame-showing f "Put back the thing"))
       (false (probe-file (here dir "b.txt"))))
-    (let ((f (ops-session dir "g t R y RET" :width 300)))
+    (let ((f (ops-session dir "g t R y" :width 300)))
       (true (tuatara.frontend.fake:fake-frame-showing f "Put back:"))
       (is string= "beta" (alexandria:read-file-into-string (here dir "b.txt")))
       (false (probe-file (here dir "data/Trash/info/b.txt.trashinfo"))))
     ;; taken: another name asked for
-    (ops-session dir "g f b . t x t RET D y RET")
+    (ops-session dir "g f b . t x t RET D y")
     (alexandria:write-string-into-file "new beta" (here dir "b.txt"))
-    (let ((f (ops-session dir (format nil "g t R y RET C-a C-k ~a C-j" (rimu-typed (namestring (here dir "b-old.txt")))))))
+    (let ((f (ops-session dir (format nil "g t R y C-a C-k ~a C-j" (rimu-typed (namestring (here dir "b-old.txt")))))))
       (true (tuatara.frontend.fake:fake-frame-showing f "is taken; put it back as:"))
       (is string= "beta" (alexandria:read-file-into-string (here dir "b-old.txt"))))
     ;; D for good, X empties, asked twice; each thing counted once, its .trashinfo going with it
-    (ops-session dir "g f b - o l d . t x t RET D y RET g f s u b RET D y RET")
-    (ops-session dir "g f a . t x t RET D y RET")
+    (ops-session dir "g f b - o l d . t x t RET D y g f s u b RET D y")
+    (ops-session dir "g f a . t x t RET D y")
     (let ((f (ops-session dir "g t D y RET" :width 300)))
       (true (tuatara.frontend.fake:fake-frame-showing f "Deleted for good 1 file"))
       (false (tuatara.frontend.fake:fake-frame-showing f "Deleted for good 2 files")))
@@ -1023,7 +1023,7 @@ it did."
 
 (define-test (rimu-operations trash-drawn-from-what-was-read)
   (with-operations-tree (dir)
-    (ops-session dir "g f b . t x t RET D y RET")
+    (ops-session dir "g f b . t x t RET D y")
     ;; marks drawn from what was read: a thing put in the trash meanwhile shows only once it is read again
     (let ((f (ops-session dir (list "g t" (lambda () (tuatara.io:trash-path (namestring (here dir "a.txt")))) "m u TAB TAB")
                           :width 200)))
@@ -1046,16 +1046,16 @@ it did."
   ;; directory made again, characters, not patterns
   (with-operations-tree (dir)
     (let ((target (concatenate 'string (tuatara.io:native dir) "gone [1]*/b.txt")))
-      (ops-session dir "g f b . t x t RET D y RET")
+      (ops-session dir "g f b . t x t RET D y")
       (alexandria:write-string-into-file "new beta" (here dir "b.txt"))
-      (let ((f (ops-session dir (format nil "g t R y RET C-a C-k ~a C-j" (rimu-typed target)) :width 300)))
+      (let ((f (ops-session dir (format nil "g t R y C-a C-k ~a C-j" (rimu-typed target)) :width 300)))
         (true (tuatara.frontend.fake:fake-frame-showing f "Put back:")))
       (is string= "beta" (file-text (sb-ext:parse-native-namestring target))))))
 
 (define-test (rimu-operations trash-refresh)
   ;; r and g r list the trash again, what went there since shown; nothing put back
   (with-operations-tree (dir)
-    (ops-session dir "g f b . t x t RET D y RET")
+    (ops-session dir "g f b . t x t RET D y")
     (dolist (keys '("r" "g r"))
       (let ((name (if (string= keys "r") "a.txt" "sub")))
         (let ((f (ops-session dir (list "g t" (lambda () (tuatara.io:trash-path (namestring (here dir name)))) keys))))
@@ -1200,13 +1200,13 @@ it did."
   ;; the trash as the buffer list is: a section for your trash, marks, two put back at once,
   ;; one marked for deletion deleted for good with x
   (with-operations-tree (dir)
-    (ops-session dir "g f a . t x t RET D y RET g f b . t x t RET D y RET g f s u b RET D y RET")
+    (ops-session dir "g f a . t x t RET D y g f b . t x t RET D y g f s u b RET D y")
     (let ((f (ops-session dir "g t" :width 200)))
       (true (tuatara.frontend.fake:fake-frame-showing f "▾ Your trash (3)"))
       (true (tuatara.frontend.fake:fake-frame-showing f "sub/"))
       (true (tuatara.frontend.fake:fake-frame-showing f "3 things in the trash")))
     ;; sub, then b, marked (the last to go first), put back after one question
-    (let ((f (ops-session dir "g t m m R y RET" :width 200)))
+    (let ((f (ops-session dir "g t m m R y" :width 200)))
       (true (tuatara.frontend.fake:fake-frame-showing f (format nil "Put back the 2 things to ~a?" (tuatara.command::abbreviated-path (namestring dir)))))
       (true (probe-file (here dir "b.txt")))
       (true (probe-file (here dir "sub/c.txt")))
@@ -1221,7 +1221,7 @@ it did."
   ;; in the trash list narrowed by a filter, R and D on the marked say how many the filter hides;
   ;; answered no, nothing is put back or deleted
   (with-operations-tree (dir)
-    (ops-session dir "g f a . t x t RET m m D y RET")
+    (ops-session dir "g f a . t x t RET m m D y")
     (unwind-protect
          (loop for (keys question) in '(("R n" "Put back the 2 things (1 hidden by the filter) to ")
                                         ("D n" "Delete the 2 things (1 hidden by the filter) for good?"))

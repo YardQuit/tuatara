@@ -227,7 +227,7 @@ open unless the answer is yes."
   (let ((open (editor-menu *editor*)))
     (when open
       (if (or (not (menu-changed-p open))
-              (handler-case (yes-or-no-p* (format nil "Leave ~a, losing what you set?" (menu-title (first open))))
+              (handler-case (y-or-n-p* (format nil "Leave ~a, losing what you set?" (menu-title (first open))))
                 (quit () nil)))
           (progn (clear-transient-map *editor*) (message "Quit"))
           (message "Still in ~a" (menu-title (first open)))))))

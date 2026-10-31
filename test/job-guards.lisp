@@ -61,7 +61,7 @@ ARGUMENTS are RUN-KEYS's."
     ;; answered yes, at the question itself: the sort stops, the text typed is in
     (multiple-value-bind (f editor)
         (run-held (list (format nil "~a M-x s o r t - l i n e s RET C-g C-p C-p i x" *select-three*) :tick
-                        "y RET C-g")
+                        "y C-g")
                   :text *guard-lines* :width 120)
       (true (tuatara.frontend.fake:fake-frame-showing f "Sorting works on this text ("))
       (true (tuatara.frontend.fake:fake-frame-showing f "Stopped: nothing was changed"))

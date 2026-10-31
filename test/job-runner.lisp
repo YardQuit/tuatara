@@ -64,18 +64,21 @@ when given, with the job. Returns the frontend, the editor and the job."
       (values f editor job))))
 
 (defmacro with-questions ((prompts &optional answer) &body body)
-  "Run BODY with every yes-or-no question answered ANSWER (NIL by default) at
-once, and PROMPTS bound to the list of the questions asked, the first first."
+  "Run BODY with every yes-or-no question, typed or of one key, answered
+ANSWER (NIL by default) at once, and PROMPTS bound to the list of the
+questions asked, the first first."
   `(let ((,prompts '()))
-     (sb-int:encapsulate 'tuatara.command:yes-or-no-p* 'job-runner
-                         (lambda (f prompt) (declare (ignore f)) (setf ,prompts (append ,prompts (list prompt))) ,answer))
+     (dolist (asking '(tuatara.command:yes-or-no-p* tuatara.command:y-or-n-p*))
+       (sb-int:encapsulate asking 'job-runner
+                           (lambda (f prompt) (declare (ignore f)) (setf ,prompts (append ,prompts (list prompt))) ,answer)))
      (unwind-protect (progn ,@body)
-       (sb-int:unencapsulate 'tuatara.command:yes-or-no-p* 'job-runner))))
+       (dolist (asking '(tuatara.command:yes-or-no-p* tuatara.command:y-or-n-p*))
+         (sb-int:unencapsulate asking 'job-runner)))))
 
 (define-test (job-runner stopping-every-kind)
   ;; M-x stop-job stops each kind, after one question of one form; how it stopped is said in one form
   (loop for (name make question stopped) in (job-kinds)
-        do (multiple-value-bind (f editor job) (job-session make "M-x s t o p - j o b RET y RET")
+        do (multiple-value-bind (f editor job) (job-session make "M-x s t o p - j o b RET y")
              (declare (ignore editor))
              (true (tuatara.frontend.fake:fake-frame-showing f question) "~a asked ~s" name question)
              (true (tuatara.frontend.fake:fake-frame-showing f stopped) "~a said ~s" name stopped)

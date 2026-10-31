@@ -516,6 +516,7 @@
 (:api "XML-TEXT-VALUE" :function (1 ("ENTITY") nil nil nil))
 (:api "XML-UNPREFIXED" :function (1 nil nil nil nil))
 (:api "XMP-FIELDS" :function (1 nil nil nil nil))
+(:api "Y-OR-N-P*" :function (1 nil nil nil nil))
 (:api "YES-OR-NO-P*" :function (1 nil nil nil nil))
 (:api "ZONE-LOCAL-TIME" :function (2 nil nil nil nil))
 (:api "ZONE-NAME-P" :function (1 nil nil nil nil))

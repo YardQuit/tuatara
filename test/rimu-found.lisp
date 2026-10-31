@@ -103,7 +103,7 @@ Returns the frontend and the editor."
         (declare (ignore f))
         (is string= "same text" (session-text editor)))
       ;; D puts it in the trash, and the list keeps up
-      (multiple-value-bind (f editor) (found-session "rimu-find" box "*.txt" "g f d e e p / a g a i n . t x t RET D y RET")
+      (multiple-value-bind (f editor) (found-session "rimu-find" box "*.txt" "g f d e e p / a g a i n . t x t RET D y")
         (declare (ignore f))
         (loop repeat 200 while (find-if #'tuatara.defaults::rimu-operation-p tuatara.runtime:*jobs*) do (sleep 0.02))
         (false (probe-file (merge-pathnames "deep/again.txt" box)))

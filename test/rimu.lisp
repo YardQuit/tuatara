@@ -546,7 +546,7 @@ shown at the end of a row after a space."
             (true (tuatara.frontend.fake:fake-frame-showing f "Quick edit: q goes back to the preview")))
           ;; C-c C-c after a change asks; y saves, and the preview follows the list again
           (fresh)
-          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i X C-g C-c C-c y RET" :preview t)
+          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i X C-g C-c C-c y" :preview t)
             (is string= name (current-name editor))
             (is string= (format nil "Xhello~%") (file))
             (is eq nil (visiting))
@@ -554,7 +554,7 @@ shown at the end of a row after a space."
             (true (tuatara.frontend.fake:fake-frame-showing f "Xhello")))
           ;; n lets the change go
           (fresh)
-          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Y C-g C-c C-c n RET" :preview t)
+          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Y C-g C-c C-c n" :preview t)
             (declare (ignore f))
             (is string= name (current-name editor))
             (is string= (format nil "Xhello~%") (file))
@@ -582,7 +582,7 @@ shown at the end of a row after a space."
             (is eq (visiting) (tuatara.display:window-buffer (tuatara.command:editor-window editor)))
             (is string= (format nil "qXhello~%") (session-text editor)))
           (fresh)
-          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Q C-g q n RET" :preview t)
+          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Q C-g q n" :preview t)
             (declare (ignore f))
             (is string= name (current-name editor))
             (is string= (format nil "Xhello~%") (file))
@@ -595,7 +595,7 @@ shown at the end of a row after a space."
             (is eq nil (visiting))
             (is equal '("text.txt (preview)") (mapcar #'tuatara.buffer:buffer-name (previews))))
           (fresh)
-          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Q C-g C-x o y RET" :preview t)
+          (multiple-value-bind (f editor) (rimu-session dir "g f t e x t . t x t RET o i Q C-g C-x o y" :preview t)
             (declare (ignore f))
             (is string= name (current-name editor))
             (is string= (format nil "QXhello~%") (file))
@@ -615,7 +615,7 @@ shown at the end of a row after a space."
               (true (search "forward-word" (tuatara.buffer:buffer-string help)))))
           ;; a buffer open before keeps its changes when they are let go, and stays
           (fresh)
-          (multiple-value-bind (f editor) (rimu-session dir "C-x C-j o i W C-g C-c C-c n RET" :preview t
+          (multiple-value-bind (f editor) (rimu-session dir "C-x C-j o i W C-g C-c C-c n" :preview t
                                                                                          :file (namestring path))
             (true (tuatara.frontend.fake:fake-frame-showing f "keeps its changes, not saved"))
             (is string= name (current-name editor))

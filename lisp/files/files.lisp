@@ -159,7 +159,7 @@ wait: it saves the buffer itself once ready."
                                        (tuatara.io:native-file-name target)))))
        (message "Attempt to save to a file that you aren't allowed to write"))
       ((and (null existing) (null (tuatara.io:path-stamp (tuatara.io:parent-path target)))
-            (not (yes-or-no-p* (format nil "The folder ~a is not there; make it?"
+            (not (y-or-n-p* (format nil "The folder ~a is not there; make it?"
                                        (escape-controls (abbreviated-path (tuatara.io:parent-path target)))))))
        (message "Not saved"))
       (t

@@ -209,7 +209,7 @@ For a buffer whose file has no auto-saved copy newer than it, says so."
                                                                     (substitute-command-keys "\\[read-only-mode]")))
           (t (multiple-value-bind (copy time) (auto-save-newer-p buffer)
                (cond ((null copy) (message "~a has no auto-saved changes newer than its file" (tuatara.buffer:buffer-name buffer)))
-                     ((yes-or-no-p* (format nil "Recover ~a from its changes auto-saved ~a?" (tuatara.buffer:buffer-name buffer) (short-time-words time)))
+                     ((y-or-n-p* (format nil "Recover ~a from its changes auto-saved ~a?" (tuatara.buffer:buffer-name buffer) (short-time-words time)))
                       (let ((octets (tuatara.io:file-octets copy)))
                         (tuatara.buffer:widen-buffer buffer)
                         (tuatara.buffer:buffer-replace buffer 0 (tuatara.buffer:buffer-size buffer) octets)

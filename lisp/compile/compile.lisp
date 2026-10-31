@@ -851,7 +851,7 @@ that two never run at once. True when it started or is to start."
   (let* ((buffer (buffer-in-mode "*compile*" 'compile-output-mode))
          (before (compile-under-way buffer)))
     (cond ((null before) (start-compile-now buffer command directory) t)
-          ((not (yes-or-no-p* "A compile is running; stop it and run this one?"))
+          ((not (y-or-n-p* "A compile is running; stop it and run this one?"))
            (message "Not run: the compile running goes on")
            nil)
           (t (setf (compile-job-then before) (lambda () (start-compile-now buffer command directory)))

@@ -853,7 +853,7 @@ text already, asked first."
            (what (if path (tuatara.io:native-file-name path) chosen)))
       (cond ((zerop (length text)) (message "~a is empty: nothing inserted" what))
             ((and (plusp (tuatara.buffer:buffer-size buffer))
-                  (not (yes-or-no-p* (format nil "~a has text already: insert ~a at point anyway?" (tuatara.buffer:buffer-name buffer) what))))
+                  (not (y-or-n-p* (format nil "~a has text already: insert ~a at point anyway?" (tuatara.buffer:buffer-name buffer) what))))
              (message "Nothing inserted"))
             (t (let ((at (point)))
                  (tuatara.buffer:buffer-insert buffer at (text-for-buffer text buffer))

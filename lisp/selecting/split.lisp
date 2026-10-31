@@ -499,7 +499,7 @@ it is answered yes; else :IN-SIGHT."
   (multiple-value-bind (limit why memory) (place-limit setting)
     (if (or (<= n limit)
             (and (eq why :setting) *split-limit-ask* exact (<= n memory)
-                 (yes-or-no-p* (format nil "Hold all ~:d ~a, with every key slow at that many (else those in sight)? " n noun))))
+                 (y-or-n-p* (format nil "Hold all ~:d ~a, with every key slow at that many (else those in sight)?" n noun))))
         :all
         :in-sight)))
 

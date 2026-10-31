@@ -60,7 +60,7 @@ it is NIL, whatever *SENTENCE-END-DOUBLE-SPACE* says."
     tuatara.buffer:buffer-text tuatara.text:rope-bytes tuatara.text:rope-octet tuatara.text:rope-copy-into
     tuatara.text:rope-find-octet tuatara.text:rope-line-start tuatara.text:rope-line-end
     ;; asking and waiting
-    tuatara.command:read-string tuatara.command:finish-minibuffer tuatara.command:quit tuatara.command:completing-read tuatara.command:completing-read-value tuatara.command:make-candidate tuatara.command:yes-or-no-p*
+    tuatara.command:read-string tuatara.command:finish-minibuffer tuatara.command:quit tuatara.command:completing-read tuatara.command:completing-read-value tuatara.command:make-candidate tuatara.command:yes-or-no-p* tuatara.command:y-or-n-p*
     tuatara.command:complete-in-minibuffer
     read-date tuatara.dates:read-date-text
     read-path read-file-path read-directory-path read-native-path read-new-native-path read-whole-number tuatara.command:wait-interruptibly tuatara.command:wait-until-interruptibly

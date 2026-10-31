@@ -289,7 +289,7 @@ finished CLOCK: line, write its duration again from its two times; true when it 
 
 (defun org-clock-quit-query ()
   "Before quitting: with a clock running, ask whether to clock out first."
-  (when (and *org-clock* (yes-or-no-p* (format nil "The clock runs on ~a: clock out before quitting?" (org-clock-task *org-clock*))))
+  (when (and *org-clock* (y-or-n-p* (format nil "The clock runs on ~a: clock out before quitting?" (org-clock-task *org-clock*))))
     (org-clock-out-now))
   t)
 

@@ -358,7 +358,7 @@ it went, or NIL (said why)."
            (message "Not put back: the trash on that drive has links in it or is not yours"))
           ((null things)
            (message "Not put back: ~{~a~^; ~}" (trash-refused-words refused)))
-          ((yes-or-no-p* (trash-restore-question things refused))
+          ((y-or-n-p* (trash-restore-question things refused))
            (let ((back (remove nil (mapcar #'trash-restore-thing things))))
              (rimu-refresh-lists back)
              (trash-changed)
