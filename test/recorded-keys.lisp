@@ -262,6 +262,9 @@ queued: keys typed meanwhile."
   ;; a play that edits two buffers is one step to undo in each: one undo there after two
   ;; plays leaves what one play left
   (flet ((other-after (keys)
+           ;; a buffer of that name left by a session before is not this one's
+           (let ((left (tuatara.buffer:find-buffer "other")))
+             (when left (tuatara.buffer:kill-buffer left)))
            (unwind-protect
                 (progn
                   (recorded-keys-session (list (lambda () (tuatara.buffer:make-buffer "other" :text "abcdefghijkl"))
