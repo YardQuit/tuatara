@@ -578,3 +578,32 @@ force; *compile* killed afterwards."
                            :width 100 :height 30))
       (is equal '("setsid is not installed") *places-reached*)
       (true (search (format nil "~%ran~%") (compile-output))))))
+
+(defun output-as-a-terminal-shows-it (pieces)
+  "The text a compile's buffer holds after the output PIECES (strings) come
+in, one after another, through OUTPUT-PAST-RETURNS."
+  (let ((returns (tuatara.defaults::make-output-returns)) (shown (tuatara.text:make-octets 0)))
+    (dolist (piece pieces (tuatara.text:octets-string shown))
+      (multiple-value-bind (octets back) (tuatara.defaults::output-past-returns returns (tuatara.text:string-octets piece))
+        (setf shown (concatenate 'tuatara.text:octets (subseq shown 0 (- (length shown) back)) octets))))))
+
+(define-test (compiling progress-redrawn-on-one-line)
+  ;; a carriage return alone in a program's output goes back to the line's start and what
+  ;; follows writes over it, as a terminal shows it, however the output comes in pieces
+  (let ((output (format nil "start~%10%~c50%~c100%~%5%~cdone~c~%é中~c😀~cX" #\Return #\Return #\Return #\Return #\Return #\Return #\Return)))
+    (is string= (format nil "start~%100%~%done~c~%X中" #\Return)
+        (output-as-a-terminal-shows-it (list output)))
+    (dolist (size '(1 2 3 5))
+      (is string= (output-as-a-terminal-shows-it (list output))
+          (output-as-a-terminal-shows-it (loop for i from 0 below (length output) by size
+                                               collect (subseq output i (min (length output) (+ i size)))))
+          "in pieces of ~d" size)))
+  ;; X written over the first character after the last return: shorter text leaves the rest
+  (is string= "X00%" (output-as-a-terminal-shows-it (list (format nil "100%~cX" #\Return))))
+  ;; in *compile*: the progress shows as one line, the places after it found where they are
+  (with-compile-session (dir (format nil "printf '10%%\\r50%%\\r100%%\\n'~%printf 'a.c:2:11: error: bad\\n'~%"))
+    (auto-save-session (compile-steps dir (list :until #'compile-ended-p) "M-g n" (reached '("a.c" 1 10)))
+                       :width 100 :height 30)
+    (is equal '(("a.c" 1 10)) *places-reached*)
+    (true (search (format nil "~%100%~%a.c:2:11: error: bad~%") (compile-output)))
+    (false (find #\Return (compile-output)))))

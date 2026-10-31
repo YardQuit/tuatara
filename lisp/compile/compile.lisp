@@ -456,7 +456,8 @@ outlives it."
       (when process (end-compile-session job process)))))
 
 (defun hand-output (job octets)
-  "Hand OCTETS, read from JOB's output, to the editor, waiting first while
+  "Hand OCTETS, read from JOB's output, or (:BACK N), the last N octets handed
+to be taken away (OUTPUT-PAST-RETURNS), to the editor, waiting first while
 *COMPILE-WAITING-MOST* octets wait already (or until JOB is asked to stop);
 the editor woken when it took in all there was before."
   (let ((wake nil))
@@ -465,10 +466,10 @@ the editor woken when it took in all there was before."
                        (not (car (tuatara.runtime:job-cancel job))))
             do (sb-thread:condition-wait (compile-job-room job) (compile-job-lock job) :timeout 0.5))
       ;; a large piece made a rope here, its lines counted on this thread, to go into the
-      ;; buffer as it is
-      (push (if (>= (length octets) *compile-rope-least*) (tuatara.text:octets->rope octets) octets)
+      ;; buffer as it is; (:BACK N) as it is
+      (push (if (and (not (consp octets)) (>= (length octets) *compile-rope-least*)) (tuatara.text:octets->rope octets) octets)
             (compile-job-pieces job))
-      (incf (compile-job-waiting job) (length octets))
+      (incf (compile-job-waiting job) (piece-size octets))
       (when (compile-job-asleep job)
         (setf (compile-job-asleep job) nil wake t)))
     (when wake
@@ -569,6 +570,90 @@ are taken from."
     (when (plusp (fill-pointer line))
       (note-line-octets scan (coerce line 'tuatara.text:octets) 0 (fill-pointer line) (output-scan-length scan)))))
 
+(defparameter *compile-return-line-most* (* 1024 1024)
+  "The longest line of a compile's output that a carriage return alone takes
+back to its start (OUTPUT-PAST-RETURNS): past it, until the next newline,
+the output goes in as it came, a carriage return in it ending a line.")
+
+(defstruct (output-returns (:constructor make-output-returns ()) (:copier nil))
+  "How a compile's output stands where its last line is being written, for
+carriage returns written alone: SHOWN, the octets of that line as its buffer
+holds them; COLUMN, the character of it the next is written over, NIL when
+the next goes at its end; PENDING, true when the last octet read was a
+carriage return, a newline after it or not still to come; LOST, true while
+the line is longer than *COMPILE-RETURN-LINE-MOST*."
+  (shown (make-array 256 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
+  (column nil) (pending nil) (lost nil))
+
+(setf (documentation 'output-returns-p 'function) "True when OBJECT is an OUTPUT-RETURNS.")
+
+(defun output-past-returns (returns octets)
+  "OCTETS, the next piece of a compile's output, as a terminal shows it: a
+carriage return no newline follows takes the writing back to the start of
+the line, and what comes after it is written over that line's characters,
+so that a program that redraws a line (a progress bar) shows one line that
+changes. This is how program output is taken in, not how text is edited:
+anywhere else a carriage return alone ends a line. Two values: the octets
+to put at the end of the buffer, and how many octets at its end to take
+away first (the line being written, written again whole). A carriage return
+and the newline after it end a line as they are. RETURNS, an OUTPUT-RETURNS,
+is kept up to date. Complexity: O(OCTETS and the line being written)."
+  (declare (type tuatara.text:octets octets))
+  (let ((shown (output-returns-shown returns)))
+    (if (or (output-returns-lost returns)
+            (and (not (output-returns-pending returns)) (null (output-returns-column returns)) (not (find 13 octets))))
+        ;; written at the end, as it came: only the line being written kept up to date
+        (let ((newline (position 10 octets :from-end t)))
+          (when newline (setf (fill-pointer shown) 0 (output-returns-lost returns) nil))
+          (if (or (output-returns-lost returns)
+                  (> (+ (fill-pointer shown) (- (length octets) (if newline (1+ newline) 0))) *compile-return-line-most*))
+              (setf (fill-pointer shown) 0 (output-returns-lost returns) t)
+              (loop for i from (if newline (1+ newline) 0) below (length octets)
+                    do (vector-push-extend (aref octets i) shown)))
+          (values octets 0))
+        (let* ((back (fill-pointer shown))
+               (line (let ((text (tuatara.text:octets-string (coerce shown 'tuatara.text:octets))))
+                       (make-array (length text) :element-type 'character :adjustable t :fill-pointer (length text)
+                                                 :initial-contents text)))
+               (column (output-returns-column returns))
+               (text (tuatara.text:octets-string octets))
+               (out (make-string-output-stream))
+               (pending (output-returns-pending returns)))
+          (flet ((put (char)
+                   (cond ((and column (< column (length line)))
+                          (setf (char line column) char)
+                          (incf column)
+                          (when (= column (length line)) (setf column nil)))
+                         (t (vector-push-extend char line) (setf column nil))))
+                 (end-line (ending)
+                   (write-string line out) (write-string ending out)
+                   (setf (fill-pointer line) 0 column nil)))
+            (loop for i from 0 below (length text)
+                  for char = (char text i)
+                  do (when pending
+                       (setf pending nil)
+                       (if (char= char #\Newline)
+                           (progn (end-line (coerce '(#\Return #\Newline) 'string)) (setf char nil))
+                           (setf column (and (plusp (length line)) 0))))
+                     (cond ((null char))
+                           ((char= char #\Newline) (end-line (string #\Newline)))
+                           ((char= char #\Return) (setf pending t))
+                           (t (put char)))))
+          (write-string line out)
+          (let ((now (tuatara.text:string-octets (coerce line 'simple-string))))
+            (setf (fill-pointer shown) 0
+                  (output-returns-column returns) column
+                  (output-returns-pending returns) pending)
+            (loop for octet across now do (vector-push-extend octet shown)))
+          (values (tuatara.text:string-octets (get-output-stream-string out)) back)))))
+
+(defun retract-output-scan (scan count)
+  "Take back from SCAN the last COUNT octets read, all of the line being read,
+which is written again."
+  (decf (output-scan-offset scan) count)
+  (setf (fill-pointer (output-scan-line scan)) 0
+        (output-scan-length scan) 0))
+
 (defun read-compile-output (job fd process)
   "Read JOB's output from FD until its end, a piece at a time as it comes,
 each piece handed to the editor (HAND-OUTPUT) once its lines of note are
@@ -580,6 +665,7 @@ held open, however much is still written; stopped, reading stops once
 the command and its session have ended, whatever outside it holds the
 output open."
   (let* ((scan (make-output-scan (compile-job-run job) (compile-run-base (compile-job-run job))))
+         (returns (make-output-returns))
          (most (compile-job-most job))
          (kept 0)
          (piece (make-array *compile-piece* :element-type '(unsigned-byte 8)))
@@ -597,8 +683,12 @@ output open."
                                     (prog1 (sb-kernel:%shrink-vector piece count) (setf piece fresh))))))
                    (when (< count 8192) (replace piece piece :start2 count :end2 filled))
                    (incf kept count)
-                   (scan-output scan given)
-                   (hand-output job given)))
+                   (multiple-value-bind (shown back) (output-past-returns returns given)
+                     (when (plusp back)
+                       (retract-output-scan scan back)
+                       (hand-output job (list :back back)))
+                     (scan-output scan shown)
+                     (hand-output job shown))))
              (decf filled count)))
       (loop (when (consp (tuatara.io:wait-for-fds (list fd) 0.25))
               (let ((got (tuatara.io:read-fd-into fd piece :start filled :path "the compile's output")))
@@ -647,8 +737,11 @@ ended."
 ;;; Taking the output in
 
 (defun piece-size (piece)
-  "The octets of PIECE, a piece of a compile's output: an octet vector or a rope."
-  (if (tuatara.text:rope-p piece) (tuatara.text:rope-bytes piece) (length piece)))
+  "The octets of PIECE, a piece of a compile's output: an octet vector or a
+rope; none for (:BACK N), octets to take away."
+  (cond ((consp piece) 0)
+        ((tuatara.text:rope-p piece) (tuatara.text:rope-bytes piece))
+        (t (length piece))))
 
 (defun joined-octets (pieces)
   "PIECES, octet vectors or ropes, one after another in one octet vector."
@@ -677,23 +770,30 @@ one, so that the text is not cut into a leaf for each line written."
 
 (defun add-compile-output (buffer pieces)
   "Put PIECES, octet vectors or ropes, at the end of BUFFER, a compile's
-output, read-only as before, with nothing to undo; point, and each window's
-point, at the end staying at the end, following the output as it comes.
-Much of it at once, more than a 128th of what BUFFER holds, goes in as the
-pieces are, their memory shared, at the cost of making BUFFER's tree of text
-again (TUATARA.BUFFER:BUFFER-SPLICE); less is copied in, where only the end
-of the tree changes (TUATARA.BUFFER:BUFFER-INSERT)."
+output, read-only as before, with nothing to undo, each (:BACK N) among them
+taking away the last N octets first; point, and each window's point, at the
+end staying at the end, following the output as it comes. Much of it at
+once, more than a 128th of what BUFFER holds, goes in as the pieces are,
+their memory shared, at the cost of making BUFFER's tree of text again
+\(TUATARA.BUFFER:BUFFER-SPLICE); less is copied in, where only the end of
+the tree changes (TUATARA.BUFFER:BUFFER-INSERT)."
   (let* ((size (tuatara.buffer:buffer-size buffer))
-         (count (reduce #'+ pieces :key #'piece-size))
          (windows (remove-if-not (lambda (window) (= size (tuatara.display:window-point window))) (buffer-windows buffer)))
          (at-end (= size (tuatara.buffer:buffer-point buffer))))
     (tuatara.buffer:with-read-only-lifted (buffer :after t)
-      (if (> count (max *compile-rope-least* (floor size 128)))
-          (tuatara.buffer:buffer-splice buffer size size
-                                        (apply #'tuatara.text:splice-rope (tuatara.text:make-rope) 0 0 (pieces-ropes pieces)))
-          (tuatara.buffer:buffer-insert buffer size (if (and (null (rest pieces)) (not (tuatara.text:rope-p (first pieces))))
-                                                        (first pieces)
-                                                        (joined-octets pieces)))))
+      (loop while pieces
+            do (if (consp (first pieces))
+                   (let ((end (tuatara.buffer:buffer-size buffer)))
+                     (tuatara.buffer:buffer-delete buffer (max 0 (- end (second (pop pieces)))) end))
+                   (let* ((run (loop while (and pieces (not (consp (first pieces)))) collect (pop pieces)))
+                          (end (tuatara.buffer:buffer-size buffer))
+                          (count (reduce #'+ run :key #'piece-size)))
+                     (if (> count (max *compile-rope-least* (floor end 128)))
+                         (tuatara.buffer:buffer-splice buffer end end
+                                                       (apply #'tuatara.text:splice-rope (tuatara.text:make-rope) 0 0 (pieces-ropes run)))
+                         (tuatara.buffer:buffer-insert buffer end (if (and (null (rest run)) (not (tuatara.text:rope-p (first run))))
+                                                                      (first run)
+                                                                      (joined-octets run))))))))
     (setf (tuatara.buffer:buffer-undo-stack buffer) '() (tuatara.buffer:buffer-redo-stack buffer) '())
     (tuatara.buffer:buffer-mark-saved buffer)
     (let ((end (tuatara.buffer:buffer-size buffer)))
