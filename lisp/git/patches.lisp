@@ -28,7 +28,7 @@ cover letter, or sign them off (those for applying are left out)."
   (with-git-repository (top switches)
     (git-ask-range top
                    (lambda (range)
-                     (let ((folder (read-native-path "Write the patches in: ")))
+                     (let ((folder (read-native-path "Write the patches in: " :writing t)))
                        (when folder
                          (let ((folder (tuatara.io:slash-ended folder)))
                            (git-run "Writing patches" top (append (list "format-patch")
@@ -61,7 +61,7 @@ three ways where it does not fit (those for writing patches are left out)."
   "Save every change not committed, staged or not, as a new patch file asked
 for, its octets as git writes them."
   (with-git-repository (top)
-    (let ((path (read-new-native-path "Save the changes as: " :kind :file)))
+    (let ((path (read-new-native-path "Save the changes as: " :kind :file :writing t)))
       (when path
         (git-ask "Reading the changes" top
                  (lambda (job top)
@@ -77,7 +77,7 @@ for, its octets as git writes them."
   "Write the whole repository, every branch and tag, as a single bundle file
 asked for: one file to carry it, from which it can be cloned."
   (with-git-repository (top)
-    (let ((path (read-new-native-path "Write the bundle as: " :kind :file)))
+    (let ((path (read-new-native-path "Write the bundle as: " :kind :file :writing t)))
       (when path
         (git-run "Writing a bundle" top (list "bundle" "create" path "--all")
                  (format nil "Wrote the bundle ~a" (abbreviated-path path)))))))

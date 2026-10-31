@@ -554,7 +554,8 @@ folders are not copied: their files are. Copied in the background."
                     (abbreviated-path (find-if-not #'evidence-path-p paths))))
           (t
            (let ((folder (read-native-path (format nil "Copy ~a out of evidence to folder: "
-                                                   (rimu-question nil paths)))))
+                                                   (rimu-question nil paths))
+                                       :writing t)))
              (cond ((null folder) (message "Nowhere given: nothing copied"))
                    ((not (eq :directory (tuatara.io:path-kind folder)))
                     (message "~a is no folder: nothing copied" (abbreviated-path folder)))

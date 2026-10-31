@@ -1035,7 +1035,7 @@ by search filters, the file on the line among those they leave."
                                    (if (tuatara.io:path-stamp downloads) downloads (tuatara.io:native (tuatara.io:expand-path "~/"))))
                                  (buffer-directory list)))
                      (typed (read-native-path (format nil "Save ~a to: " suggested) :kind :any
-                                              :initial (concatenate 'string (abbreviated-path folder) suggested)))
+                                              :initial (concatenate 'string (abbreviated-path folder) suggested) :writing t))
                      ;; a folder chosen: the file goes in it under the name suggested
                      (target (and typed
                                   (if (eq (tuatara.io:path-kind typed) :directory)

@@ -356,3 +356,33 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
         (true (nth-value 1 (tuatara.defaults::run-git root '("checkout" "--" "evidence/kept.txt"))))
         (is string= "as found" (file-text (merge-pathnames "evidence/kept.txt" dir)))))))
 
+(define-test (evidence never-offered-to-write-in)
+  ;; a question whose answer is written to never starts in an evidence folder nor offers one first; reading ones still may
+  (with-case-folder (root evidence work)
+    (with-fresh-recent-files
+      (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
+        (let ((a (concatenate 'string evidence "a.txt")))
+          ;; the folder chosen last is evidence: offered for reading, not for writing
+          (let ((seen '()))
+            (run-keys (list (lambda ()
+                              (tuatara.defaults::note-chosen-path evidence :directory t)
+                              (setf seen (list (tuatara.defaults::path-question-start)
+                                               (tuatara.defaults::path-question-start :writing t)
+                                               (tuatara.defaults::writing-start (concatenate 'string evidence "b.pdf"))
+                                               (tuatara.defaults::writing-start (concatenate 'string work "x.txt"))))))
+                      :file a :width 700 :height 12)
+            (destructuring-bind (reading writing moved kept) seen
+              (true (search "/evidence/" reading))
+              (false (search "/evidence/" writing))
+              (is string= (concatenate 'string writing "b.pdf") moved)
+              (is string= (concatenate 'string work "x.txt") kept)))
+          (kill-buffers-visiting root)
+          ;; from a file of evidence: C-x C-w starts elsewhere, C-x C-f where it is
+          (let ((f (run-keys (format nil "C-x C-f C-a C-k ~a RET C-x C-w" (key-string a)) :width 700 :height 12)))
+            (let ((screen (tuatara.frontend.fake:fake-frame-with f "Write file: ")))
+              (true screen)
+              (false (find-if (lambda (row) (and (search "Write file: " row) (search "/evidence/" row))) screen))))
+          (kill-buffers-visiting root)
+          (let ((f (run-keys (format nil "C-x C-f C-a C-k ~a RET C-x C-f" (key-string a)) :width 700 :height 12)))
+            (true (find-if (lambda (row) (and (search "Find file: " row) (search "/evidence/" row)))
+                           (tuatara.frontend.fake:fake-frame-with f "Find file: ")))))))))

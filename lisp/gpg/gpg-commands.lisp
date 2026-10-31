@@ -189,7 +189,7 @@ is then on disk where it can be read (made for you alone). To read it, visit
 the encrypted file instead: its text stays in memory."
   (let* ((path (shown-file-argument "Decrypt file: "))
          (offered (decrypted-name path))
-         (target (read-native-path "Decrypt to: " :initial (abbreviated-path offered) :kind :any)))
+         (target (read-native-path "Decrypt to: " :initial (abbreviated-path offered) :kind :any :writing t)))
     (when (and target (gpg-target-free-p target)
                (yes-or-no-p* (format nil "This writes the text of ~a to disk, where it can be read; go on?" (tuatara.io:native-file-name path))))
       (decrypt-file-to path target))))
@@ -523,7 +523,7 @@ each line written as the editor shows them (ESCAPE-CONTROLS)."
   (let ((keys (gpg-keys-chosen)))
     (if (null keys)
         (message "No key on this line")
-        (let ((path (read-native-path "Export the keys to: " :kind :any)))
+        (let ((path (read-native-path "Export the keys to: " :kind :any :writing t)))
           (when (and path (gpg-target-free-p path))
             (with-exported-keys keys
               (lambda (octets)

@@ -313,7 +313,7 @@ it went, or NIL (said why)."
   (let* ((target (trashed-path thing))
          (target (if (tuatara.io:path-stamp target :follow nil)
                      (read-native-path (format nil "~a is taken; put it back as: " (abbreviated-path target))
-                                       :initial (abbreviated-path target))
+                                       :initial (abbreviated-path target) :writing t)
                      target)))
     (when target
       (handler-case

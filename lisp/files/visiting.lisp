@@ -91,12 +91,19 @@ for every path when *SAFE-DIRECTORIES* cannot be read. The disk is not asked."
                           (safe-directories))
         (error () t))))
 
-(defun last-chosen-native-folder ()
+(defun writing-chosen-p (native)
+  "True when NATIVE, a path remembered, is never offered first in a question
+whose answer is written to: in one of *SAFE-DIRECTORIES* (NAMED-SAFE-P), or
+in an evidence folder (EVIDENCE-PATH-P)."
+  (or (named-safe-p native) (evidence-path-p native)))
+
+(defun last-chosen-native-folder (&key writing)
   "The folder, a native name ending in /, of the latest path chosen in a
 question for a file or a folder (CHOSEN-PATHS) that is not of evidence
-\(NAMED-SAFE-P): the path itself when it is a folder (its name ends in /),
+\(NAMED-SAFE-P; with WRITING, for a question whose answer is written to,
+WRITING-CHOSEN-P): the path itself when it is a folder (its name ends in /),
 else the folder it is in; NIL when there is none or *LAST-USED-FIRST* is NIL."
-  (let ((last (and *last-used-first* (find-if-not #'named-safe-p (chosen-paths)))))
+  (let ((last (and *last-used-first* (find-if-not (if writing #'writing-chosen-p #'named-safe-p) (chosen-paths)))))
     (and last (if (directory-input-p last) last (tuatara.io:parent-path last)))))
 
 (defun last-chosen-folder ()
@@ -122,15 +129,29 @@ question has not ended (*SLOW-LISTINGS*); those ended are let go of."
                                    *slow-listings*))
   (and (assoc (tuatara.io:slash-ended folder) *slow-listings* :test #'string=) t))
 
-(defun path-question-start ()
+(defun path-question-start (&key writing)
   "The text a question for a path starts with when it is given none: the
 folder chosen last (LAST-CHOSEN-FOLDER), else, or while that folder's
 listing has not ended (SLOW-LISTING-P), that of the current buffer
-\(BUFFER-DIRECTORY)."
-  (let ((folder (last-chosen-native-folder)))
+\(BUFFER-DIRECTORY). With WRITING, for a question whose answer is written
+to, never a folder of evidence (*EVIDENCE-FOLDERS*): your home folder in its
+place."
+  (let ((folder (last-chosen-native-folder :writing writing)))
     (if (and folder (not (slow-listing-p folder)))
         (abbreviated-path folder)
-        (abbreviated-path (buffer-directory (current-buffer))))))
+        (let ((here (buffer-directory (current-buffer))))
+          (if (and writing (evidence-path-p here)) "~/" (abbreviated-path here))))))
+
+(defun writing-start (initial)
+  "INITIAL, the text a question whose answer is written to starts with, or
+in its place, when it names a place in an evidence folder, the folder
+PATH-QUESTION-START offers for writing, with INITIAL's name after it when
+INITIAL names a file."
+  (if (and initial (plusp (length initial))
+           (evidence-path-p (tuatara.io:native (tuatara.io:expand-path initial))))
+      (concatenate 'string (path-question-start :writing t)
+                   (if (directory-input-p initial) "" (tuatara.io:native-file-name initial)))
+      initial))
 
 (defun chosen-ranks (directory chosen)
   "How lately each entry of DIRECTORY (a native name ending in /) was chosen,
@@ -283,11 +304,13 @@ of the path typed, listing what is in it."
 
 (define-keys *path-question-keymap* '(("S-TAB" minibuffer-home-directory)))
 
-(defun read-path (prompt &key (initial (path-question-start)) directories preview)
+(defun read-path (prompt &key writing (initial (path-question-start :writing writing)) directories preview)
   "Ask with PROMPT for a path, as READ-FILE-PATH and READ-DIRECTORY-PATH do:
 from INITIAL (as standard the folder of the path chosen last in such a
 question, else the folder the current buffer stands in:
-PATH-QUESTION-START), its name completed against the entries of the folder
+PATH-QUESTION-START; with WRITING, for a question whose answer is written
+to, never a place in an evidence folder, which is then neither where it
+starts (WRITING-START) nor ranked first among the entries), its name completed against the entries of the folder
 being typed (FILE-CANDIDATES; with DIRECTORIES, its folders only), matched
 by any part of the name. While nothing is typed after the folder, the entry
 chosen there last comes first, the others in order of name; as you type,
@@ -302,7 +325,7 @@ typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
 \\[minibuffer-submit-input]), NIL when it is a file chosen."
   ;; the entries of a directory read afresh for each question
   (setf *file-candidates-kept* nil)
-  (let ((dir initial) (input ""))
+  (let ((dir (if writing (writing-start initial) initial)) (input ""))
     (call-with-window-preview
      (lambda (candidate made)
        (let ((chosen (candidate-result candidate)))
@@ -326,7 +349,10 @@ typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
                                  (list-directory (path)
                                    (let* ((expanded (input-directory-path path))
                                           (folder (tuatara.io:slash-ended (tuatara.io:native expanded)))
-                                          (chosen (and *last-used-first* (chosen-paths))))
+                                          (chosen (and *last-used-first*
+                                                       (if writing
+                                                           (remove-if #'evidence-path-p (chosen-paths))
+                                                           (chosen-paths)))))
                                      (setf listed '() listing nil)
                                      ;; a folder whose listing has not ended yet is not listed again
                                      (unless (slow-listing-p folder)
@@ -374,7 +400,7 @@ typed, taken as it is (\\<minibuffer>\\[minibuffer-done] on it, or
                (setf dir path)
                (return (values path typed)))))))))
 
-(defun read-file-path (prompt &key new-file preview (note t))
+(defun read-file-path (prompt &key new-file preview (note t) writing)
   "Ask for a file with PROMPT, completing its name against the folder being
 typed, from the folder of the path chosen last in such a question, else the
 folder the current buffer stands in (BUFFER-DIRECTORY): that of its file,
@@ -386,8 +412,9 @@ it names a directory or nothing matches; a directory candidate descends into
 it. Returns the path typed or chosen, or NIL (said) when nothing was named; a
 directory typed and taken comes with :DIRECTORY as a second value, or with
 NEW-FILE :NEW, for a new file there. With PREVIEW, the file selected is
-shown meanwhile (CALL-WITH-WINDOW-PREVIEW)."
-  (let ((path (read-path prompt :preview preview)))
+shown meanwhile (CALL-WITH-WINDOW-PREVIEW). WRITING, for a question whose
+answer is written to, as READ-PATH has it."
+  (let ((path (read-path prompt :preview preview :writing writing)))
     (cond ((zerop (length path))
            (if new-file
                (values "./" :new)
@@ -395,7 +422,7 @@ shown meanwhile (CALL-WITH-WINDOW-PREVIEW)."
           ((directory-input-p path) (values path (if new-file :new :directory)))
           (t (when note (note-chosen-path path)) path))))
 
-(defun read-directory-path (prompt &key (initial (path-question-start)) (note t))
+(defun read-directory-path (prompt &key writing (initial (path-question-start :writing writing)) (note t))
   "Ask for a folder with PROMPT, from INITIAL (as standard the folder of the
 path chosen last in such a question, else the folder the current buffer
 stands in: PATH-QUESTION-START), as READ-FILE-PATH asks for a file: the
@@ -408,25 +435,30 @@ line typed, one step above the first (\\[minibuffer-previous-candidate]), takes
 it, as \\[minibuffer-submit-input] does at any time: a directory, or a new
 name. Returns what was taken, ./ when nothing was typed, remembered as
 chosen lately (NOTE-CHOSEN-PATH) unless NOTE is NIL: a caller that shows the
-folder then remembers it itself, once shown (NOTE-VISITED-PATH)."
-  (let* ((path (read-path prompt :initial initial :directories t))
+folder then remembers it itself, once shown (NOTE-VISITED-PATH). WRITING,
+for a question whose answer is written to, as READ-PATH has it."
+  (let* ((path (read-path prompt :initial initial :directories t :writing writing))
          (path (if (zerop (length path)) "./" path)))
     (when note (note-chosen-path path :directory t))
     path))
 
-(defun read-native-path (prompt &key initial (kind :directory) (note t))
+(defun read-native-path (prompt &key initial (kind :directory) (note t) writing)
   "Ask with PROMPT for a path of KIND, :DIRECTORY (or a new name) as
 READ-DIRECTORY-PATH asks, :FILE as READ-FILE-PATH asks, or :ANY as READ-PATH
 asks, from INITIAL where it takes one, and return what was taken as a whole
 native name, ~ and the like expanded; NIL when nothing was typed. A folder
 or file taken is remembered as chosen lately unless NOTE is NIL, for a
-caller that opens it and remembers it once opened (NOTE-VISITED-PATH)."
+caller that opens it and remembers it once opened (NOTE-VISITED-PATH).
+WRITING, for a question whose answer is written to (a place to save or copy
+to), never starts in an evidence folder nor offers one first (READ-PATH)."
   (let ((typed (ecase kind
                  (:directory (if initial
-                                 (read-directory-path prompt :initial initial :note note)
-                                 (read-directory-path prompt :note note)))
-                 (:file (read-file-path prompt :note note))
-                 (:any (if initial (read-path prompt :initial initial) (read-path prompt))))))
+                                 (read-directory-path prompt :initial initial :note note :writing writing)
+                                 (read-directory-path prompt :note note :writing writing)))
+                 (:file (read-file-path prompt :note note :writing writing))
+                 (:any (if initial
+                           (read-path prompt :initial initial :writing writing)
+                           (read-path prompt :writing writing))))))
     (and typed (plusp (length typed)) (tuatara.io:native (tuatara.io:expand-path typed)))))
 
 (defun read-new-native-path (prompt &rest keys)
@@ -863,7 +895,7 @@ buffer is saved in the background while you carry on."
   (let ((b (current-buffer)))
     (if (tuatara.buffer:buffer-file b)
         (save-buffer-with-care b)
-        (multiple-value-bind (path kind) (read-file-path "Save as: ")
+        (multiple-value-bind (path kind) (read-file-path "Save as: " :writing t)
           (cond ((null path) (message "Not saved"))
                 (kind (message "~a is a folder: not saved; give the file's name after it" path))
                 (t (save-buffer-with-care b :path path)))))))
@@ -877,7 +909,7 @@ left as it was. A folder alone is the file's
 own name in that folder. A file there already is overwritten only when you
 say so."
   (let ((b (current-buffer)))
-    (multiple-value-bind (path kind) (read-file-path "Write file: ")
+    (multiple-value-bind (path kind) (read-file-path "Write file: " :writing t)
       (let ((path (if (and path kind (tuatara.buffer:buffer-file b))
                       ;; into the folder, under the file's own name
                       (concatenate 'string path (tuatara.io:native-file-name (tuatara.buffer:buffer-file b)))
