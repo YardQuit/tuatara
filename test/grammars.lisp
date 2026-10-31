@@ -322,3 +322,28 @@ a new session would."
     (sb-thread:join-thread (gethash :k table))
     (sb-thread:join-thread (tuatara.defaults::thread-once table :k (lambda () (incf runs))))
     (is = 3 runs)))
+
+(define-test (grammars-on grammar-store-yours-alone)
+  ;; the folder copies of grammars you added are kept in: one that others may
+  ;; read is made yours alone; a link in its place is not used, and a copy is
+  ;; then not kept, said
+  (let* ((folder (merge-pathnames "grammar-store/" (tuatara.io:state-directory)))
+         (name (string-right-trim "/" (uiop:native-namestring folder)))
+         (elsewhere (merge-pathnames "elsewhere-store/" (tuatara.io:cache-directory))))
+    (unwind-protect
+         (progn
+           (uiop:delete-directory-tree folder :validate t :if-does-not-exist :ignore)
+           (sb-posix:mkdir name #o755)
+           (sb-posix:chmod name #o755)
+           (true (tuatara.syntax:user-grammar-store))
+           (is = #o700 (logand #o777 (sb-posix:stat-mode (sb-posix:stat name))) "made yours alone")
+           (sb-posix:rmdir name)
+           (ensure-directories-exist elsewhere)
+           (sb-posix:symlink (string-right-trim "/" (uiop:native-namestring elsewhere)) name)
+           (false (tuatara.syntax:user-grammar-store) "a link is not used")
+           (true (search "a link" (tuatara.syntax:store-refused-why)))
+           (false (member nil (tuatara.syntax:grammar-directories)))
+           (false (tuatara.defaults::stored-grammar-path "testjson")))
+      (ignore-errors (sb-posix:unlink name))
+      (uiop:delete-directory-tree elsewhere :validate t :if-does-not-exist :ignore)
+      (tuatara.syntax:user-grammar-store))))

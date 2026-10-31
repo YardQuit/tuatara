@@ -1376,17 +1376,19 @@ cannot be written whole (a full disk)."
 and writable by its owner only, in one step (REPLACE-FILE)."
   (replace-file path text :mode #o600))
 
-(defun write-new-file (path contents &key end (mode #o400))
+(defun write-new-file (path contents &key end (mode #o400) sync)
   "Write CONTENTS, a string (in UTF-8) or octets (the first END of them, when
 END is given), as a new file at PATH, made with MODE from the start: readable
 by you alone and written by nothing again (0400) as standard. An error, and
 nothing written, when something is at PATH already, a link too; the new file
-taken away when it cannot be written whole (a full disk). Returns PATH."
+taken away when it cannot be written whole (a full disk). With SYNC, it is
+on the disk before this returns (fsync). Returns PATH."
   (let* ((name (native path))
          (octets (if (stringp contents) (tuatara.text:string-octets contents) (coerce contents 'tuatara.text:octets)))
          (fd (sb-posix:open name (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl) mode)))
     (handler-bind ((error (lambda (e) (declare (ignore e)) (ignore-errors (sb-posix:unlink name)))))
-      (unwind-protect (write-octets fd octets :end (or end (length octets)) :path name)
+      (unwind-protect (progn (write-octets fd octets :end (or end (length octets)) :path name)
+                             (when sync (sb-posix:fsync fd)))
         (sb-posix:close fd)))
     path))
 

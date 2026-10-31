@@ -95,7 +95,7 @@ meanwhile), made again only when the list has changed."
 NAME.so in the folder you add them to, or kept from it, whose name Tuatara
 has no grammar of."
   (remove-duplicates
-   (loop for folder in (list (tuatara.syntax:user-grammar-directory) (tuatara.syntax:user-grammar-store))
+   (loop for folder in (remove nil (list (tuatara.syntax:user-grammar-directory) (tuatara.syntax:user-grammar-store)))
          append (loop for path in (ignore-errors (directory (merge-pathnames "*.so" folder) :resolve-symlinks nil))
                       for name = (pathname-name path)
                       when (tuatara.syntax:user-grammar-p name) collect name))
@@ -215,32 +215,51 @@ descriptor on the file itself (OPEN-USER-GRAMMAR); NIL when there is none."
         (sb-posix:close fd)))))
 
 (defun stored-grammar-path (name)
-  "The path of the copy kept of NAME, a grammar you added (USER-GRAMMAR-STORE)."
-  (merge-pathnames (format nil "~a.so" name) (tuatara.syntax:user-grammar-store)))
+  "The path of the copy kept of NAME, a grammar you added (USER-GRAMMAR-STORE),
+or NIL when that folder cannot be used."
+  (let ((store (tuatara.syntax:user-grammar-store)))
+    (and store (merge-pathnames (format nil "~a.so" name) store))))
+
+(defvar *store-failures-said* (make-hash-table :test 'equal :synchronized t)
+  "The grammars you added whose copy could not be kept, said once each.")
+
+(defun store-failed (name why)
+  "Say, once for NAME, that a grammar you added could not be kept, WHY: it
+stays off."
+  (unless (gethash name *store-failures-said*)
+    (setf (gethash name *store-failures-said*) t)
+    (message "The ~a grammar you added could not be kept (~a): it stays off" name why))
+  nil)
 
 (defun store-user-grammar (name)
   "Keep NAME.so of the folder of grammars you add as turned on: its octets,
 read through a descriptor on the file itself, written as a new file of yours
-alone in USER-GRAMMAR-STORE, which the program running grammars loads it
-from, and its SHA-256 kept between sessions. The sum, or NIL when the file
-is not a plain file there or is larger than *USER-GRAMMAR-LARGEST*."
+alone in USER-GRAMMAR-STORE, on the disk before it takes the place of the
+copy kept before, and the SHA-256 of those octets kept between sessions;
+the program running grammars loads that copy. The sum, or NIL when the file
+is not a plain file there, is larger than *USER-GRAMMAR-LARGEST*, or could
+not be kept (a full disk, the folder no use), said once."
   (multiple-value-bind (fd size) (open-user-grammar name)
     (when fd
-      (let ((octets (unwind-protect (ignore-errors (tuatara.io:fd-octets fd (uiop:native-namestring (stored-grammar-path name))
-                                                                           size *user-grammar-largest*))
-                      (sb-posix:close fd))))
-        (when octets
-          (let* ((store (tuatara.syntax:user-grammar-store))
-                 (path (stored-grammar-path name))
-                 (new (merge-pathnames (format nil "~a.so.~a" name (tuatara.io:random-name)) store)))
-            (tuatara.io:write-new-file new octets)
-            (sb-posix:rename (uiop:native-namestring new) (uiop:native-namestring path))
-            (let ((sum (file-sha256 (uiop:native-namestring path))))
-              (when sum
-                (state-list-put *user-grammar-sums* (list (cons name sum)))
-                (setf (gethash name (user-grammar-records)) sum)
-                (remhash name *user-grammar-verdicts*))
-              sum)))))))
+      (let ((octets (unwind-protect (ignore-errors (tuatara.io:fd-octets fd name size *user-grammar-largest*))
+                      (sb-posix:close fd)))
+            (store (tuatara.syntax:user-grammar-store)))
+        (cond ((null octets) nil)
+              ((null store) (store-failed name (tuatara.syntax:store-refused-why)))
+              (t (let* ((path (stored-grammar-path name))
+                        (new (merge-pathnames (format nil "~a.so.~a" name (tuatara.io:random-name)) store))
+                        (sum (octets-sha256 octets)))
+                   (handler-case
+                       (progn (tuatara.io:write-new-file new octets :sync t)
+                              (sb-posix:rename (uiop:native-namestring new) (uiop:native-namestring path))
+                              (state-list-put *user-grammar-sums* (list (cons name sum)))
+                              (setf (gethash name (user-grammar-records)) sum)
+                              (remhash name *user-grammar-verdicts*)
+                              (remhash name *store-failures-said*)
+                              sum)
+                     (error (e)
+                       (ignore-errors (delete-file new))
+                       (store-failed name (tuatara.text:one-line (princ-to-string e))))))))))))
 
 (defun user-grammar-allowed-p (name)
   "True when NAME, a grammar you added, may be loaded now (from its copy
@@ -260,7 +279,9 @@ loading it."
               (setf kept (gethash name (user-grammar-records))))
             (setf verdict
                   (cond ((null kept) :untrusted)
-                        ((not (equal kept (file-sha256 (uiop:native-namestring (stored-grammar-path name))))) :gone)
+                        ((not (and (stored-grammar-path name)
+                                   (equal kept (file-sha256 (uiop:native-namestring (stored-grammar-path name))))))
+                         :gone)
                         (t (let ((now (user-grammar-file-sum name)))
                              (cond ((null now) :gone)
                                    ((string= now kept) :trusted)

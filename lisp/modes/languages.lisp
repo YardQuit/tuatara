@@ -203,7 +203,9 @@ other languages' rules call it by, and DEFINITIONS the text of the rules
 naming its definitions; a language defined again keeps the style and level
 chosen for it. One of Tuatara's own languages is never replaced from
 elsewhere (an init file, a package): that is refused, said, and NIL
-returned; a package adds languages of its own."
+returned; a package adds languages of its own. This keeps a package from
+replacing one by mistake; it is no guard against one meaning to, as a
+package runs Lisp with all the rights Tuatara has."
   (let ((old (find-language name)))
     (when (and old (own-language-p old) (not (own-language-name-p name)))
       (message "~(~a~) is one of Tuatara's own languages: a package or an init file adds languages, it does not replace them (~(~a~) left as it is)"

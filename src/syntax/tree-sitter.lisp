@@ -192,7 +192,8 @@ grammar is loaded only as *USER-GRAMMAR-FUNCTION* allows."
   (and (grammar-name-p name)
        (not (own-grammar-p name))
        (or (ignore-errors (sb-posix:lstat (uiop:native-namestring (merge-pathnames (format nil "~a.so" name) (user-grammar-directory)))))
-           (ignore-errors (sb-posix:lstat (uiop:native-namestring (merge-pathnames (format nil "~a.so" name) (user-grammar-store))))))
+           (let ((store (user-grammar-store)))
+             (and store (ignore-errors (sb-posix:lstat (uiop:native-namestring (merge-pathnames (format nil "~a.so" name) store)))))))
        t))
 
 (defvar *user-grammar-function* nil

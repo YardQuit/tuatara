@@ -206,6 +206,20 @@ into, is made when not given."
                   (program-sum carrier source buffer *hash-program*))))
         (ignore-errors (sb-posix:close fd))))))
 
+(defun octets-sha256 (octets)
+  "The SHA-256 sum, in hex, of OCTETS, summed as \\[sha256-sum] sums."
+  (let* ((carrier (%make-hash-job :what "octets" :cancel (list nil) :done (list 0)))
+         (buffer (make-array (max 1 (min *hash-piece* (length octets))) :element-type '(unsigned-byte 8)))
+         (at 0)
+         (source (lambda (buffer)
+                   (let ((n (min (length buffer) (- (length octets) at))))
+                     (replace buffer octets :start2 at :end2 (+ at n))
+                     (incf at n)
+                     n))))
+    (if (hash-library-p)
+        (library-sum carrier source buffer)
+        (program-sum carrier source buffer *hash-program*))))
+
 (defmethod tuatara.runtime:job-take-in ((job hash-job))
   "Say how JOB, which has ended, went: show its sum, which *Messages* keeps, and
 put it on the kill ring; or say why there is none. Nothing is said once its
