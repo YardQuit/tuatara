@@ -1,5 +1,14 @@
 ;;;; test/bench-rope.lisp --- Rope benchmarks against their budgets.
 ;;;; Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
+;;;;
+;;;; Every budget is twice the slowest time seen in the speed reference
+;;;; environment (.project/tools/speed/speed-env.sh: 16 GB, the 358H's 16
+;;;; threads pinned) over five runs of each benchmark in one process and four
+;;;; fresh processes, rounded up; the margin leaves room for other work running
+;;;; on the same machine.  The single-position lookups take microseconds, below
+;;;; what the clock tells apart from a context switch, so they keep 0.05 ms.
+;;;; Set a budget again from such runs, never by raising it to make a failure
+;;;; pass.
 
 (in-package #:tuatara.tests)
 
@@ -23,10 +32,10 @@
                                   'simple-vector)))))
   *big-rope*)
 
-(define-benchmark rope-batch-insert-500k (:budget-ms 25 :reps 9)
+(define-benchmark rope-batch-insert-500k (:budget-ms 50 :reps 9)
   (tuatara.text:apply-edits (big-fixture) *big-edits*))
 
-(define-benchmark rope-single-insert-in-27mb (:budget-ms 0.2 :reps 20)
+(define-benchmark rope-single-insert-in-27mb (:budget-ms 0.05 :reps 20)
   (tuatara.text:rope-insert (big-fixture) 13750000 "x"))
 
 (define-benchmark rope-char->byte-in-27mb (:budget-ms 0.05 :reps 20)
@@ -35,7 +44,7 @@
 (define-benchmark rope-line->byte-in-27mb (:budget-ms 0.05 :reps 20)
   (tuatara.text:line->byte (big-fixture) 250000))
 
-(define-benchmark octets->rope-27mb (:budget-ms 150 :reps 3)
+(define-benchmark octets->rope-27mb (:budget-ms 25 :reps 3)
   (progn (big-fixture) (tuatara.text:octets->rope *big-octets*)))
 
 (define-benchmark rope-octets-27mb (:reps 3)
@@ -55,19 +64,19 @@
             *big-file-rope* (tuatara.text:index-rope rope))))
   *big-file-rope*)
 
-(define-benchmark open-file-rope-27mb (:budget-ms 5 :reps 5)
+(define-benchmark open-file-rope-27mb (:budget-ms 0.15 :reps 5)
   (progn (big-file-fixture) (tuatara.text:open-file-rope *big-file*)))
 
-(define-benchmark index-rope-27mb-all-cores (:budget-ms 20 :reps 5)
+(define-benchmark index-rope-27mb-all-cores (:budget-ms 3 :reps 5)
   (progn (big-file-fixture) (tuatara.text:index-rope (tuatara.text:open-file-rope *big-file*))))
 
 (define-benchmark index-rope-27mb-one-thread (:reps 3)
   (progn (big-file-fixture) (tuatara.text:index-rope (tuatara.text:open-file-rope *big-file*) :threads 1)))
 
-(define-benchmark file-rope-single-insert (:budget-ms 0.2 :reps 20)
+(define-benchmark file-rope-single-insert (:budget-ms 0.15 :reps 20)
   (tuatara.text:rope-insert (big-file-fixture) 13750000 "x"))
 
-(define-benchmark file-rope-batch-insert-500k (:budget-ms 40 :reps 9)
+(define-benchmark file-rope-batch-insert-500k (:budget-ms 75 :reps 9)
   (tuatara.text:apply-edits (big-file-fixture) *big-edits*))
 
 (define-benchmark file-rope-octets-27mb (:reps 3)
@@ -76,16 +85,16 @@
 (define-test (rope benchmarks-within-budget)
   (true (run-benchmarks) "a rope benchmark exceeded its budget; see the table above"))
 
-(define-benchmark search-forward-rare-27mb (:budget-ms 100 :reps 3)
+(define-benchmark search-forward-rare-27mb (:budget-ms 25 :reps 3)
   (tuatara.syntax:search-forward (big-fixture) "zzz-not-there"))
 
-(define-benchmark search-all-common-27mb-all-cores (:budget-ms 30 :reps 7)
+(define-benchmark search-all-common-27mb-all-cores (:budget-ms 20 :reps 7)
   (tuatara.syntax:search-all (big-fixture) "fox"))
 
 (define-benchmark search-all-common-27mb-one-thread (:reps 3)
   (tuatara.syntax:search-all (big-fixture) "fox" :threads 1))
 
-(define-benchmark regex-search-forward-rare-27mb (:budget-ms 100 :reps 3)
+(define-benchmark regex-search-forward-rare-27mb (:budget-ms 13 :reps 3)
   ;; the prefilter skips to "zzz" at literal speed: as fast as a literal search
   (tuatara.syntax:regex-search-forward (big-fixture) "zzz-\\d+-not-there"))
 
@@ -98,7 +107,7 @@
 
 (defvar *bracketed-rope* nil "The reference text after an opening bracket that has no partner.")
 
-(define-benchmark rope-bracket-scan-27mb (:budget-ms 80 :reps 5)
+(define-benchmark rope-bracket-scan-27mb (:budget-ms 60 :reps 5)
   ;; a stray bracket: the whole 27.5 MB looked through for its partner
   (tuatara.text:rope-bracket-match (or *bracketed-rope*
                                        (setf *bracketed-rope* (tuatara.text:rope-insert (big-fixture) 0 "(")))
