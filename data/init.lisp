@@ -1559,6 +1559,15 @@
   ;; keyring (runs gpg --list-keys; the file is never given to it); nil: the
   ;; key IDs alone. Not set: :ask each time.
   ;; (setf *metadata-look-up-key-owners* t)
+
+  ;;; Evidence folders
+
+  ;; Evidence folders: their files always open safely, and nothing is ever
+  ;; written in them. * is any one folder, ** any folders; (:name ...) a
+  ;; folder's name, (:regex ...) case folders with :then the evidence in each.
+  ;; Not set: none, nothing checked.
+  ;; (setf *evidence-folders* '("~/cases/*/evidence/"
+  ;;                            (:regex "^[0-9]{4}-[0-9]{4}$" :within "~/cases/" :then "evidence")))
   )
 
 ;;;; ================================================================

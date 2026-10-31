@@ -253,6 +253,14 @@ package most often needs:
   made with =write-new-file=: read-only (0400) from the moment it is
   created, never written over a file or a link already there.
   =write-private-copy= makes a private copy of a file in the cache.
+  =copy-file-checked= copies a file and checks the copy's SHA-256
+  against the original's.
+- Evidence :: =evidence-path-p= says whether a file is in an evidence
+  folder (=*evidence-folders*=) and by which entry; =writing-refusal=
+  gives, in Tuatara's words, why nothing may be written in a folder, or
+  NIL. Tuatara's own writes refuse such folders by themselves
+  (=writing-refused=, a =file-system-error=); a package asks first only
+  to say so before it begins.
 - Paths :: =native=, =expand-path=, =parent-path=, =path-join=,
   =slash-ended=, =path-within-p= (inside a folder, =..= taken into
   account), =native-file-name=, =native-file-stem=, =native-file-type=.

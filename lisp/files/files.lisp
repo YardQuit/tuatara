@@ -488,12 +488,14 @@ read, every file then counting as in one."
       (error () t))))
 
 (defun visit-safely-reason (path)
-  "Why the file at PATH opens safely although that was not asked for: it is in
-one of *SAFE-DIRECTORIES*, or it looks binary while *OPEN-BINARY-FILES-SAFELY*
-is true; NIL for neither. When *SAFE-DIRECTORIES* cannot be read, every file
-opens safely, and the reason says so."
+  "Why the file at PATH opens safely although that was not asked for: it is
+evidence (*EVIDENCE-FOLDERS*), it is in one of *SAFE-DIRECTORIES*, or it looks
+binary while *OPEN-BINARY-FILES-SAFELY* is true; NIL for none. When
+*SAFE-DIRECTORIES* cannot be read, every file opens safely, and the reason
+says so."
   (let ((directory (safe-directory-of path)))
-    (cond ((eq directory t) "*safe-directories* could not be read")
+    (cond ((evidence-visit-reason path))
+          ((eq directory t) "*safe-directories* could not be read")
           (directory (format nil "it is in ~a (*safe-directories*)" directory))
           ((and *open-binary-files-safely* (tuatara.io:binary-head-p (tuatara.io:file-head path)))
            "it looks binary (*open-binary-files-safely*)"))))
@@ -503,7 +505,7 @@ opens safely, and the reason says so."
 what else there is to say of how it opened (why it is not shown as a picture)."
   (let ((why (tuatara.io:safe-visit-reason buffer)))
     (when why
-      (message "~a opened safely: ~a~@[; ~a~]; \\[end-safe-visit] opens it as usual" (tuatara.buffer:buffer-name buffer) why also))))
+      (message "~a opened safely: ~a~@[; ~a~]; ~a" (tuatara.buffer:buffer-name buffer) why also (end-safe-visit-words buffer)))))
 
 (defgeneric mode-file-name-at-point (mode buffer)
   (:documentation "The full name of the file BUFFER's point is on, for a mode
@@ -568,7 +570,8 @@ tick, the watcher wake the editor when it has news, what they find show in the
 mode line, a command that needs a large file's lines wait for them to be
 counted, the files the editor is started with be visited as C-x C-f visits
 them, a buffer's private folder be deleted when it is killed
-\(FORGET-PRIVATE-FOLDER) and kept fresh while it lives (KEEP-PRIVATE-FOLDERS-FRESH), and \\[wipe-file] be refused in a buffer opened safely."
+\(FORGET-PRIVATE-FOLDER) and kept fresh while it lives (KEEP-PRIVATE-FOLDERS-FRESH), \\[wipe-file] be refused in a buffer opened safely, and
+nothing be written in an evidence folder (INSTALL-EVIDENCE)."
   (pushnew 'wipe-file *file-changing-commands*)
   (setf tuatara.command:*visit-file-function* (lambda (path) (nth-value 0 (visit-path path :show #'identity)))
         tuatara.buffer:*index-wait-function* 'wait-for-counting
@@ -582,4 +585,5 @@ them, a buffer's private folder be deleted when it is killed
   (pushnew 'keep-private-folders-fresh *tick-functions*)
   (pushnew 'forget-private-folder tuatara.buffer:*kill-buffer-functions*)
   (pushnew 'files-mode-line *mode-line-functions*)
-  (pushnew 'safe-mode-line *mode-line-name-functions*))
+  (pushnew 'safe-mode-line *mode-line-name-functions*)
+  (install-evidence))

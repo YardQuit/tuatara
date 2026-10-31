@@ -35,7 +35,8 @@ files of others (PDFs of Org and LaTeX), as sentences; TOOLS, for each
 language, its formatter and servers as LANGUAGE-TOOLS-WORDS says them;
 DRAWING, for each way the window can be drawn, (RENDERER . FIGURES) as
 TUATARA.FRONTEND:FRONTEND-MEASURE-DRAWING gives them, and RENDERER the
-way the settings ask for (*GUI-RENDERER*)."
+way the settings ask for (*GUI-RENDERER*); EVIDENCE, what is said of the
+evidence folders (EVIDENCE-HEALTH-LINES)."
   (languages '() :read-only t)
   (grammars '())
   (results '())
@@ -44,7 +45,8 @@ way the settings ask for (*GUI-RENDERER*)."
   (exporters '())
   (tools '())
   (drawing '())
-  (renderer nil))
+  (renderer nil)
+  (evidence '()))
 
 (setf (documentation 'health-check-p 'function) "True when OBJECT is a HEALTH-CHECK.")
 
@@ -120,7 +122,9 @@ them to start, and in a window, how it draws each way it can
              (loop for renderer in renderers
                    collect (cons renderer (ignore-errors (tuatara.frontend:frontend-measure-drawing frontend renderer))))
              (health-check-renderer check)
-             in-use))
+             in-use
+             (health-check-evidence check)
+             (evidence-health-lines)))
      :name "tuatara health"))))
 
 ;;; The report's text
@@ -294,6 +298,9 @@ editor's own buffers, never a file's."
       (loop for words in (health-check-exporters check)
             for label = "Export" then ""
             do (fact label words)))
+    (dolist (line (health-check-evidence check))
+      (health-put line)
+      (health-put (format nil "~%")))
     ;; the languages
     (health-heading "Languages")
     (let ((widths (list* 14 7 (append (loop for (kind heading) in *health-rules*

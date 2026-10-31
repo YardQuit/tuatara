@@ -60,10 +60,12 @@ on its standard input. With SECONDS, git is ended once it has run that long,
 as if stopped. Git printing more octets than LIMIT (*PROGRAM-OUTPUT-LIMIT* when it is
 NIL), or with LINE a line longer than that, is ended, NIL and NIL given,
 and true as a third value. NIL, and no process at all, when
-DIRECTORY is in no repository (REPOSITORY-TOP), or when git is not found
-\(FIND-PROGRAM)."
-  (let ((git (tuatara.io:find-program "git")))
-    (unless (and git (ignore-errors (repository-top directory)))
+DIRECTORY is in no repository (REPOSITORY-TOP), in one within an evidence
+folder (*EVIDENCE-FOLDERS*), where git would write in its .git, or when git
+is not found (FIND-PROGRAM)."
+  (let ((git (tuatara.io:find-program "git"))
+        (top (ignore-errors (repository-top directory))))
+    (unless (and git top (not (evidence-path-p top)))
       (return-from run-git (values nil nil)))
     (run-git-program git directory arguments :cancel cancel :line line :environment environment :errors errors :input input
                                              :seconds seconds :limit limit)))

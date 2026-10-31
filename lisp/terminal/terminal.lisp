@@ -686,7 +686,7 @@ says, as \\[terminal] opens one; quitting it brings back what the window showed.
   "Open a terminal in a buffer of its own, where *TERMINAL-PLACE* says or, with
 PLACE, in a new window there (SHOW-TERMINAL), in the current buffer's directory
 \(in your home directory instead when that buffer was opened safely or its
-directory is in one of *SAFE-DIRECTORIES*, so that your shell's prompt and
+directory is in one of *SAFE-DIRECTORIES* or *EVIDENCE-FOLDERS*, so that your shell's prompt and
 its helpers read nothing a folder of evidence holds, such as its .git or
 .envrc; the echo area says so): your shell (or *TERMINAL-PROGRAM*) on a
 screen as large as the window, which follows the window's size. Everything typed there goes to the program, Escape
@@ -704,7 +704,8 @@ colours a program picks are the theme's (*TERMINAL-PALETTE-ROLES*)."
          (here (tuatara.io:native (buffer-directory (current-buffer))))
          (careful (cond ((tuatara.io:safe-visit-p (current-buffer))
                          (format nil "~a is opened safely" (tuatara.buffer:buffer-name (current-buffer))))
-                        ((safe-directory-of here) (format nil "~a is in *safe-directories*" here))))
+                        ((safe-directory-of here) (format nil "~a is in *safe-directories*" here))
+                        ((evidence-path-p here) (evidence-visit-reason here))))
          (directory (if careful (tuatara.io:home-directory) here))
          (program (or tuatara-user:*terminal-program*
                       (list (tuatara.io:user-shell))))

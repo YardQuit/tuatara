@@ -434,7 +434,16 @@ at once (RIMU-ARCHIVE-WORK); with REPLACE, the names
 there first moved to the trash. ALONG, a function of a pair's FROM, gives a
 file to delete with it once it is done, or NIL (a thing's .trashinfo in the
 trash), not counted apart. LEFT, what was left alone, is said when it is
-over; THEN, a function of no arguments, is called then."
+over; THEN, a function of no arguments, is called then. Nothing is begun
+when one of them would write in an evidence folder (*EVIDENCE-FOLDERS*):
+that is said, and NIL returned."
+  (let ((refusal (loop for (from . to) in pairs
+                       thereis (or (and (member verb '(:move :trash :delete))
+                                        (evidence-refusal (rimu-verb-words verb :verb) from))
+                                   (and to (evidence-refusal (rimu-verb-words verb :verb) to))))))
+    (when refusal
+      (message "~a: nothing done" refusal)
+      (return-from rimu-start-operation nil)))
   (when (member verb '(:move :trash :delete))
     (check-not-saving (mapcar #'car pairs)))
   (let ((operation (make-rimu-operation verb pairs list left then)))

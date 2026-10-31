@@ -233,6 +233,11 @@ text added, on a ground of its own."
 colour, so that it is seen at once that the rest of the buffer is out of
 sight and out of reach until \\[widen]."
   :inherit :warning :reverse t)
+(define-face :mode-line-evidence "Evidence, in the mode line of a file in an
+evidence folder (*EVIDENCE-FOLDERS*): lit up in the theme's error colour, so
+that it is seen at once that the file opened safely and nothing is written
+where it is."
+  :inherit :error :reverse t)
 (define-face :mode-line-sign "The mode line's signs before [-] while their work goes on: P while a job of the buffer runs or waits its turn (*processing-indicator*), U while a directory of *indexed-directories* is being read (*indexing-indicator*), S while one is searched (*searching-indicator*); in the theme's warning colour, to stand out." :inherit :warning)
 (define-face :mode-line-recording "Rec in the mode line while keys are recorded (\\[start-recording-keys]), and how many plays are done while recorded keys play over and over (\\[play-recorded-keys]); as the signs of work, in the theme's warning colour." :inherit :mode-line-sign)
 (define-face :terminal-bold "Text a program in a terminal set in bold." :bold t)
@@ -450,6 +455,7 @@ steel-blue mode line. From the Ao theme by the same author."
   (:mode-line-inactive :reverse nil :dim nil :fg mode-line-text :bg mode-line-inactive-ground)
   (:vertical-border :dim nil :fg divider)
   (:mode-line-directory :fg mode-line-directory) (:mode-line-narrowed :reverse nil :bold t :fg ground :bg yellow)
+  (:mode-line-evidence :reverse nil :bold t :fg ground :bg red)
   (:minibuffer-prompt :bold nil :fg blue-warmer)
   (:completion-selected :reverse nil :bold t :bg completion-ground)
   (:completion-annotation :dim nil :fg text-dim)

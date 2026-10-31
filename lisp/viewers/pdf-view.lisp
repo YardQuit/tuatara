@@ -1030,7 +1030,7 @@ by search filters, the file on the line among those they leave."
               (let* ((suggested (attachment-file-name name (format nil "attachment-~d" number)))
                      (shown (escape-controls name))
                      ;; nothing written beside evidence: from a folder kept safe, your Downloads offered instead
-                     (folder (if (safe-directory-of (pdf-view-path view))
+                     (folder (if (or (safe-directory-of (pdf-view-path view)) (evidence-path-p (pdf-view-path view)))
                                  (let ((downloads (tuatara.io:native (tuatara.io:expand-path "~/Downloads/"))))
                                    (if (tuatara.io:path-stamp downloads) downloads (tuatara.io:native (tuatara.io:expand-path "~/"))))
                                  (buffer-directory list)))

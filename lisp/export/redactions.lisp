@@ -237,7 +237,9 @@ may write its files of TYPES (endings, pdf or docx): when its
 in it (links followed), or in your templates, logos or trusted folders
 \(*EXPORT-KEPT-FOLDERS*, *EXPORT-TRUSTED-FOLDERS*), only when you say to go
 on. A note opened from an encrypted file is exported only when you say so:
-what the export writes is not encrypted."
+what the export writes is not encrypted. Never into an evidence folder
+\(*EVIDENCE-FOLDERS*): NIL then, and as a second value the words saying why
+\(EVIDENCE-REFUSAL)."
   (unless (or (not (tuatara.buffer:buffer-local buffer :plaintext))
               (yes-or-no-p* (format nil "~a is encrypted, but its export and what is made for it are not; export it all the same?"
                                     (tuatara.buffer:buffer-name buffer))))
@@ -254,7 +256,10 @@ what the export writes is not encrypted."
                                        types)))
          (existing (and outside
                         (find-if (lambda (path) (tuatara.io:path-stamp path))
-                                 (mapcar (lambda (type) (replaced-type named type)) types)))))
+                                 (mapcar (lambda (type) (replaced-type named type)) types))))
+         (refusal (some (lambda (type) (evidence-refusal "export to" (replaced-type (or named file) type))) types)))
+    (when refusal
+      (return-from export-target-allowed-p (values nil refusal)))
     (or (not outside)
         (yes-or-no-p* (if existing
                           (format nil "#+EXPORT_FILE_NAME writes over ~a, outside the note's folder or in one of your own; go on?"

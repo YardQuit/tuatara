@@ -902,7 +902,7 @@ hidden text shown elsewhere in it, unless you say to go on."
   (let ((name (tuatara.buffer:buffer-name buffer)))
     ;; a file opened safely has no major mode: said as what it is, before its kind
     (cond ((tuatara.io:safe-visit-p buffer)
-           (message "~a was opened safely: exporting would run what it says (\\[end-safe-visit] opens it as usual)" name))
+           (message "~a was opened safely: exporting would run what it says (~a)" name (end-safe-visit-words buffer)))
           (wrong-kind (message "~a" wrong-kind))
           ((null (tuatara.buffer:buffer-file buffer)) (message "~a has no file yet: save it first" name))
           (running (message "~a" running))
@@ -953,18 +953,21 @@ why not."
                         (job (make-pdf-export buffer (tuatara.io:native (tuatara.io:expand-path file)) kind then save
                                               (and (eq kind :org) (tuatara.buffer:buffer-text buffer)) enhanced)))
                    ;; a part alone: its text, and where each of its lines is in the file
-                   (unless (or scope (export-target-allowed-p buffer '("tex" "pdf") :text text))
-                     (message "Not exported")
-                     (return-from start-latex-export))
+                   (unless scope
+                     (multiple-value-bind (allowed why) (export-target-allowed-p buffer '("tex" "pdf") :text text)
+                       (unless allowed
+                         (message "Not exported~@[: ~a~]" why)
+                         (return-from start-latex-export))))
                    (when scope
                      (multiple-value-bind (text origins lines words) (org-export-part buffer scope)
                        (unless text
                          (message "There is no headline here to export the subtree of")
                          (return-from start-latex-export))
                        ;; where the part says it is written: its headline's EXPORT_FILE_NAME too
-                       (unless (export-target-allowed-p buffer '("tex" "pdf") :text text)
-                         (message "Not exported")
-                         (return-from start-latex-export))
+                       (multiple-value-bind (allowed why) (export-target-allowed-p buffer '("tex" "pdf") :text text)
+                         (unless allowed
+                           (message "Not exported~@[: ~a~]" why)
+                           (return-from start-latex-export)))
                        (setf (pdf-export-rope job) text (pdf-export-origins job) origins
                              (pdf-export-lines job) (coerce lines 'list) (pdf-export-part job) words)))
                    (tuatara.runtime:start-job-thread
@@ -1131,8 +1134,10 @@ it in the desktop's program when asked."
                              :running (and (find-if #'docx-export-p (jobs-of buffer :running t))
                                            (format nil "~a is being written as a Word document already" name))
                              :redactions t))
-          ((not (export-target-allowed-p buffer '("docx") :text text))
-           (message "Not exported"))
+          ((multiple-value-bind (allowed why) (export-target-allowed-p buffer '("docx") :text text)
+             (unless allowed
+               (message "Not exported~@[: ~a~]" why)
+               t)))
           (t
            (let ((job (make-docx-export buffer text (tuatara.io:native (tuatara.io:expand-path file)) then)))
              (tuatara.runtime:start-job-thread

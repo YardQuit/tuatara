@@ -643,13 +643,14 @@ show one (*FILE-VIEWS*): a folder's list is then opened safely too.")
 
 (defun visit-path-once (path safe show)
   "Visit the file at PATH as VISIT-PATH does, SAFE and SHOW as it takes them,
-its first octets read once meanwhile. A file in one of *SAFE-DIRECTORIES* is
-shown by no view (decrypted, read by a program), however it is opened; a
+its first octets read once meanwhile. A file in one of *SAFE-DIRECTORIES*, or
+of evidence (*EVIDENCE-FOLDERS*), is shown by no view (decrypted, read by a
+program), however it is opened; a
 folder is listed (\\[rimu]) however it is opened, its access time kept and
 nothing in it opened."
   (let ((*file-view-said* nil)
         (*visiting-safely* (and safe t)))
-    (unless (and (or safe (safe-directory-of path))
+    (unless (and (or safe (safe-directory-of path) (evidence-path-p path))
                  (not (eq :directory (ignore-errors (tuatara.io:path-kind (tuatara.io:native (tuatara.io:expand-path path)))))))
       (let ((view (some (lambda (function) (funcall function path show)) *file-views*)))
         (when view (return-from visit-path-once view))))
@@ -693,7 +694,7 @@ another buffer, has *SHOWN-AGAIN-FUNCTIONS* called with it."
         (message "~a is open already, with its mode; kill that buffer to open the file safely"
                  (tuatara.buffer:buffer-name buffer)))
       (when (and (not safe) existing (tuatara.io:safe-visit-p buffer))
-        (message "~a is open safely; \\[end-safe-visit] opens it as usual" (tuatara.buffer:buffer-name buffer)))
+        (message "~a is open safely; ~a" (tuatara.buffer:buffer-name buffer) (end-safe-visit-words buffer)))
       (let ((said (and (not (eq *file-view-said* :none)) *file-view-said*)))
         (cond ((and (not existing) (tuatara.io:safe-visit-reason buffer)) (say-why-safe buffer said))
               (said (message "~a" said))
@@ -812,21 +813,28 @@ is: the mode line no longer says Safe, the buffer is editable when you may
 write the file, and it gets what \\[find-file] gives a file: its major mode
 (or keeps the one chosen meanwhile, its colours now shown), version control,
 and a place among the files visited lately that opens it as usual. Point,
-changes not saved and undo stay as they are."
+changes not saved and undo stay as they are. A file of evidence
+\(*EVIDENCE-FOLDERS*) stays opened safely."
   (let* ((b (current-buffer))
-         (mode (buffer-major-mode b)))
-    (if (not (tuatara.io:safe-visit-p b))
-        (message "~a is not open safely" (tuatara.buffer:buffer-name b))
-        (let ((chosen (not (eq (type-of mode) 'fundamental-mode))))
-          (tuatara.io:end-safe-visit b)
-          (when chosen
-            ;; the mode stays as it is set up, its language now parsed
-            (let ((language (mode-language mode)))
-              (when language (start-parsing b language))))
-          (dolist (f tuatara.buffer:*find-file-functions*)
-            (unless (and chosen (eq f 'set-auto-mode)) (funcall f b)))
-          (message "~a is open as usual now~:[~;; read-only, since you may not write it~]"
-                   (tuatara.buffer:buffer-name b) (tuatara.buffer:buffer-local b :read-only))))))
+         (mode (buffer-major-mode b))
+         (evidence (buffer-evidence b)))
+    (cond
+      ((not (tuatara.io:safe-visit-p b))
+       (message "~a is not open safely" (tuatara.buffer:buffer-name b)))
+      (evidence
+       (message "~a stays opened safely: ~a" (tuatara.buffer:buffer-name b)
+                (evidence-visit-reason (tuatara.io:native (tuatara.buffer:buffer-file b)))))
+      (t
+       (let ((chosen (not (eq (type-of mode) 'fundamental-mode))))
+         (tuatara.io:end-safe-visit b)
+         (when chosen
+           ;; the mode stays as it is set up, its language now parsed
+           (let ((language (mode-language mode)))
+             (when language (start-parsing b language))))
+         (dolist (f tuatara.buffer:*find-file-functions*)
+           (unless (and chosen (eq f 'set-auto-mode)) (funcall f b)))
+         (message "~a is open as usual now~:[~;; read-only, since you may not write it~]"
+                  (tuatara.buffer:buffer-name b) (tuatara.buffer:buffer-local b :read-only)))))))
 
 (define-command read-only-mode ()
   "Make the current buffer read-only, or editable again if it is; with a
