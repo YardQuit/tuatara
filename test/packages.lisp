@@ -512,6 +512,17 @@ after."
                                      (uiop:directory-files (directory-namestring fasl))))
         (uiop:delete-directory-tree (pathname (directory-namestring fasl)) :validate (lambda (p) (search "/tuatara/packages/" (namestring p))))))))
 
+(define-test (packages private-folders-kept-private)
+  ;; a folder of yours there already, open to others, is made yours alone; one not yours
+  ;; is refused, never used
+  (with-test-directory (dir)
+    (let ((open (namestring (merge-pathnames "open/" dir))))
+      (ensure-directories-exist open)
+      (sb-posix:chmod open #o777)
+      (tuatara.io:ensure-private-directory open)
+      (is = #o700 (logand (sb-posix:stat-mode (sb-posix:stat open)) #o777))))
+  (fail (tuatara.io:ensure-private-directory "/usr/") 'tuatara.io:file-system-error))
+
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another
   ;; by an open parenthesis too; a group of settings left alone; where reading stopped said

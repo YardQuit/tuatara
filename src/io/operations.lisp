@@ -157,10 +157,11 @@ in, held open."
 
 (defun ensure-private-directory (path)
   "Make the directory PATH, and each directory above it that is not there,
-for you alone (mode 700) from the moment it is made; those there already are
-left as they are. Returns PATH's native name, ending in /. A
-FILE-SYSTEM-ERROR when one cannot be made, or when something not a
-directory is in the way."
+for you alone (mode 700) from the moment it is made; those above it there
+already are left as they are. PATH itself, when it is there already, is made
+yours alone (700) when it is yours and others may use it. Returns PATH's
+native name, ending in /. A FILE-SYSTEM-ERROR when one cannot be made, when
+something not a directory is in the way, or when PATH is someone else's."
   (let ((name (slash-ended (native path))))
     (loop for slash = (position #\/ name :start 1) then (position #\/ name :start (1+ slash))
           while slash
@@ -171,6 +172,11 @@ directory is in the way."
                    (file-system-error (e) (unless (path-stamp level) (error e)))))))
     (unless (eq (path-kind name) :directory)
       (error 'file-system-error :operation "make the directory" :path name :reason "something else is there"))
+    (let ((stat (sb-posix:stat name)))
+      (unless (= (sb-posix:stat-uid stat) (sb-posix:getuid))
+        (error 'file-system-error :operation "keep files in" :path name :reason "the folder is someone else's"))
+      (unless (zerop (logand (sb-posix:stat-mode stat) #o077))
+        (sb-posix:chmod name (logand (sb-posix:stat-mode stat) #o700))))
     name))
 
 (defun remove-file (path)
