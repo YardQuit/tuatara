@@ -1,10 +1,15 @@
-; This Source Code Form is subject to the terms of the Mozilla Public
-; License, v. 2.0. If a copy of the MPL was not distributed with this
-; file, You can obtain one at https://mozilla.org/MPL/2.0/.
-;
-; The rules for text in other languages in lean: runtime/queries/lean/injections.scm of
-; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; The rules for text in other languages for lean: queries/injections.scm of
+; tree-sitter-lean (https://github.com/Julian/tree-sitter-lean) at commit 916c44f4d89c,
+; under the MIT License (its text goes with the grammar), unchanged below
+; this notice.
 
-((comment) @injection.content
- (#set! injection.language "markdown"))
+; Language injections for tree-sitter-lean.
+
+; Doc comments are Markdown / Verso content.
+((doc_comment) @injection.content
+  (#set! injection.language "markdown"))
+
+((module_doc_comment) @injection.content
+  (#set! injection.language "markdown"))
+
+; Raw string contents stay plain; no injection beyond default text.

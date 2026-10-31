@@ -433,6 +433,13 @@ QUERY_FIXES = {
     ('cairo', 'textobjects'): [RUST_TEST],
 }
 
+# rules taken from the grammar's own repository, which Helix's no longer fit
+# once its pin moved off a commit on no branch or tag: kept as they are
+OWN_QUERIES = {
+    'mojo': {'highlights', 'textobjects', 'locals'},
+    'lean': {'highlights', 'injections'},
+}
+
 def copy_queries(name, done):
     """Copy NAME's query files, and those they inherit, into syntax/; return the kinds copied."""
     if name in done: return done[name]
@@ -441,6 +448,8 @@ def copy_queries(name, done):
     for kind, directory, what in KINDS:
         src = os.path.join(qdir, kind + '.scm')
         if not os.path.exists(src): continue
+        if kind in OWN_QUERIES.get(name, ()):
+            done[name].add(kind); continue
         text = open(src, encoding='utf-8').read()
         fixes = QUERY_FIXES.get((name, kind), [])
         for bad, good, why in fixes:

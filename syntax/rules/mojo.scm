@@ -1,141 +1,161 @@
-; This Source Code Form is subject to the terms of the Mozilla Public
-; License, v. 2.0. If a copy of the MPL was not distributed with this
-; file, You can obtain one at https://mozilla.org/MPL/2.0/.
-;
-; The colouring rules for mojo: runtime/queries/mojo/highlights.scm of
-; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; The colouring rules for mojo: queries/highlights.scm of
+; tree-sitter-mojo (https://github.com/lsh/tree-sitter-mojo) at commit e5905c480b9e,
+; under the MIT License (its text goes with the grammar), unchanged below
+; this notice.
 
-; Variables
-
+; adapted from Zed's Python Config
+; https://github.com/zed-industries/zed/blob/6657e301cd0ee9e7b7b5352957ef30728ae2a874/crates/languages/src/python/highlights.scm
+; Identifiers default to variables; the more specific patterns below
+; (properties, types, constants, functions, parameters) override this
+; fallback because they appear later in the file.
 (identifier) @variable
 
-(attribute attribute: (identifier) @variable.other.member)
+(attribute attribute: (identifier) @property)
+(type (identifier) @type)
+(inferred_attribute attribute: (identifier) @property)
 
-((identifier) @constant
-  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
-
-((identifier) @type
-  (#match? @type "^[A-Z]"))
-
-; Literals
-(none) @constant.builtin
-[
-  (true)
-  (false)
-] @constant.builtin.boolean
-
-(integer) @constant.numeric.integer
-(float) @constant.numeric.float
-(comment) @comment
-(string) @string
-(escape_sequence) @constant.character.escape
-
-; Docstrings
-
-(expression_statement (string) @comment.block.documentation)
-
-; Imports
-
-(dotted_name
-  (identifier)* @namespace)
-
-(aliased_import
-  alias: (identifier) @namespace)
-
-; Builtin functions
-
-((call
-  function: (identifier) @function.builtin)
-  (#match?
-    @function.builtin
-    "^(abs|all|always_inline|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|constrained|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|unroll|vars|zip|__mlir_attr|__mlir_op|__mlir_type|__import__)$"))
 
 ; Function calls
 
-[
-  "def"
-  "lambda"
-  "fn"
-] @keyword.function
-
-(call
-  function: (attribute attribute: (identifier) @constructor)
-  (#match? @constructor "^[A-Z]"))
-
-(call
-  function: (identifier) @constructor
-  (#match? @constructor "^[A-Z]"))
+(decorator) @function
+(decorator
+  (identifier) @function)
 
 (call
   function: (attribute attribute: (identifier) @function.method))
-
 (call
   function: (identifier) @function)
 
 ; Function definitions
 
 (function_definition
-  name: (identifier) @constructor
-  (#match? @constructor "^(__new__|__init__|__moveinit__|__copyinit__)$"))
-
-(function_definition
   name: (identifier) @function)
 
-; Decorators
+; Type definitions
 
-(decorator) @function
-(decorator (identifier) @function)
-(decorator (attribute attribute: (identifier) @function))
-(decorator (call
-  function: (attribute attribute: (identifier) @function)))
+(class_definition
+  name: (identifier) @type)
+(trait_definition
+  name: (identifier) @type)
+(extension_definition
+  name: (identifier) @type)
+(enum_definition
+  name: (identifier) @type)
+(type_alias_statement
+  name: (identifier) @type)
+(parameterized_alias_statement
+  name: (identifier) @type)
 
-; Parameters
+; Parameters and named arguments. These sit before the naming-convention
+; heuristics below so an upper-case compile-time parameter (the `T` in
+; `def f[T: AnyType]`) still reads as a type.
 
-((identifier) @variable.builtin
-  (#match? @variable.builtin "^(self|cls)$"))
-
-(parameters (identifier) @variable.parameter)
-(parameters (typed_parameter (identifier) @variable.parameter))
-(parameters (default_parameter name: (identifier) @variable.parameter))
-(parameters (typed_default_parameter name: (identifier) @variable.parameter))
-
-(parameters
-  (list_splat_pattern ; *args
-    (identifier) @variable.parameter))
-
-(parameters
-  (dictionary_splat_pattern ; **kwargs
-    (identifier) @variable.parameter))
-
-(lambda_parameters
+(typed_parameter
   (identifier) @variable.parameter)
+(convention_parameter
+  (identifier) @variable.parameter)
+(default_parameter
+  name: (identifier) @variable.parameter)
+(typed_default_parameter
+  name: (identifier) @variable.parameter)
+(constrained_parameter
+  name: (identifier) @variable.parameter)
+(variadic_type_parameter
+  name: (identifier) @variable.parameter)
+(keyword_argument
+  name: (identifier) @variable.parameter)
+(struct_literal_field
+  name: (identifier) @property)
+(keyword_pattern
+  name: (identifier) @property)
 
-; Types
+; Capture-list entries bind names from the enclosing scope.
+(named_capture
+  name: (identifier) @variable)
 
-((identifier) @type.builtin
-  (#match?
-    @type.builtin
-    "^(bool|bytes|dict|float|frozenset|int|list|set|str|tuple)$"))
+; Identifier naming conventions
 
-; In type hints make everything types to catch non-conforming identifiers
-; (e.g., datetime.datetime) and None
-(type [(identifier) (none)] @type)
-; Handle [] . and | nesting 4 levels deep
-(type
-  (_ [(identifier) (none)]? @type
-    (_ [(identifier) (none)]? @type
-      (_ [(identifier) (none)]? @type
-        (_ [(identifier) (none)]? @type)))))
+((identifier) @type
+ (#match? @type "^[A-Z]"))
 
-(class_definition name: (identifier) @type)
-(class_definition superclasses: (argument_list (identifier) @type))
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
-["," "." ":" ";" (ellipsis)] @punctuation.delimiter
+; Enum cases: their declarations (`case red`, `case rgb(Int, Int, Int)`) and
+; the inferred-case patterns that match them (`case .red:`, `.Some(x)`).
+(enum_case
+  name: (identifier) @constructor)
+(case_pattern
+  (inferred_attribute
+    attribute: (identifier) @constructor))
+(class_pattern
+  (inferred_attribute
+    attribute: (identifier) @constructor))
+
+; Builtin functions
+
+((call
+  function: (identifier) @function.builtin)
+ (#match?
+   @function.builtin
+   "^(abs|all|always_inline|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|constrained|delattr|dict|dir|divmod|enumerate|eval|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|unroll|vars|zip|__mlir_attr|__mlir_op|__mlir_type|__import__)$"))
+
+; Literals
+
+[
+  (none)
+  (true)
+  (false)
+] @constant.builtin
+
+"self" @variable.builtin
+
+[
+  (integer)
+  (float)
+] @number
+
+(comment) @comment
+(string) @string
+(escape_sequence) @escape
+
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+] @punctuation.bracket
+
 (interpolation
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
-["(" ")" "[" "]" "{" "}"] @punctuation.bracket
+
+; Docstrings. A bare string statement is a direct child of its block (there
+; is no expression_statement wrapper), so anchor on the block's first child.
+(function_definition
+  body: (block . (string) @string.doc))
+(class_definition
+  body: (block . (string) @string.doc))
+(trait_definition
+  body: (block . (string) @string.doc))
+(extension_definition
+  body: (block . (string) @string.doc))
+(enum_definition
+  body: (block . (string) @string.doc))
+; A doc string sits on the line after the enum case it documents.
+(enum_definition
+  body: (block
+    (enum_case) . (string) @string.doc))
+(module . (string) @string.doc)
+
+[
+  ","
+  "."
+  ":"
+  ";"
+] @punctuation.delimiter
 
 [
   "-"
@@ -174,84 +194,69 @@
   "|="
   "~"
   "@="
+  "^" ; capture-list move marker (var^ x)
+  "and"
+  "in"
+  "is"
+  "not"
+  "or"
+  "is not"
+  "not in"
 ] @operator
+
+; `@` is also the decorator sigil; only matrix multiplication is an operator.
+(binary_operator "@" @operator)
 
 [
   "as"
   "assert"
+  "async"
   "await"
-  "from"
-  "pass"
-  "with"
-] @keyword.control
-
-[
-  "if"
+  "break"
+  "class"
+  "continue"
+  "def"
   "elif"
   "else"
-  "match"
-  "case"
-] @keyword.control.conditional
-
-[
-  "while"
-  "for"
-  "break"
-  "continue"
-] @keyword.control.repeat
-
-[
-  "return"
-  "yield"
-] @keyword.control.return
-
-(yield "from" @keyword.control.return)
-
-[
-  "raise"
-  "raises"
-  "try"
   "except"
   "finally"
-] @keyword.control.exception
-
-(raise_statement "from" @keyword.control.exception)
-"import" @keyword.control.import
-
-(for_statement "in" @keyword.control)
-(for_in_clause "in" @keyword.control)
-
-[
-  "alias"
-  "async"
-  "class"
-  "exec"
-  "global"
-  "nonlocal"
-  "print"
+  "for"
+  "from"
+  "if"
+  "import"
+  "lambda"
+  "pass"
+  "raise"
+  "return"
   "struct"
-  ; "trait"
+  "trait"
+  "try"
+  "while"
+  "with"
+  "yield"
+  "match"
+  "__match"
+  "case"
+  "where"
+  "alias"
+  "comptime"
+  "__comptime_assert"
+  "__enum"
+  "__extension"
+  "__generator_type"
+  "__mlir_region"
+  "var"
+  "ref"
+  "Self"
+  "abi"
+  "capturing"
+  "raises"
+  "thin"
+  "__param_trait__"
+  "imm"
+  "mut"
+  "out"
+  "deinit"
+  "read"
 ] @keyword
 
-[
-  "and"
-  "or"
-  "not in"
-  "in"
-  "not"
-  "del"
-  "is not"
-  "is"
-] @keyword.operator
-
-"var" @keyword.storage
-
-[
-  "borrowed"
-  "inout"
-  "owned"
-] @keyword.storage.modifier
-
-((identifier) @type.builtin
-  (#match? @type.builtin
-    "^(BaseException|Exception|ArithmeticError|BufferError|LookupError|AssertionError|AttributeError|EOFError|FloatingPointError|GeneratorExit|ImportError|ModuleNotFoundError|IndexError|KeyError|KeyboardInterrupt|MemoryError|NameError|NotImplementedError|OSError|OverflowError|RecursionError|ReferenceError|RuntimeError|StopIteration|StopAsyncIteration|SyntaxError|IndentationError|TabError|SystemError|SystemExit|TypeError|UnboundLocalError|UnicodeError|UnicodeEncodeError|UnicodeDecodeError|UnicodeTranslateError|ValueError|ZeroDivisionError|EnvironmentError|IOError|WindowsError|BlockingIOError|ChildProcessError|ConnectionError|BrokenPipeError|ConnectionAbortedError|ConnectionRefusedError|ConnectionResetError|FileExistsError|FileNotFoundError|InterruptedError|IsADirectoryError|NotADirectoryError|PermissionError|ProcessLookupError|TimeoutError|Warning|UserWarning|DeprecationWarning|PendingDeprecationWarning|SyntaxWarning|RuntimeWarning|FutureWarning|ImportWarning|UnicodeWarning|BytesWarning|ResourceWarning)$"))

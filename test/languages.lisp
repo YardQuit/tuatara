@@ -844,7 +844,7 @@ Hello.
 Hi
 {% /callout %}
 ")
-    (mojo "fn main():
+    (mojo "def main():
     var x = 1
     print(x)
 ")

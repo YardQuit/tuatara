@@ -293,3 +293,27 @@ and the Quicklisp folder."
     (true (< (search "tools/lisp-archives.sh check" image) (search "build-image.lisp" image :from-end t)))
     (dolist (word '("index" "fetch" "check" "lock"))
       (true (search (format nil "tools/lisp-archives.sh\" ~a \"$ql\"" word) setup) word))))
+
+(defun manifest-rows ()
+  "The rows of syntax/grammars.tsv, each a list of its fields."
+  (loop for line in (uiop:read-file-lines (asdf:system-relative-pathname :tuatara "syntax/grammars.tsv"))
+        unless (or (zerop (length line)) (char= (char line 0) #\#))
+          collect (uiop:split-string line :separator '(#\Tab))))
+
+(define-test (tools grammars-fetched-from-where-they-are)
+  ;; no grammar is fetched by an address its repository has left (an owner
+  ;; renamed, a repository moved to another owner: the old name may be taken
+  ;; by anyone), nor pinned to a commit on no branch or tag of its repository
+  (let ((rows (manifest-rows)))
+    (dolist (old '("kepet19/tree-sitter-ldif" "jbellerb/tree-sitter-dhall" "markdoc-extra/tree-sitter-markdoc"
+                   "wgsl-tooling-wg/tree-sitter-wesl" "the-mikedavis/tree-sitter-diff" "sogaiu/tree-sitter-clojure"
+                   "ckafi/tree-sitter-elvish" "theHamsta/tree-sitter-glsl" "santhoshtr/tree-sitter-wikitext"
+                   "amaanq/tree-sitter-kdl" "eonpatapon/tree-sitter-cue" "erasin/tree-sitter-po"
+                   "MaeBrooks/tree-sitter-gren" "rhizoome/tree-sitter-ink" "jzelinskie/tree-sitter-spicedb"
+                   "Philipp-M/tree-sitter-yuck"))
+      (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)
+             "~a has moved" old))
+    (dolist (orphan '("3d7c53b8038f9ebbb57cd2e61296180aa5c1cf64" "29f9c6707ce9dfc2fc915d175ec720b207f179f3"
+                      "d98426109258b266e1e92358c5f11716d2e8f638"))
+      (false (find orphan rows :key #'third :test #'string=) "~a is on no branch or tag" orphan))))
+
