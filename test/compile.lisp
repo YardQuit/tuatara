@@ -590,7 +590,7 @@ in, one after another, through OUTPUT-PAST-RETURNS."
 (define-test (compiling progress-redrawn-on-one-line)
   ;; a carriage return alone in a program's output goes back to the line's start and what
   ;; follows writes over it, as a terminal shows it, however the output comes in pieces
-  (let ((output (format nil "start~%10%~c50%~c100%~%5%~cdone~c~%é中~c😀~cX" #\Return #\Return #\Return #\Return #\Return #\Return #\Return)))
+  (let ((output (format nil "start~%10%~c50%~c100%~%5%~cdone~c~%é中~c😀~cX" #\Return #\Return #\Return #\Return #\Return #\Return)))
     (is string= (format nil "start~%100%~%done~c~%X中" #\Return)
         (output-as-a-terminal-shows-it (list output)))
     (dolist (size '(1 2 3 5))
