@@ -293,6 +293,39 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
       (true (tuatara.frontend.fake:fake-frame-showing f "The package ahead is not loaded"))
       (false (package-test-version)))))
 
+(define-test (packages compiled-while-the-editor-goes-on)
+  ;; a package taking a second and a half to compile: the command loading it returns at
+  ;; once, the editor answers all the while, and the package is loaded once, said
+  (with-folder-package (dir "slowpkg" (format nil "(eval-when (:compile-toplevel) (sleep 1.5))~%~
+                                                   (defvar *package-test-loads* 0)~%~
+                                                   (incf *package-test-loads*)~%~
+                                                   (defparameter *package-test-version* \"slow\")~%"))
+    (let ((tuatara-user:*package-ask-before-loading* nil)
+          (call 0) (last nil) (longest 0) (polled 0))
+      (unwind-protect
+           (let ((f (auto-save-session
+                     (list (list :until (lambda ()
+                                          (let ((start (get-internal-real-time)))
+                                            (tuatara-user:load-package "slowpkg" :source "mine")
+                                            (setf call (tuatara.runtime:milliseconds-since start)
+                                                  last (get-internal-real-time)))
+                                          t))
+                           ;; looked at on the editor's thread every 20 ms until it has loaded
+                           (list :until (lambda ()
+                                          (setf longest (max longest (tuatara.runtime:milliseconds-since last))
+                                                last (get-internal-real-time))
+                                          (incf polled)
+                                          (package-test-version))))
+                     :width 160)))
+             (is equal "slow" (package-test-version))
+             (is = 1 (symbol-value 'tuatara-user::*package-test-loads*) "loaded once")
+             (true (< call 200) "the command returned in ~d ms" call)
+             (true (< longest 500) "the editor answered every ~d ms at most" longest)
+             (true (> polled 20) "looked at ~d times while it compiled" polled)
+             (true (tuatara.frontend.fake:fake-frame-showing f "Compiling the package slowpkg in the background"))
+             (true (tuatara.frontend.fake:fake-frame-showing f "The package slowpkg is compiled and loaded")))
+        (makunbound 'tuatara-user::*package-test-loads*)))))
+
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another
   ;; by an open parenthesis too; a group of settings left alone; where reading stopped said
