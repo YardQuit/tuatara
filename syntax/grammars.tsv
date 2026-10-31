@@ -167,7 +167,7 @@ robots-txt	https://github.com/opa-oz/tree-sitter-robots-txt	0c066107e3548de79316
 requirements	https://github.com/tree-sitter-grammars/tree-sitter-requirements	2c3bb291f497258ba417d052faa14a2dfee6d401	MIT
 hyprlang	https://github.com/tree-sitter-grammars/tree-sitter-hyprlang	27af9b74acf89fa6bed4fb8cb8631994fcb2e6f3	MIT
 caddyfile	https://github.com/caddyserver/tree-sitter-caddyfile	683332a6430675abfd9867201ef47b2b99bdb266	MIT
-jinja2	https://github.com/varpeti/tree-sitter-jinja2	a533cd3c33aea6acb0f9bf9a56f35dcfe6a8eb53	GPL-3.0-or-later
+jinja	https://github.com/cathaysia/tree-sitter-jinja	c213d3745ccdcaaa858869181c7b1bf9557a025f	Apache-2.0	tree-sitter-jinja
 twig	https://github.com/gbprod/tree-sitter-twig	0afd9a6d808944e65a7be393e31868b85345735f	WTFPL
 less	https://github.com/jimliang/tree-sitter-less	e5ae6245f841b5778c79ac93b28fa4f56b679c5d	MIT
 pug	https://github.com/zealot128/tree-sitter-pug	13e9195370172c86a8b88184cc358b23b677cc46	MIT

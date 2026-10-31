@@ -196,8 +196,8 @@
   :extensions ("jinja" "jinja2" "j2"))
 
 (define-language jinja
-  "Jinja templates, parsed with tree-sitter-jinja2."
-  :grammar "jinja2" :modes (jinja2-mode) :indent 2 :queries "jinja" :injection-names "jinja")
+  "Jinja templates, parsed with tree-sitter-jinja."
+  :grammar "jinja" :modes (jinja2-mode) :indent 2 :queries "jinja" :injection-names "jinja")
 
 (define-major-mode twig-mode prog-mode
   "Twig templates."

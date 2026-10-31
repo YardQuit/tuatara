@@ -4,9 +4,12 @@
 ;
 ; The rules for text in other languages in jinja: runtime/queries/jinja/injections.scm of
 ; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; unchanged below this notice but where a comment says what was changed.
 
-((source_file) @injection.content
+; changed: the grammar of cathaysia, kept up, parses the template whole: the text between its tags is HTML; it read
+;   ((source_file) @injection.content
+;    (#set! injection.combined)
+;    (#set! injection.include-children)
+((content) @injection.content
  (#set! injection.combined)
- (#set! injection.include-children)
  (#set! injection.language "html"))
