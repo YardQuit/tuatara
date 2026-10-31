@@ -301,7 +301,7 @@ queued: keys typed meanwhile."
               :text "abc xy")
            (declare (ignore f))
            (true (search "ended before the question" (session-message editor)))
-           (true (< seconds 2)))
+           (true (< seconds (* 2 (machine-slowdown)))))
       (setf tuatara.command:*tick-functions* (remove busy tuatara.command:*tick-functions*))
       (tuatara.command:forget-command 'tuatara-user::test-recorded-unfinished)
       (fmakunbound 'tuatara-user::test-recorded-unfinished))))

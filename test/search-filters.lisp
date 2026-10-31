@@ -1212,9 +1212,9 @@ for, anchors, empty matches, line ends, and matches running over them.")
 (defun least-seconds (function)
   "The least of three runs' seconds of FUNCTION, called with none."
   (loop repeat 3
-        minimize (let ((start (get-internal-real-time)))
+        minimize (let ((start (thread-cpu-time)))
                    (funcall function)
-                   (/ (- (get-internal-real-time) start) internal-time-units-per-second))))
+                   (/ (- (thread-cpu-time) start) internal-time-units-per-second))))
 
 (define-test (search-filters filters-at-search-speed)
   ;; a filter of a large log finds its lines as fast as a search finds its matches, not

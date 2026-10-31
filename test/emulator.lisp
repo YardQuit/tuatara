@@ -93,7 +93,7 @@ and fourth values."
                    (sleep 1/100))
           (true (plusp frames))
           ;; a frame, the wait for the reader to step aside included
-          (true (< (/ longest internal-time-units-per-second) 1/10) "the longest frame took ~,3f s"
+          (true (< (/ longest internal-time-units-per-second) (* 1/10 (machine-slowdown))) "the longest frame took ~,3f s"
                 (/ longest internal-time-units-per-second))
           (true (find-if (lambda (r) (search "line 399999 of" r)) (emulator-screen e))))))))
 
@@ -142,7 +142,7 @@ and fourth values."
                         (setf longest (max longest (- (get-internal-real-time) start))))
                    until (or (plusp (getf after :compressed-pages)) (<= (tuatara.runtime:seconds-left deadline) 0))
                    do (sleep 0.005))
-             (true (< (/ longest internal-time-units-per-second) 1/10) "the library was held ~,3f s"
+             (true (< (/ longest internal-time-units-per-second) (* 1/10 (machine-slowdown))) "the library was held ~,3f s"
                    (/ longest internal-time-units-per-second))
              (true (getf after :compression))
              (true (plusp (getf after :compressed-pages)))
@@ -197,18 +197,19 @@ and fourth values."
 (define-test (emulator typing-never-waits-for-the-library)
   ;; the library held a while (as while a picture is drawn): keys and pastes still go at once
   (with-emulator (e "tr" '("a-z" "A-Z") :columns 40 :rows 6)
-    (let ((held (sb-thread:make-semaphore)) (release (sb-thread:make-semaphore)))
+    (let ((held (sb-thread:make-semaphore)) (release (sb-thread:make-semaphore)) (given-up nil))
       (let ((holder (sb-thread:make-thread
                      (lambda ()
                        (tuatara.defaults::with-emulator-turn (e)
                          (sb-thread:signal-semaphore held)
-                         (sb-thread:wait-on-semaphore release :timeout 10))))))
+                         (unless (sb-thread:wait-on-semaphore release :timeout 10)
+                           (setf given-up t)))))))
         (sb-thread:wait-on-semaphore held)
-        (let ((start (get-internal-real-time)))
-          (true (tuatara.defaults::emulator-key e (tuatara.frontend:make-key #\k)))
-          (tuatara.defaults::emulator-paste e "pasted")
-          (tuatara.defaults::emulator-key e (tuatara.frontend:make-key :enter))
-          (true (< (- (get-internal-real-time) start) (/ internal-time-units-per-second 10))))
+        (true (tuatara.defaults::emulator-key e (tuatara.frontend:make-key #\k)))
+        (tuatara.defaults::emulator-paste e "pasted")
+        (tuatara.defaults::emulator-key e (tuatara.frontend:make-key :enter))
+        ;; all three were done while the library was still held
+        (false given-up)
         (sb-thread:signal-semaphore release)
         (sb-thread:join-thread holder)
         (true (find-if (lambda (r) (search "KPASTED" r)) (emulator-screen e :until (screen-has "KPASTED"))))))))
@@ -217,16 +218,17 @@ and fourth values."
   ;; while the reader holds the library (a picture being drawn), a resize is not waited for:
   ;; :BUSY, the size kept, and made once the library is free
   (with-emulator (e "sh" (list "-c" "sleep 5") :columns 40 :rows 6)
-    (let* ((held (sb-thread:make-semaphore)) (free (sb-thread:make-semaphore))
+    (let* ((held (sb-thread:make-semaphore)) (free (sb-thread:make-semaphore)) (given-up nil)
            (holder (sb-thread:make-thread
                     (lambda ()
                       (sb-thread:with-mutex ((tuatara.defaults::emulator-lock e))
                         (sb-thread:signal-semaphore held)
-                        (sb-thread:wait-on-semaphore free :timeout 5))))))
+                        (unless (sb-thread:wait-on-semaphore free :timeout 5)
+                          (setf given-up t)))))))
       (sb-thread:wait-on-semaphore held :timeout 5)
-      (let ((start (get-internal-real-time)))
-        (is eq :busy (tuatara.defaults::emulator-resize e 50 8))
-        (true (< (- (get-internal-real-time) start) (/ internal-time-units-per-second 10))))
+      (is eq :busy (tuatara.defaults::emulator-resize e 50 8))
+      ;; refused while the library was still held, not after waiting for it
+      (false given-up)
       (is = 40 (tuatara.defaults::emulator-columns e))
       (sb-thread:signal-semaphore free)
       (sb-thread:join-thread holder)
@@ -234,12 +236,12 @@ and fourth values."
       (is = 50 (tuatara.defaults::emulator-columns e)))))
 
 (defun least-of-three (function &key bytes)
-  "The least of three runs of FUNCTION: its internal real time, or with BYTES
+  "The least of three runs of FUNCTION: its processor time, or with BYTES
 the octets it consed."
   (loop repeat 3
         minimize (if bytes
                      (let ((before (sb-ext:get-bytes-consed))) (funcall function) (- (sb-ext:get-bytes-consed) before))
-                     (let ((before (get-internal-real-time))) (funcall function) (- (get-internal-real-time) before)))))
+                     (let ((before (thread-cpu-time))) (funcall function) (- (thread-cpu-time) before)))))
 
 (define-test (emulator layout-read-at-once)
   ;; a key of the library's layout named in the code costs the same wherever it is in the
@@ -300,7 +302,7 @@ PLACEMENTS more places of the first beside its place in text; then a line
                          (format nil "~c[0m~c~cshown" #\Escape #\Return #\Newline))))))
 
 (defun picture-frame-time (file)
-  "The least internal real time of three whole frames of a terminal 200 by 50
+  "The least processor time of three whole frames of a terminal 200 by 50
 showing FILE (PICTURE-SCREEN-FILE's), its pictures on, a row of it changed
 before each by its program."
   (with-emulator (e "sh" (list "-c" (format nil "cat '~a'; while :; do printf '\\033[50;10Hz'; sleep 0.02; done" file))

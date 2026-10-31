@@ -98,9 +98,9 @@
                          (lines "| 1.5 | |" "#+TBLFM: $2=round($1,99999999)") (lines "| 1.5 | |" "#+TBLFM: $2=$1;f99999999")
                          ;; past what the machine's numbers hold
                          (lines "| 1000 | |" "#+TBLFM: $2=exp($1)") (lines (format nil "| ~a | |" (make-string 400 :initial-element #\9)) "#+TBLFM: $2=sqrt($1)")))
-      (let ((start (get-internal-real-time)))
+      (let ((start (thread-cpu-time)))
         (true (search "#ERROR" (org-text-after "C-c *" table)) "~s" table)
-        (true (< (- (get-internal-real-time) start) (* 2 internal-time-units-per-second)) "~s at once" table)))
+        (true (< (- (thread-cpu-time) start) (* 2 internal-time-units-per-second)) "~s at once" table)))
     ;; a formula nested past reason: refused in words, never the stack exhausted
     (let ((text (org-text-after "C-c *" (lines "| 1 | |" (format nil "#+TBLFM: $2=~a$1~a" (make-string 20000 :initial-element #\() (make-string 20000 :initial-element #\)))))))
       (false (search "| 1 | 1 |" text))))
@@ -108,10 +108,10 @@
   (let* ((rows (append (list (list "a" "b" "c") :rule)
                        (loop for i below 20000 collect (list (princ-to-string i) (princ-to-string (* 2 i)) ""))))
          (model (tuatara.defaults::make-org-table-model :rows rows :indent "" :row 0 :field 0 :offset 0))
-         (start (get-internal-real-time)))
+         (start (thread-cpu-time)))
     (tuatara.defaults::org-apply-formulas
      model (tuatara.defaults::org-runnable-formulas (list "$3=$1*$2+@-1$1" "@>$1=vsum(@I..@>>)")))
-    (true (< (- (get-internal-real-time) start) internal-time-units-per-second))
+    (true (< (- (thread-cpu-time) start) internal-time-units-per-second))
     (is string= "799940000" (third (car (last (tuatara.defaults::org-table-rows model)))))))
 
 (defparameter *org-tangled*

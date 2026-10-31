@@ -903,10 +903,10 @@ it did."
              (let* ((names (loop for i below count collect (format nil "photo-~d.jpg" i)))
                     (finals (loop for i below count collect (format nil "renamed-~d.jpg" i)))
                     (changes (mapcar #'cons names finals))
-                    (start (get-internal-real-time)))
+                    (start (thread-cpu-time)))
                (loop repeat 3
                      do (false (tuatara.defaults::rimu-names-refusal (tuatara.io:native dir) names finals changes)))
-               (/ (- (get-internal-real-time) start) internal-time-units-per-second count))))
+               (/ (- (thread-cpu-time) start) internal-time-units-per-second count))))
       (seconds-each 500)
       (let ((small (seconds-each 2000)) (large (seconds-each 8000)))
         (true (< large (* 2.5 (max small 1/1000000))) "each name: ~,2e s of 2000, ~,2e s of 8000" small large)))

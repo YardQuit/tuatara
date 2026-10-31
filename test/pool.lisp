@@ -79,7 +79,7 @@
           :finished)
       (false value)
       (is eq t reason))
-    (true (< (- (get-internal-real-time) start) internal-time-units-per-second)))
+    (true (< (- (get-internal-real-time) start) (* internal-time-units-per-second (machine-slowdown)))))
   ;; work given seconds is cut short as slow when one call runs longer
   (multiple-value-bind (value reason)
       (tuatara.runtime:stoppable-work ((list nil) :slow 1/20)

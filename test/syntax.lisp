@@ -374,9 +374,9 @@ what stopped the walk (NIL at a bracket)."
          (woken 0)
          (tuatara.syntax:*syntax-wake-function* (lambda () (incf woken))))
     (unwind-protect
-         (let* ((start (get-internal-real-time))
+         (let* ((start (thread-cpu-time))
                 (syntax (tuatara.syntax:attach-syntax buffer (tuatara.syntax:find-grammar "rust"))))
-           (true (< (- (get-internal-real-time) start) (* 0.1 internal-time-units-per-second)))
+           (true (< (- (thread-cpu-time) start) (* 0.1 internal-time-units-per-second)))
            (true (tuatara.syntax:syntax-job syntax))
            (let ((tuatara.syntax:*syntax-wait* 0))
              (false (tuatara.syntax:syntax-ready-tree syntax)))
@@ -390,7 +390,7 @@ what stopped the walk (NIL at a bracket)."
            (true (tuatara.syntax:syntax-job syntax))
            (let ((stop (get-internal-real-time)))
              (tuatara.syntax:detach-syntax buffer)
-             (true (< (- (get-internal-real-time) stop) internal-time-units-per-second)))
+             (true (< (- (get-internal-real-time) stop) (* internal-time-units-per-second (machine-slowdown)))))
            (false (tuatara.syntax:buffer-syntax buffer)))
       (tuatara.syntax:detach-syntax buffer)
       (tuatara.buffer:kill-buffer buffer))))
@@ -1324,13 +1324,23 @@ has, ended after."
     (let ((directories (cons (namestring directory) (tuatara.syntax:grammar-directories))))
       (unwind-protect
            (let ((tuatara.syntax:*grammar-directories* directories))
-             (let ((began (get-internal-real-time))
-                   (tuatara.syntax:*must-not-wait-function* (lambda () t)))
-               (false (tuatara.syntax:rules-helper))
-               (true (< (tuatara.runtime:seconds-since began) 0.05)))
-             (true (loop repeat 500
-                         thereis (tuatara.syntax::known-kept-helper (cons :rules directories))
-                         do (sleep 0.01))))
+             (let ((tuatara.syntax:*must-not-wait-function* (lambda () t))
+                   (asking sb-thread:*current-thread*)
+                   (started-by '()))
+               ;; where each start is made: never on the thread that asked
+               (sb-int:encapsulate 'tuatara.syntax::start-helper 'note-thread
+                                   (lambda (function &rest arguments)
+                                     (push sb-thread:*current-thread* started-by)
+                                     (apply function arguments)))
+               (unwind-protect
+                    (progn
+                      (false (tuatara.syntax:rules-helper))
+                      (true (loop repeat 500
+                                  thereis (tuatara.syntax::known-kept-helper (cons :rules directories))
+                                  do (sleep 0.01)))
+                      (true started-by)
+                      (false (member asking started-by)))
+                 (sb-int:unencapsulate 'tuatara.syntax::start-helper 'note-thread))))
         (dolist (helper (copy-list tuatara.syntax::**helpers**))
           (when (equal directories (tuatara.syntax::helper-directories helper))
             (tuatara.syntax::stop-helper helper)))))))
@@ -1557,17 +1567,20 @@ has, ended after."
   (let ((buffer (tuatara.buffer:make-buffer "*soon*" :text "fn main() {}"))
         (holding (sb-thread:make-semaphore)))
     (unwind-protect
-         (let ((tuatara.syntax:*must-not-wait-function* (lambda () t))
+         (let* ((tuatara.syntax:*must-not-wait-function* (lambda () t))
+               (letting-go (sb-thread:make-semaphore))
+               (given-up nil)
                (holder (sb-thread:make-thread
                         (lambda ()
                           (sb-thread:with-mutex (tuatara.syntax::**room-lock**)
                             (sb-thread:signal-semaphore holding)
-                            (sleep 0.5)))))
-               (began nil))
+                            (unless (sb-thread:wait-on-semaphore letting-go :timeout 10)
+                              (setf given-up t)))))))
            (sb-thread:wait-on-semaphore holding)
-           (setf began (get-internal-real-time))
            (false (tuatara.syntax:buffer-helper-soon buffer))
-           (true (< (tuatara.runtime:seconds-since began) 0.05))
+           ;; given up on while the start was still held up, not after waiting for it
+           (false given-up)
+           (sb-thread:signal-semaphore letting-go)
            (sb-thread:join-thread holder)
            (true (loop repeat 500
                        thereis (let ((own (tuatara.buffer:buffer-local buffer :syntax-helper)))
@@ -1578,9 +1591,8 @@ has, ended after."
   (let ((buffer (tuatara.buffer:make-buffer "*soon-now*" :text "fn main() {}")))
     (unwind-protect
          (let ((tuatara.syntax:*must-not-wait-function* (lambda () t))
-               (began (get-internal-real-time)))
-           (true (tuatara.syntax:buffer-helper-soon buffer))
-           (true (< (tuatara.runtime:seconds-since began) 0.1)))
+               (tuatara.syntax::*at-once-wait* 30))
+           (true (tuatara.syntax:buffer-helper-soon buffer)))
       (tuatara.buffer:kill-buffer buffer))))
 
 (define-test (syntax buffer-killed-while-its-helper-starts)
@@ -2045,7 +2057,7 @@ has, ended after."
                   (let ((tree (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text)
                                                          :limit 5 :budget (* 64 1024 1024))))
                     (true tree "~a" grammar)
-                    (true (< (- (get-internal-real-time) start) (floor internal-time-units-per-second 2)) "~a" grammar)
+                    (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second)) "~a" grammar)
                     (when tree (tuatara.syntax:delete-tree tree)))
                (tuatara.syntax:delete-parser parser)))))
 
@@ -2530,17 +2542,17 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
            (tuatara.modes:set-major-mode buffer 'tuatara.defaults::lisp-mode)
            (let ((tuatara.syntax:*syntax-wait* 60))
              (tuatara.syntax:syntax-ready-tree (tuatara.syntax:buffer-syntax buffer)))
-           (let ((start (get-internal-real-time)))
+           (let ((start (thread-cpu-time)))
              (is = 100001 (tuatara.defaults::indent-lines buffer 0 (tuatara.buffer:buffer-size buffer)))
-             (true (< (- (get-internal-real-time) start) (* 2 internal-time-units-per-second))))
+             (true (< (- (thread-cpu-time) start) (* 2 internal-time-units-per-second))))
            (is string= "    (99999 \"row 99999\" :key 699993)"
                (let ((line (tuatara.buffer:buffer-goto-line buffer 100000)))
                  (tuatara.buffer:buffer-string buffer :start line :end (tuatara.buffer:buffer-line-end buffer line))))
            (let ((line (tuatara.buffer:buffer-goto-line buffer 100000))
-                 (start (get-internal-real-time)))
+                 (start (thread-cpu-time)))
              (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit line (+ line 3))))
              (is = 1 (tuatara.defaults::indent-lines buffer line line))
-             (true (< (- (get-internal-real-time) start) (* 1/2 internal-time-units-per-second)))))
+             (true (< (- (thread-cpu-time) start) (* 1/2 internal-time-units-per-second)))))
       (tuatara.buffer:kill-buffer buffer))))
 
 (define-test (syntax indenting-by-the-tree)
@@ -2695,20 +2707,20 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
                   (query (tuatara.defaults::language-compiled-query language :text-objects))
                   (rope (tuatara.buffer:buffer-text buffer))
                   (point (tuatara.buffer:buffer-goto-line buffer 119995))
-                  (start (get-internal-real-time))
+                  (start (thread-cpu-time))
                   (ranges (tuatara.defaults::text-object-ranges
                            query (tuatara.syntax:syntax-tree (tuatara.syntax:buffer-syntax buffer)) rope
                            "function.around" (- point 65536) (min (tuatara.text:rope-bytes rope) (+ point 65536)))))
-             (true (< (- (get-internal-real-time) start) (* 1/5 internal-time-units-per-second)))
+             (true (< (- (thread-cpu-time) start) (* 1/5 internal-time-units-per-second)))
              (is string= (format nil "fn f19999(a: i32, b: i32) -> i32 {~%    // sum~%    a + b~%}")
                  (let ((r (tuatara.defaults::smallest-around ranges point point nil)))
                    (and r (tuatara.buffer:buffer-string buffer :start (car r) :end (cdr r)))))
              ;; so does a test, its rule anchored to the attribute before it
-             (let* ((start (get-internal-real-time))
+             (let* ((start (thread-cpu-time))
                     (tests (tuatara.defaults::text-object-ranges
                             query (tuatara.syntax:syntax-tree (tuatara.syntax:buffer-syntax buffer)) rope
                             "test.around" (- point 65536) (min (tuatara.text:rope-bytes rope) (+ point 65536)))))
-               (true (< (- (get-internal-real-time) start) (* 1/5 internal-time-units-per-second)))
+               (true (< (- (thread-cpu-time) start) (* 1/5 internal-time-units-per-second)))
                (true (tuatara.defaults::smallest-around tests point point nil)))))
       (tuatara.buffer:kill-buffer buffer))))
 

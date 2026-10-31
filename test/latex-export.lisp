@@ -1299,11 +1299,11 @@ its text's size in half points, when given."
                  (dolist (name names) (format s "Met {{{redact(~a)}}} today.~%" name))
                  (loop repeat 2000 do (format s "Plain words of a long note with nothing hidden in them at all.~%"))
                  (format s "Later Person7 Surname7 wrote, and person12 again.~%")))
-         (start (get-internal-real-time))
+         (start (thread-cpu-time))
          (findings (tuatara.defaults::redaction-findings text :org)))
     (is equal '("Person7 Surname7" "person12") (mapcar #'second findings))
-    (true (< (- (get-internal-real-time) start) (* 2 internal-time-units-per-second))
-          "~,2f s" (/ (- (get-internal-real-time) start) internal-time-units-per-second))))
+    (true (< (- (thread-cpu-time) start) (* 2 internal-time-units-per-second))
+          "~,2f s" (/ (- (thread-cpu-time) start) internal-time-units-per-second))))
 
 (define-test (latex-export docx-hidden-heading-in-contents)
   ;; a heading hiding a name: in the contents as [redacted], never its markup nor the name

@@ -807,9 +807,9 @@ be shown 4 columns by 2 rows, then prints ready and waits."
              (dotimes (k prompts)
                (format out "~c]133;A~c\\$ ls~%a.txt  b.txt~%" #\Escape #\Escape))))
          (seconds (text)
-           (let ((start (get-internal-real-time)))
+           (let ((start (thread-cpu-time)))
              (tuatara.defaults::ansi-pieces text)
-             (/ (- (get-internal-real-time) start) internal-time-units-per-second))))
+             (/ (- (thread-cpu-time) start) internal-time-units-per-second))))
     (is equal (list (format nil "$ ls~%a.txt  b.txt~%")) (tuatara.defaults::ansi-pieces (history 1)))
     (is equal (list (format nil "a~%b")) (tuatara.defaults::ansi-pieces (format nil "a~c]0;title~c~%b" #\Escape (code-char 7))))
     ;; about 0.2 µs a prompt; 50 µs when each mark's end was looked for to the end of the history

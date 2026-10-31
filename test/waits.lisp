@@ -327,6 +327,6 @@ most the seconds given for it to end."
   ;; typing in it never stops for its parse
   (let ((state (tuatara.defaults::make-org-state)))
     (setf (tuatara.defaults::org-state-parse-seconds state) 1)
-    (let ((start (get-internal-real-time)))
-      (false (tuatara.defaults::org-await-parse state (list 7)))
-      (true (< (tuatara.runtime:seconds-since start) tuatara.defaults::*org-parse-wait*)))))
+    (false (tuatara.defaults::org-await-parse state (list 7)))
+    ;; no wait was begun for that version
+    (false (tuatara.defaults::org-state-waited state))))

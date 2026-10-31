@@ -33,6 +33,30 @@ is found read already by another that commits the same."
   (sb-ext:with-locked-hash-table (tuatara.defaults::**committed-lines**)
     (clrhash tuatara.defaults::**committed-lines**)))
 
+(defun thread-cpu-time ()
+  "The processor time this thread has used, in internal time units: what
+work in the thread costs however busy the rest of the machine is, for a bound
+on work that does not wait for another thread or program."
+  (multiple-value-bind (seconds nanoseconds) (sb-unix:clock-gettime sb-unix:clock-thread-cputime-id)
+    (+ (* seconds internal-time-units-per-second)
+       (floor (* nanoseconds internal-time-units-per-second) 1000000000))))
+
+(defvar *slowdown-sink* 0
+  "Where MACHINE-SLOWDOWN leaves its sum, so that the work is not dropped.")
+
+(defun machine-slowdown ()
+  "How many times longer than its processor time a short piece of work takes
+on this thread now: 1 when the machine has a processor to spare, more when
+other programs share it. A bound on how long something that waits for another
+thread may take is multiplied by it."
+  (let ((real (get-internal-real-time))
+        (cpu (thread-cpu-time))
+        (sum 0))
+    (declare (fixnum sum))
+    (dotimes (i 20000000) (setf sum (logxor sum i)))
+    (setf *slowdown-sink* sum)
+    (max 1 (/ (- (get-internal-real-time) real) (max 1 (- (thread-cpu-time) cpu))))))
+
 (defmacro with-test-directory ((directory) &body body)
   "Run BODY with DIRECTORY bound to a new empty directory in the cache directory
 (on the file system of your home, which shares blocks on btrfs), removed
@@ -181,7 +205,7 @@ program writing in place does, and wait for it. Returns the seconds it took."
         (setf (tuatara.io::lease-status lease) :moving)
         (let ((began (get-internal-real-time)))
           (tuatara.buffer:kill-buffer b)
-          (true (< (- (get-internal-real-time) began) (* 1/2 internal-time-units-per-second))))
+          (true (< (- (get-internal-real-time) began) (* 1/2 internal-time-units-per-second (machine-slowdown)))))
         (true (tuatara.buffer:buffer-lent-p b))
         (false (tuatara.io::lease-buffer lease))
         (setf (tuatara.io::lease-status lease) :released))

@@ -142,9 +142,9 @@
     (false (tuatara.defaults::glob-match "a?c" "abcd"))
     (true (tuatara.defaults::glob-match "**x" "aaaax"))
     (true (tuatara.defaults::glob-match "" ""))
-    (let ((start (get-internal-real-time)))
+    (let ((start (thread-cpu-time)))
       (false (tuatara.defaults::glob-match (format nil "~30@{*~}a" nil) (make-string 2000 :initial-element #\b)))
-      (true (< (- (get-internal-real-time) start) internal-time-units-per-second)))
+      (true (< (- (thread-cpu-time) start) internal-time-units-per-second)))
     ;; a block's :scope names only agenda files or files beside its own: another is left out, and said
     (let ((text (format nil "* A~%:LOGBOOK:~%CLOCK: [2026-10-02 Fri 08:00]--[2026-10-02 Fri 09:00] =>  1:00~%:END:~%#+BEGIN: clocktable :scope (\"/dev/zero\" \"/etc/hostname\")~%#+END:~%")))
       (multiple-value-bind (f editor) (run-keys "M-x o r g - m o d e RET C-u 4 j C-c C-c" :text text :width 120 :height 12)
@@ -181,9 +181,9 @@
   (is string= "* Head :a" (tuatara.defaults::toc-without-tags "* Head :a"))
   (is string= "* Head" (tuatara.defaults::toc-without-tags "* Head ::"))
   ;; a line of a million colons is looked at once
-  (let ((start (get-internal-real-time)))
+  (let ((start (thread-cpu-time)))
     (tuatara.defaults::toc-without-tags (concatenate 'string "* " (make-string 1000000 :initial-element #\:) "x"))
-    (true (< (- (get-internal-real-time) start) internal-time-units-per-second))))
+    (true (< (- (thread-cpu-time) start) internal-time-units-per-second))))
 
 (define-test (org clocktable-archives-and-returns)
   (let* ((folder (tuatara.io:native (merge-pathnames "test/org/dblock/" (asdf:system-source-directory :tuatara))))

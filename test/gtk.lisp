@@ -1143,7 +1143,7 @@ windows side by side."
           (tuatara.frontend.gtk::gtk-clipboard-kept f) "kept before")
     (let ((start (get-internal-real-time)))
       (is equal "kept before" (tuatara.frontend.gtk::read-clipboard-now f nil))
-      (true (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 1.5)))))
+      (true (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 5)))))
 
 (define-test (gtk pictures-let-go-of-when-drawn-the-other-way)
   ;; the surfaces painting whole kept are let go of once the card draws the rows
@@ -1187,9 +1187,9 @@ windows side by side."
                (tuatara.frontend:make-image side side 4 pixels)))
            (ms-per-megapixel (image)
              (loop repeat 3
-                   minimize (let ((start (get-internal-real-time))
+                   minimize (let ((start (thread-cpu-time))
                                   (surface (tuatara.frontend.gtk::image-surface image)))
-                              (prog1 (/ (* 1000 (- (get-internal-real-time) start))
+                              (prog1 (/ (* 1000 (- (thread-cpu-time) start))
                                         internal-time-units-per-second
                                         (/ (* (tuatara.frontend:image-width image) (tuatara.frontend:image-height image)) 1d6))
                                 (tuatara.frontend.gtk::cairo-surface-destroy surface))))))

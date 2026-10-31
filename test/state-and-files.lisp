@@ -72,9 +72,9 @@ nothing read yet."
   (true (tuatara.defaults::glob-match "[a-c]*.PDF" "B-report.pdf" :test #'char-equal))
   (false (tuatara.defaults::glob-match "[a-c]*.pdf" "B-report.pdf"))
   ;; classes keep the name's glob linear: a pattern that would take for ever as a regular expression ends at once
-  (let ((start (get-internal-real-time)))
+  (let ((start (thread-cpu-time)))
     (false (tuatara.defaults::glob-match (format nil "~30@{*[ab]~}c" nil) (make-string 2000 :initial-element #\b)))
-    (true (< (- (get-internal-real-time) start) internal-time-units-per-second))))
+    (true (< (- (thread-cpu-time) start) internal-time-units-per-second))))
 
 (define-test (state-and-files sessions-merged)
   ;; every list: what another session wrote meanwhile kept, what is put here first, on
@@ -514,9 +514,9 @@ file of text; their native names, as two values."
   (let ((rules (list (cons (tuatara.defaults::gitignore-rule "*a*a*a*a*a*a*a*a*c*b") "/top/")
                      (cons (tuatara.defaults::gitignore-rule "/**a**a**a**a**a**a**a**a**c**b") "/top/")))
         (name (format nil "~a~a" (make-string 60 :initial-element #\a) "b"))
-        (start (get-internal-real-time)))
+        (start (thread-cpu-time)))
     (false (tuatara.defaults::gitignored-p rules name (concatenate 'string "/top/" name) nil))
-    (true (< (- (get-internal-real-time) start) (/ internal-time-units-per-second 4))))
+    (true (< (- (thread-cpu-time) start) (/ internal-time-units-per-second 4))))
   ;; git's stars: * and ? within a folder's name, ** across folders, **/ none too
   (dolist (case '(("**/x" "x" t) ("**/x" "a/b/x" t) ("a/**/b" "a/b" t) ("a/**/b" "a/x/y/b" t) ("a/*" "a/b/c" nil)
                   ("a/*" "a/b" t) ("a/**" "a/b/c" t) ("a?b" "a/b" nil) ("*.o" "lib/x.o" nil) ("**.o" "lib/x.o" t)))

@@ -403,7 +403,7 @@ file sets them."
       (let ((tuatara.frontend.tui::*clipboard-programs* (list (list slow) (list slow)))
             (start (get-internal-real-time)))
         (false (tuatara.frontend:frontend-clipboard tui))
-        (true (< (- (get-internal-real-time) start) (* 3 internal-time-units-per-second)))
+        (true (< (- (get-internal-real-time) start) (* 3 internal-time-units-per-second (machine-slowdown))))
         ;; and leaves no thread behind waiting on it
         (loop repeat 40 while (find "clipboard" (sb-thread:list-all-threads) :key #'sb-thread:thread-name :test #'equal)
               do (sleep 0.05))
@@ -476,15 +476,15 @@ file sets them."
                      (lambda (give cancel)
                        (declare (ignore give))
                        (loop until (or (car gate) (car cancel)) do (sleep 0.01)))))
-         (cpu (get-internal-run-time))
+         (cpu (thread-cpu-time))
          (start (get-internal-real-time)))
     (unwind-protect
          (progn
            (false (tuatara.defaults::wait-for-gathering gathering 0.2))
            (true (>= (- (get-internal-real-time) start) (* 0.19 internal-time-units-per-second)))
            ;; the thread itself wakes a hundred times a second: well under what a loop of looks costs
-           (true (< (- (get-internal-run-time) cpu) (* 0.05 internal-time-units-per-second))
-                 "~,3f seconds of processor" (/ (- (get-internal-run-time) cpu) internal-time-units-per-second))
+           (true (< (- (thread-cpu-time) cpu) (* 0.05 internal-time-units-per-second))
+                 "~,3f seconds of processor" (/ (- (thread-cpu-time) cpu) internal-time-units-per-second))
            (setf (car gate) t)
            (true (tuatara.defaults::wait-for-gathering gathering 5)))
       (tuatara.defaults::stop-gathering gathering))))
@@ -777,27 +777,27 @@ file sets them."
     (sb-int:encapsulate 'tuatara.io:watch-directories 'count-calls
                         (lambda (f directories) (declare (ignore f directories)) (incf calls) '()))
     (unwind-protect
-         (let ((start (get-internal-real-time)))
+         (let ((start (thread-cpu-time)))
            (tuatara.defaults::follow-directories nil)
            (is = 1 calls)
-           (let ((again (get-internal-real-time)))
+           (let ((again (thread-cpu-time)))
              (dotimes (i 1000) (tuatara.defaults::follow-directories nil))
              (is = 1 calls)
              ;; a thousand ticks well within a frame, all together
-             (true (< (- (get-internal-real-time) again) (* 0.016 internal-time-units-per-second))))
+             (true (< (- (thread-cpu-time) again) (* 0.016 internal-time-units-per-second))))
            ;; read again: a new list, told once more
            (setf (tuatara.defaults::directory-index-directories index)
                  (cons "/nowhere/new/" (tuatara.defaults::directory-index-directories index)))
            (tuatara.defaults::follow-directories nil)
            (is = 2 calls)
-           (true (< (- (get-internal-real-time) start) (* 2 internal-time-units-per-second))))
+           (true (< (- (thread-cpu-time) start) (* 2 internal-time-units-per-second))))
       (sb-int:unencapsulate 'tuatara.io:watch-directories 'count-calls)))
   ;; alike names once, in order, in time growing with their number alone
   (is equal '("a" "b" "c") (tuatara.io::unique-strings (list "a" "b" "a" "c" "b")))
   (let ((many (loop for i below 100000 collect (format nil "/d~d/" (mod i 60000))))
-        (start (get-internal-real-time)))
+        (start (thread-cpu-time)))
     (is = 60000 (length (tuatara.io::unique-strings many)))
-    (true (< (- (get-internal-real-time) start) (* 0.5 internal-time-units-per-second)))))
+    (true (< (- (thread-cpu-time) start) (* 0.5 internal-time-units-per-second)))))
 
 (define-test (formatted only-text-read)
   (with-test-directory (dir)

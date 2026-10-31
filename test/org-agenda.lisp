@@ -751,7 +751,7 @@ help left out."
           (let ((old (tuatara.buffer:find-buffer "*scratch*"))) (when old (tuatara.buffer:kill-buffer old)))
           (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
                                         :buffer (tuatara.buffer:make-buffer "*scratch*" :text ""))
-          (true (< (reduce #'max times) (floor internal-time-units-per-second 10)) "slowest key ~d ms"
+          (true (< (reduce #'max times) (* (floor internal-time-units-per-second 10) (machine-slowdown))) "slowest key ~d ms"
                 (floor (* 1000 (reduce #'max times)) internal-time-units-per-second))
           (true (tuatara.frontend.fake:fake-frame-showing f "NewTask") "the agenda shows what was typed")))
       (dolist (name '("big.org" "*Org Agenda*" "*scratch*"))
@@ -1029,9 +1029,16 @@ help left out."
                   i (mod i 7) (if (evenp i) "SCHEDULED" "DEADLINE") (1+ (mod i 12)) (1+ (mod i 28)) (and (zerop (mod i 5)) "+1m")
                   (1+ (mod i 12)) (1+ (mod i 28)))))
       (tuatara.defaults::org-agenda-span (tuatara.defaults::org-today) 7 :files (list path))
-      (let ((start (get-internal-real-time)))
-        (tuatara.defaults::org-agenda-span (tuatara.defaults::org-today) 365 :files (list path))
-        (true (< (- (get-internal-real-time) start) internal-time-units-per-second))))))
+      (let ((start (thread-cpu-time)) (reads 0))
+        (sb-int:encapsulate 'tuatara.defaults::org-agenda-file-entries 'count-reads
+                            (lambda (function &rest arguments) (incf reads) (apply function arguments)))
+        (unwind-protect (tuatara.defaults::org-agenda-span (tuatara.defaults::org-today) 365 :files (list path))
+          (sb-int:unencapsulate 'tuatara.defaults::org-agenda-file-entries 'count-reads))
+        ;; the file is not read again for any of the days
+        (is = 0 reads)
+        ;; nearly a second of processor time on a quiet machine; three times that allowed for
+        ;; processors shared with other programs
+        (true (< (- (thread-cpu-time) start) (* 3 internal-time-units-per-second)))))))
 
 (define-test (org checkbox-tasks-in-agenda)
   ;; the agenda's TODO list holds checkbox items, their TODO in a colour of their own; T ticks one, logged; d is refused
@@ -1251,9 +1258,9 @@ help left out."
                       "<2026-10-20 Tue ++1d>" "<2025-01-31 Fri 16:00 ++2d>" "<2024-02-29 Thu ++1w>" "<2026-11-01 Sun ++1w>"
                       "<2020-01-31 Fri ++1m>" "<2001-06-15 Fri ++1y>"))
         (is string= (stepped text) (repeated text) "~a" text))
-      (let ((start (get-internal-real-time))
+      (let ((start (thread-cpu-time))
             (ts (tuatara.defaults::org-ts-repeat (tuatara.defaults::org-read-ts "<1900-01-01 Mon 00:00 ++1h>") now)))
-        (true (< (- (get-internal-real-time) start) (* 1/10 internal-time-units-per-second)))
+        (true (< (- (thread-cpu-time) start) (* 1/10 internal-time-units-per-second)))
         (true (< now (tuatara.defaults::org-ts-time ts) (+ now 3601)) "~a" (tuatara.defaults::org-ts-text ts))))))
 
 (define-test (org warning-of-any-length)

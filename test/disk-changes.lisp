@@ -48,7 +48,7 @@ whose state changed, and those whose file changed again."
           (let ((start (get-internal-real-time)))
             (replace-by-rename path (format nil "a,b~%3,4~%"))
             (is equal (list b) (wait-for-looks))
-            (true (< (- (get-internal-real-time) start) (* 1/2 internal-time-units-per-second))))
+            (true (< (- (get-internal-real-time) start) (* 1/2 internal-time-units-per-second (machine-slowdown)))))
           (is eq :changed (tuatara.io:file-disk-state b))
           ;; changed again: reported as such, the state staying
           (rewrite-in-place path (format nil "a,b~%5,6~%"))

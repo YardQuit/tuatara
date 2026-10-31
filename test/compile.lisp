@@ -519,7 +519,7 @@ force; *compile* killed afterwards."
       (true child)
       (true gone-at)
       ;; well before the stop's own grace of 2 seconds is over
-      (true (and gone-at began (< (- gone-at began) (* 1 internal-time-units-per-second)))))))
+      (true (and gone-at began (< (- gone-at began) (* internal-time-units-per-second (machine-slowdown))))))))
 
 (define-test (compiling stopped-whatever-its-name)
   ;; a program of the compile whose name is not UTF-8 is found and stopped with the rest
