@@ -273,7 +273,8 @@ static int grammar_directory_count;
 
 /* The grammar NAME (letters, digits, _ and -), loaded from NAME.so in the
    first grammar directory that has it, the first time; NULL when there is
-   none. */
+   none, or when that file cannot be loaded: a later directory's file of the
+   same name is never taken in its place. */
 static const TSLanguage *find_language(const char *name, uint32_t length) {
   if (length < 1 || length > 64) return NULL;
   for (uint32_t i = 0; i < length; i++) {
@@ -286,9 +287,12 @@ static const TSLanguage *find_language(const char *name, uint32_t length) {
   snprintf(symbol, sizeof symbol, "tree_sitter_%.*s", (int)length, name);
   for (char *c = symbol; *c; c++) if (*c == '-') *c = '_';
   void *library = NULL;
-  for (int i = 0; i < grammar_directory_count && !library; i++) {
+  for (int i = 0; i < grammar_directory_count; i++) {
     snprintf(path, sizeof path, "%s/%.*s.so", grammar_directories[i], (int)length, name);
-    if (access(path, R_OK) == 0) library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (access(path, F_OK) == 0) {
+      library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+      break;
+    }
   }
   if (!library) return NULL;
   const TSLanguage *(*entry)(void) = (const TSLanguage *(*)(void))dlsym(library, symbol);

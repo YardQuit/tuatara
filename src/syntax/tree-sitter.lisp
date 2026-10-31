@@ -167,36 +167,53 @@ and nothing elsewhere."
   (and (stringp name) (<= 1 (length name) 64)
        (every (lambda (c) (or (char<= #\a c #\z) (char<= #\0 c #\9) (char= c #\_) (char= c #\-))) name)))
 
-(defun user-grammar-file (name)
-  "The file of the grammar NAME when it is one you added, in the folder of
-grammars you add (USER-GRAMMAR-DIRECTORY), Tuatara having none of that
-name; else NIL."
-  (let ((path (find-grammar-file (format nil "~a.so" name))))
-    (and path (user-grammar-path-p path) path)))
+(defun own-grammar-p (name)
+  "True when Tuatara has a grammar called NAME of its own."
+  (and (loop for directory in (own-grammar-directories)
+             thereis (probe-file (merge-pathnames (format nil "~a.so" name) directory)))
+       t))
 
-(defun user-grammar-path-p (path)
-  "True when PATH, a real path, is in the folder of grammars you add."
-  (let ((folder (user-grammar-directory)))
-    (and (uiop:subpathp path (or (probe-file folder) folder)) t)))
+(defun regular-file-p (path)
+  "True when PATH is a plain file itself, not a link nor anything else."
+  (let ((stat (ignore-errors (sb-posix:lstat (uiop:native-namestring path)))))
+    (and stat (= (logand (sb-posix:stat-mode stat) sb-posix:s-ifmt) sb-posix:s-ifreg))))
+
+(defun user-grammar-file (name)
+  "The file NAME.so in the folder of grammars you add (USER-GRAMMAR-DIRECTORY)
+when it is a grammar you added: a plain file there, not a link, and Tuatara
+has no grammar of that name; else NIL."
+  (let ((path (merge-pathnames (format nil "~a.so" name) (user-grammar-directory))))
+    (and (grammar-name-p name) (regular-file-p path) (not (own-grammar-p name)) path)))
+
+(defun user-grammar-p (name)
+  "True when NAME names a grammar you added: in the folder you add them to, or
+kept from it (USER-GRAMMAR-STORE), Tuatara having none of that name. Such a
+grammar is loaded only as *USER-GRAMMAR-FUNCTION* allows."
+  (and (grammar-name-p name)
+       (not (own-grammar-p name))
+       (or (ignore-errors (sb-posix:lstat (uiop:native-namestring (merge-pathnames (format nil "~a.so" name) (user-grammar-directory)))))
+           (ignore-errors (sb-posix:lstat (uiop:native-namestring (merge-pathnames (format nil "~a.so" name) (user-grammar-store))))))
+       t))
 
 (defvar *user-grammar-function* nil
   "A function of the name of a grammar you added, true when it may be loaded
-now (it is on, and its file is the one turned on); NIL, and none may.")
+now: it is on, and the copy kept of it (USER-GRAMMAR-STORE) is what was
+turned on; NIL, and none may.")
 
 (defun find-grammar (name)
   "The grammar called NAME (a string such as \"rust\"), loaded the first time it
 is asked for; NIL when there is none, or NAME cannot name one (GRAMMAR-NAME-P).
 A grammar that could not be asked for, the program parsing having ended, is
-asked for again next time. A grammar you added (USER-GRAMMAR-FILE) is loaded
-only when *USER-GRAMMAR-FUNCTION* allows it, and asked about again next time
-when not."
+asked for again next time. A grammar you added (USER-GRAMMAR-P) is loaded
+only when *USER-GRAMMAR-FUNCTION* allows it, its kept copy then, and asked
+about again next time when not."
   (when (grammar-name-p name)
     (let ((known (gethash name *grammars*)))
       (if known
           (and (grammar-p known) known)
-          (let* ((file (find-grammar-file (format nil "~a.so" name)))
-                 (refused (and file (user-grammar-path-p file)
+          (let* ((refused (and (user-grammar-p name)
                                (not (and *user-grammar-function* (funcall *user-grammar-function* name)))))
+                 (file (and (not refused) (find-grammar-file (format nil "~a.so" name))))
                  (grammar (cond (refused :unknown)
                                 (file (load-grammar name)))))
             (unless (eq grammar :unknown)

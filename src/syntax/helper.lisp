@@ -32,18 +32,33 @@ build/grammars/.")
   "The folder of the grammars you add yourself: tuatara/grammars/ in your data
 folder ($XDG_DATA_HOME, ~/.local/share/ unless set), each NAME.so with its
 rules in rules/, indents/, textobjects/, injections/, locals/ and tags/ beside
-it, as Tuatara's own syntax/ has them."
+it, as Tuatara's own syntax/ has them. Grammars are never loaded from it:
+turned on, one is copied into USER-GRAMMAR-STORE."
   (uiop:xdg-data-home "tuatara/grammars/"))
 
+(defun user-grammar-store ()
+  "The folder the grammars you added and turned on are kept in, as they were
+turned on: grammar-store/ in Tuatara's state folder, made if needed, for you
+alone. The program running grammars loads them from here."
+  (let ((folder (merge-pathnames "grammar-store/" (tuatara.io:state-directory))))
+    (unless (probe-file folder)
+      (ignore-errors (sb-posix:mkdir (string-right-trim "/" (uiop:native-namestring folder)) #o700)))
+    folder))
+
+(defun own-grammar-directories ()
+  "The directories of Tuatara's own grammars and the program that runs them:
+*GRAMMAR-DIRECTORIES* when set, else grammars/ beside the program, then the
+source tree's build/grammars/."
+  (or *grammar-directories* (tuatara.runtime:resource-directories "grammars/" "build/grammars/")))
+
 (defun grammar-directories ()
-  "The directories searched for the program that parses and the grammars:
-Tuatara's own (*GRAMMAR-DIRECTORIES* when set, else grammars/ beside the
-program, then the source tree's build/grammars/), then the folder of the
-grammars you add (USER-GRAMMAR-DIRECTORY), whose grammar of a name Tuatara has
-is never taken."
-  (let ((own (or *grammar-directories* (tuatara.runtime:resource-directories "grammars/" "build/grammars/")))
-        (user (user-grammar-directory)))
-    (if (member user own :test #'equal) own (append own (list user)))))
+  "The directories searched, in order, for the program that parses and the
+grammars: Tuatara's own (OWN-GRAMMAR-DIRECTORIES), then the copies of the
+grammars you added and turned on (USER-GRAMMAR-STORE), never taken in place
+of one of Tuatara's."
+  (let ((own (own-grammar-directories))
+        (store (user-grammar-store)))
+    (if (member store own :test #'equal) own (append own (list store)))))
 
 (defun foreign-string (pointer &optional length)
   "The UTF-8 text of LENGTH octets at the foreign POINTER, as a string; without

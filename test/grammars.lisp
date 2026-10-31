@@ -160,40 +160,124 @@ you add, with JSON's colouring rules beside it; true when it could."
                                                 "-o" (uiop:native-namestring (merge-pathnames "testjson.so" folder)))
                                           :ignore-error-status t :error-output nil)))))
 
+(defmacro with-test-grammar-added ((folder) &body body)
+  "Run BODY with FOLDER the folder of grammars you add, holding testjson.so
+(ADD-TEST-GRAMMAR), the language USER-GRAMMAR-TEST defined for it, and nothing
+kept of it nor of any answer about it; all taken away afterwards."
+  `(let ((,folder (tuatara.syntax:user-grammar-directory)))
+     (flet ((forget-it ()
+              (tuatara.defaults::state-list-drop tuatara.defaults::*user-grammar-sums* (list "testjson"))
+              (setf tuatara.defaults::*user-grammar-records* nil)
+              (clrhash tuatara.defaults::*user-grammar-verdicts*)
+              (uiop:delete-directory-tree (tuatara.syntax:user-grammar-store) :validate t :if-does-not-exist :ignore)
+              (tuatara.syntax:forget-grammars)))
+       (unwind-protect
+            (progn
+              (true (add-test-grammar ,folder) "compiled")
+              (forget-it)
+              (tuatara.syntax:stop-helpers)
+              (tuatara.defaults::define-language user-grammar-test
+                "JSON read by a grammar the tests add as yours."
+                :grammar "testjson" :modes (user-grammar-test-mode))
+              (with-grammar-answers-forgotten ("user-grammar-test")
+                (let ((tuatara.defaults::*grammars-on-table* nil))
+                  ,@body)))
+         (setf tuatara.defaults::*languages* (remove 'user-grammar-test tuatara.defaults::*languages*
+                                                     :key #'tuatara.defaults::language-name))
+         (uiop:delete-directory-tree ,folder :validate t :if-does-not-exist :ignore)
+         (forget-it)
+         (tuatara.syntax:stop-helpers)))))
+
+(defun test-language-on-p ()
+  "True when the grammar of the language the tests add as yours is on."
+  (tuatara.defaults::grammar-on-p (tuatara.defaults::find-language 'user-grammar-test)))
+
+(defun new-session-for-grammars ()
+  "Forget what was found of the grammars you added and the grammars loaded, as
+a new session would."
+  (clrhash tuatara.defaults::*user-grammar-verdicts*)
+  (setf tuatara.defaults::*grammars-on-table* nil)
+  (tuatara.syntax:forget-grammars))
+
 (define-test (grammars-on grammar-you-add)
-  ;; a grammar you add to your folder of grammars: off until you turn it on,
-  ;; never one of the common ones; turned on, it colours and parses; its file
-  ;; changed, it is refused until you turn it on again
-  (let ((folder (tuatara.syntax:user-grammar-directory)))
-    (unwind-protect
-         (progn
-           (true (add-test-grammar folder) "compiled")
-           (tuatara.syntax:stop-helpers)
-           (tuatara.syntax:forget-grammars)
-           (tuatara.defaults::define-language user-grammar-test
-             "JSON read by a grammar the tests add as yours."
-             :grammar "testjson" :modes (user-grammar-test-mode))
-           (with-grammar-answers-forgotten ("user-grammar-test")
-             (tuatara.defaults::state-list-drop tuatara.defaults::*user-grammar-sums* (list "testjson"))
-             (clrhash tuatara.defaults::*user-grammar-seen*)
-             (let ((tuatara.defaults::*common-grammar-languages* '(user-grammar-test json))
-                   (tuatara.defaults::*grammars-on-table* nil))
-               (false (tuatara.defaults::grammar-on-p (tuatara.defaults::find-language 'user-grammar-test))
-                      "not one of the common ones")
-               (false (tuatara.syntax:find-grammar "testjson") "not loaded while off")
-               (with-file-session ((f editor) "y" (format nil "{\"a\": 1}~%") "testjson")
-                 (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the TestJSON grammar"))
-                 (true (row-faces f 0) "coloured once on"))
-               (true (tuatara.defaults::grammar-on-p (tuatara.defaults::find-language 'user-grammar-test)))
-               ;; its file changed: refused, said, until turned on again
-               (with-open-file (o (merge-pathnames "testjson.so" folder) :direction :output :if-exists :append
-                                                                          :element-type '(unsigned-byte 8))
-                 (write-byte 0 o))
-               (false (tuatara.defaults::grammar-on-p (tuatara.defaults::find-language 'user-grammar-test)) "refused once changed")
-               (tuatara.defaults::note-grammar-answer (tuatara.defaults::find-language 'user-grammar-test) t)
-               (true (tuatara.defaults::grammar-on-p (tuatara.defaults::find-language 'user-grammar-test)) "on again"))))
-      (setf tuatara.defaults::*languages* (remove 'user-grammar-test tuatara.defaults::*languages*
-                                                  :key #'tuatara.defaults::language-name))
-      (uiop:delete-directory-tree folder :validate t :if-does-not-exist :ignore)
-      (tuatara.syntax:stop-helpers)
-      (tuatara.syntax:forget-grammars))))
+  ;; a grammar you add: off until you turn it on, never one of the common
+  ;; ones; turned on, a copy of it is kept and loaded, and it colours; its file
+  ;; changed, it is refused in the next session until turned on again
+  (with-test-grammar-added (folder)
+    (let ((tuatara.defaults::*common-grammar-languages* '(user-grammar-test json)))
+      (false (test-language-on-p) "not one of the common ones")
+      (false (tuatara.syntax:find-grammar "testjson") "not loaded while off")
+      (with-file-session ((f editor) "y" (format nil "{\"a\": 1}~%") "testjson")
+        (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the TestJSON grammar"))
+        (true (row-faces f 0) "coloured once on"))
+      (true (probe-file (merge-pathnames "testjson.so" (tuatara.syntax:user-grammar-store))) "a copy kept")
+      (true (test-language-on-p))
+      ;; changed, the same size, its times put back: still found changed
+      (let ((path (uiop:native-namestring (merge-pathnames "testjson.so" folder))))
+        (let ((octets (alexandria:read-file-into-byte-vector path))
+              (stat (sb-posix:stat path)))
+          (setf (aref octets (1- (length octets))) (logxor 1 (aref octets (1- (length octets)))))
+          (alexandria:write-byte-vector-into-file octets path :if-exists :overwrite)
+          (sb-posix:utimes path (sb-posix:stat-atime stat) (sb-posix:stat-mtime stat))))
+      (new-session-for-grammars)
+      (false (tuatara.syntax:find-grammar "testjson") "refused once changed")
+      (false (test-language-on-p) "off once found changed")
+      (tuatara.defaults::note-grammar-answer (tuatara.defaults::find-language 'user-grammar-test) t)
+      (new-session-for-grammars)
+      (true (tuatara.syntax:find-grammar "testjson") "on again once turned on")
+      (true (test-language-on-p)))))
+
+(define-test (grammars-on old-yes-is-no-trust)
+  ;; a yes given while a name was one of Tuatara's own grammars trusts nothing
+  ;; added later under that name: it is asked about again
+  (with-test-grammar-added (folder)
+    (tuatara.defaults::state-list-put tuatara.defaults::*grammar-answers* (list (cons "user-grammar-test" t)))
+    (setf tuatara.defaults::*grammar-answers-read* nil)
+    (new-session-for-grammars)
+    (false (test-language-on-p) "not on")
+    (false (tuatara.syntax:find-grammar "testjson") "not loaded")
+    (with-file-session ((f editor) "n" (format nil "{\"a\": 1}~%") "testjson")
+      (true (tuatara.frontend.fake:fake-frame-showing-across-rows f "Turn on the TestJSON grammar") "asked again"))))
+
+(define-test (grammars-on named-grammar-kept-when-loaded)
+  ;; a grammar you added that *grammars-on* names is kept as it is the first
+  ;; time it is loaded, and loaded from that copy
+  (with-test-grammar-added (folder)
+    (let ((tuatara-user:*grammars-on* '(:common user-grammar-test)))
+      (true (test-language-on-p))
+      (true (tuatara.syntax:find-grammar "testjson"))
+      (true (gethash "testjson" (tuatara.defaults::user-grammar-records)) "kept"))))
+
+(define-test (grammars-on linked-grammar-never-loaded)
+  ;; a link in the folder of grammars you add, to a file elsewhere, is no
+  ;; grammar of yours to load, nor one of Tuatara's: never loaded, never kept
+  (with-test-grammar-added (folder)
+    (let ((elsewhere (merge-pathnames "elsewhere.so" (tuatara.io:cache-directory))))
+      (unwind-protect
+           (progn
+             (rename-file (merge-pathnames "testjson.so" folder) elsewhere)
+             (sb-posix:symlink (uiop:native-namestring elsewhere) (uiop:native-namestring (merge-pathnames "testjson.so" folder)))
+             (new-session-for-grammars)
+             (true (tuatara.syntax:user-grammar-p "testjson") "taken as yours")
+             (false (tuatara.syntax:user-grammar-file "testjson") "no plain file")
+             (tuatara.defaults::note-grammar-answer (tuatara.defaults::find-language 'user-grammar-test) t)
+             (false (tuatara.syntax:find-grammar "testjson") "not loaded")
+             (false (gethash "testjson" (tuatara.defaults::user-grammar-records)) "nothing kept"))
+        (ignore-errors (delete-file elsewhere))))))
+
+(define-test (grammars-on own-grammar-never-passed-over)
+  ;; when one of Tuatara's grammars cannot be loaded, the program running
+  ;; grammars takes no file of the same name from a folder after it
+  (with-test-directory (directory)
+    (let* ((own (merge-pathnames "own/" directory))
+           (later (merge-pathnames "later/" directory)))
+      (ensure-directories-exist own)
+      (true (add-test-grammar later) "compiled")
+      (write-test-file own "testjson.so" "not a library")
+      (let ((tuatara.syntax:*grammar-directories*
+              (list (namestring own) (namestring later)
+                    (namestring (asdf:system-relative-pathname :tuatara "build/grammars/")))))
+        (tuatara.syntax:forget-grammars)
+        (unwind-protect (false (loop repeat 3 thereis (tuatara.syntax:find-grammar "testjson") do (sleep 0.2)))
+          (tuatara.syntax:stop-helpers)
+          (tuatara.syntax:forget-grammars))))))
