@@ -54,6 +54,7 @@ file:// address, everything remembered of it forgotten afterwards."
      (trust-repository ,dir)
      (let ((,where (format nil "file://~a" (string-right-trim "/" (namestring ,dir))))
            (tuatara.defaults::*package-sources* '())
+           (*until-bound* *package-until-bound*)
            (tuatara.defaults::*package-signers* '())
            (tuatara.defaults::*package-plain-allowed* '())
            (tuatara.defaults::*loaded-package-folders* '()))
@@ -67,8 +68,24 @@ file:// address, everything remembered of it forgotten afterwards."
   (and (boundp 'tuatara-user::*package-trust-version*) (symbol-value 'tuatara-user::*package-trust-version*)))
 
 (defun echo-says (text)
-  "True when the echo row says TEXT now."
-  (search text (or (tuatara.command:editor-message tuatara.command:*editor*) "")))
+  "True when the echo row says TEXT now, or a message said it since the step
+before the one waited on began (*SESSION-MESSAGES-START*): a message soon
+followed by another is not missed."
+  (or (search text (or (tuatara.command:editor-message tuatara.command:*editor*) ""))
+      (said-in-session text)))
+
+(defun said-in-session (text)
+  "True when a message said TEXT since the step before the one
+AUTO-SAVE-SESSION waits on began (*SESSION-MESSAGES-START*); after the
+session, since its last step but one began."
+  (let ((log (tuatara.command::messages-buffer)))
+    (search text (tuatara.buffer:buffer-string log :start (min *session-messages-start* (tuatara.buffer:buffer-size log))))))
+
+(defun packages-settled-p ()
+  "True when no package is being fetched, checked or loaded, nor waits to be
+decided on."
+  (and (null tuatara.defaults::*packages-in-hand*)
+       (notany #'tuatara.defaults::package-fetch-p tuatara.runtime:*jobs*)))
 
 (defun kept-versions (where)
   "The commits of pkgv from WHERE kept on disk."
@@ -145,17 +162,18 @@ file:// address, everything remembered of it forgotten afterwards."
       (let ((one (trust-version dir "one")) (screens '()))
         (dolist (body (list (format nil "(defparameter *package-trust-version* \"broken\")~%(defun broken (~%")
                             (format nil "(defparameter *package-trust-version* \"lacking\")~%(tuatara::no-such-function-anywhere-at-all)~%")))
-          (let ((f (auto-save-session
-                    (list (list :until (lambda () (unless (trust-version-loaded)
-                                                    (tuatara-user:load-package "pkgv" :source where :version "latest"))
-                                         t))
-                          (list :until (lambda () (trust-version-loaded)))
-                          (list :until (lambda () (trust-version dir "next" :body body) t))
-                          (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
-                          (list :until (lambda () (echo-says "is loaded in its place")))
-                          (list :until (lambda () (or (echo-says "up to date") (echo-says "pkgv is loaded")))))
-                    :width 240)))
-            (push (tuatara.frontend.fake:fake-frame-showing f "the version before it") screens))
+          (auto-save-session
+           (list (list :until (lambda () (unless (trust-version-loaded)
+                                           (tuatara-user:load-package "pkgv" :source where :version "latest"))
+                                t))
+                 (list :until (lambda () (trust-version-loaded)))
+                 (list :until (lambda () (trust-version dir "next" :body body) t))
+                 (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
+                 (list :until (lambda () (and (echo-says "is loaded in its place")
+                                              (push (echo-says "the version before it") screens))))
+                 ;; the version before checked and loaded again
+                 (list :until (lambda () (and (packages-settled-p) (or (echo-says "up to date") (echo-says "pkgv is loaded"))))))
+           :width 240)
           (is equal "one" (trust-version-loaded))
           (is equal one (second (tuatara.defaults::package-state "pkgv" where "latest")))
           ;; what failed is not kept
@@ -186,7 +204,7 @@ file:// address, everything remembered of it forgotten afterwards."
          (list (list :until (lambda () (trust-version dir "v4" :body (format nil "(defun broken (~%")) t))
                (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
                (list :until (lambda () (echo-says "is loaded in its place")))
-               (list :until (lambda () (or (echo-says "up to date") (echo-says "pkgv is loaded"))))))
+               (list :until (lambda () (and (packages-settled-p) (or (echo-says "up to date") (echo-says "pkgv is loaded")))))))
         (is equal "v3" (trust-version-loaded))
         (is equal (sort (list (first commits) (second commits)) #'string<) (kept))))))
 
@@ -592,8 +610,8 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
                        (trust-version dir "one" :gpg primary))
                      (auto-save-session
                       (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                            ;; fetched, checked and refused: no time of its own, however long that takes
-                            (list :until (lambda () (echo-says "is refused")) 120)))
+                            ;; fetched, checked and refused
+                            (list :until (lambda () (echo-says "is refused")))))
                      (is equal (format nil "key:~a" subkey)
                          (second (tuatara.defaults::state-list-find tuatara.defaults::*package-trust* where)))
                      (uiop:run-program (format nil "gpg --homedir ~a --export ~a | gpg --batch --import" home primary)
@@ -602,8 +620,8 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
                        (trust-version dir "two" :gpg primary))
                      (auto-save-session
                       (list (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
-                            ;; fetched, checked, compiled apart and loaded, however long that takes
-                            (list :until (lambda () (trust-version-loaded)) 120)))
+                            ;; fetched, checked, compiled apart and loaded
+                            (list :until (lambda () (trust-version-loaded)))))
                      (is equal "two" (trust-version-loaded))
                      (is equal primary (second (tuatara.defaults::state-list-find tuatara.defaults::*package-trust* where))))))
             (stop-gnupg home))))))

@@ -9,24 +9,43 @@ never into the file; a save deletes the copy, quitting without one keeps it, the
 so and M-x recover-file takes it back as one edit; nothing opened safely is copied; a name too
 long is kept beside its copy.")
 
+(defvar *session-messages-start* 0
+  "Where in *Messages* what was said since the step before the one
+AUTO-SAVE-SESSION waits on now began starts: a message said as a step's work
+went on is there for the step after, however soon another followed it.")
+
+(defvar *until-bound* 10
+  "The most seconds a step (:until FUNCTION) of AUTO-SAVE-SESSION waits when
+it names none: a bound on a wait that never ends, never what a test waits for.")
+
 (defun auto-save-session (steps &key (width 100) (height 20) pending)
   "Run an editor session on STEPS, each a string of keys, (:wait SECONDS), or
-\(:until FUNCTION [SECONDS]) waiting (SECONDS at most, ten when not given)
-until FUNCTION of no arguments is true. With PENDING, what is queued counts
-as typed meanwhile, as keys pressed while the editor waits are. Returns the
-frontend and the editor."
-  (let ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height)))
+\(:until FUNCTION [SECONDS]) waiting until FUNCTION of no arguments is true:
+for that, never for a time, SECONDS (*UNTIL-BOUND* when not given) only a
+bound on a wait that never ends. As a step begins, *SESSION-MESSAGES-START* is where
+the step before it began. With PENDING, what is queued counts as typed
+meanwhile, as keys pressed while the editor waits are. Returns the frontend
+and the editor."
+  (let* ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height))
+         (log (lambda () (tuatara.buffer:buffer-size (tuatara.command::messages-buffer))))
+         (begun nil)
+         (step-start (funcall log)))
     (when pending
       (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (tuatara.frontend.fake::fake-events f))))
+    (setf *session-messages-start* step-start)
     (labels ((take (steps start)
                (let ((step (first steps)))
+                 (unless (eq steps begun)
+                   (setf begun steps
+                         *session-messages-start* step-start
+                         step-start (funcall log)))
                  (cond ((null steps))
                        ((and (consp step) (eq (first step) :wait))
                         (if (> (- (get-internal-real-time) start) (* (second step) internal-time-units-per-second))
                             (take (rest steps) (get-internal-real-time))
                             (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        ((and (consp step) (eq (first step) :until))
-                        (if (or (funcall (second step)) (> (- (get-internal-real-time) start) (* (or (third step) 10) internal-time-units-per-second)))
+                        (if (or (funcall (second step)) (> (- (get-internal-real-time) start) (* (or (third step) *until-bound*) internal-time-units-per-second)))
                             (take (rest steps) (get-internal-real-time))
                             (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        (t (queue-test-keys f (list step))

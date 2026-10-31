@@ -942,9 +942,12 @@ the loading was asked to stop (*PACKAGE-LOAD-STOP*)."
     (tuatara.io:ensure-private-directory (directory-namestring fasl))
     (let ((needed (multiple-value-bind (kept read) (read-kept-list (beside-fasl fasl "needs"))
                     ;; file times are whole seconds: a fasl of the same second as its file may
-                    ;; be older than the file's last change, and is made again
+                    ;; be older than the file's last change, and is made again, unless it was
+                    ;; just made apart for this very load (made again at the next one)
                     (if (and read (ignore-errors (every #'needed-name-p kept))
-                             (probe-file fasl) (> (file-write-date fasl) (file-write-date file)))
+                             (probe-file fasl)
+                             (funcall (if (eq *package-compiling* :refused) #'>= #'>)
+                                      (file-write-date fasl) (file-write-date file)))
                         kept
                         (compile-package-file file fasl)))))
       (when check
@@ -2011,27 +2014,72 @@ your full rights, as in the editor.")
 (defun package-child-environment (request token)
   "The environment of a process compiling a package apart, as REQUEST, a
 file, and TOKEN say (COMPILE-PACKAGE-CHILD): those of
-*PACKAGE-CHILD-ENVIRONMENT* the editor has, and what tells the process what
-to do."
+*PACKAGE-CHILD-ENVIRONMENT* the editor has, and, with REQUEST, what tells the
+process what to do."
   (append (loop for name in *package-child-environment*
                 for value = (uiop:getenv name)
                 when value collect (format nil "~a=~a" name value))
-          (list "TUATARA_HEAP_DECIDED=1"
-                (format nil "TUATARA_COMPILE_PACKAGE=~a" request)
-                (format nil "TUATARA_COMPILE_TOKEN=~a" token)
-                (format nil "TUATARA_COMPILE_CACHE=~a" (package-cache)))))
+          (list "TUATARA_HEAP_DECIDED=1")
+          (and request
+               (list (format nil "TUATARA_COMPILE_PACKAGE=~a" request)
+                     (format nil "TUATARA_COMPILE_TOKEN=~a" token)
+                     (format nil "TUATARA_COMPILE_CACHE=~a" (package-cache))))))
+
+(defvar *compiler-core-lock* (sb-thread:make-mutex :name "tuatara compiler core")
+  "Held while the core packages are compiled apart from, run from Tuatara's
+sources, is made (COMPILER-CORE), so that it is made once.")
+
+(defun compiler-core-toplevel ()
+  "What the core COMPILER-CORE makes runs: compile a package as the editor
+asks (COMPILE-PACKAGE-CHILD), then exit with its code."
+  (sb-ext:disable-debugger)
+  (uiop:call-image-restore-hook)
+  (let ((code (compile-package-child)))
+    (finish-output)
+    (sb-ext:exit :code code :abort t)))
+
+(defun compiler-core ()
+  "Run from Tuatara's sources, the SBCL core a process compiling a package
+apart starts from, so that it starts at once: SBCL with Quicklisp and these
+sources loaded, saved once into the folder of compiled packages, which is
+this Tuatara's alone (PACKAGE-CACHE: another source tree, or the same one
+changed, has another), and made again only when it is not there. Made in a
+process of its own (save-lisp-and-die cannot run where threads do), under a
+name of its own and renamed into place whole. Its path, or NIL when it
+could not be made, why in *Messages*."
+  (let ((core (format nil "~acompiler-~36r.core" (package-cache)
+                      (sxhash (uiop:native-namestring (asdf:system-source-directory :tuatara))))))
+    (sb-thread:with-mutex (*compiler-core-lock*)
+      (or (and (probe-file core) core)
+          (let ((temporary (format nil "~a.~d.~a.new" core (sb-posix:getpid) (tuatara.io:random-name))))
+            (multiple-value-bind (said ok)
+                (tuatara.io:program-output
+                 (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--non-interactive" "--no-sysinit" "--no-userinit"
+                       "--load" (uiop:native-namestring (asdf:system-relative-pathname :tuatara "tools/quicklisp.lisp"))
+                       "--eval" (format nil "(progn (push ~s asdf:*central-registry*) (funcall (find-symbol \"QUICKLOAD\" \"QL\") :tuatara/defaults :silent t))"
+                                        (uiop:native-namestring (asdf:system-source-directory :tuatara)))
+                       "--eval" (format nil "(sb-ext:save-lisp-and-die ~s :toplevel (find-symbol \"COMPILER-CORE-TOPLEVEL\" \"TUATARA.DEFAULTS\"))"
+                                        temporary))
+                 :seconds 600 :environment (package-child-environment nil nil))
+              (cond ((and ok (probe-file temporary))
+                     (sb-posix:chmod temporary #o600)
+                     (sb-posix:rename temporary core)
+                     core)
+                    (t (ignore-errors (delete-file temporary))
+                       (let ((words (format nil "No core to compile packages apart from could be made: ~a"
+                                            (tuatara.text:one-line (or said "it failed")))))
+                         (defer-action (lambda () (log-message words))))
+                       nil))))))))
 
 (defun package-compiler-command ()
   "The command that runs this Tuatara again to compile a package apart, told
 what to do by its environment (PACKAGE-CHILD-ENVIRONMENT): the saved
-executable, or, run from its sources, SBCL loading them first."
+executable, or, run from its sources, SBCL started from the core made for
+that (COMPILER-CORE); NIL when there is none."
   (if tuatara.io:*saved-program*
       (list tuatara.io:*saved-program*)
-      (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--non-interactive" "--no-sysinit" "--no-userinit"
-            "--load" (uiop:native-namestring (asdf:system-relative-pathname :tuatara "tools/quicklisp.lisp"))
-            "--eval" (format nil "(progn (push ~s asdf:*central-registry*) (funcall (find-symbol \"QUICKLOAD\" \"QL\") :tuatara/defaults :silent t))"
-                             (uiop:native-namestring (asdf:system-source-directory :tuatara)))
-            "--eval" "(sb-ext:exit :code (tuatara.defaults::compile-package-child) :abort t)")))
+      (let ((core (compiler-core)))
+        (and core (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--core" core)))))
 
 (defparameter *package-child-line-limit* 1024
   "The most characters kept of a line a process compiling a package apart
@@ -2049,18 +2097,22 @@ load here would, so that its compile-time code never runs in the editor.
 JOB is the loading's: stopping it ends that process; its COMPILED turns true
 as a file of it begins compiling, said. True when it was all compiled so;
 NIL when it failed there, as code of the package's that needs what only the
-editor has does, the last of what the process said kept in *Messages*. It
+editor has does, the last of what the process said kept in *Messages*, or
+when there is nothing to run it from (COMPILER-CORE). It
 is refused for names this Tuatara lacks only as it loads in the editor
 \(REFUSE-PACKAGE). What the process says is read a line of at most
 *PACKAGE-CHILD-LINE-LIMIT* at a time, *PACKAGE-CHILD-SAID-LIMIT* in all."
   (let ((request (format nil "~acompile-~a.request" (package-cache) (tuatara.io:random-name)))
         (token (tuatara.io:random-name))
+        (command (package-compiler-command))
         (said '()) (kept 0) (read 0))
+    (unless command
+      (return-from compile-package-apart nil))
     (tuatara.io:ensure-private-directory (package-cache))
     (tuatara.io:write-private-file request (package-request-text folder name file token))
     (unwind-protect
          (let ((code (tuatara.io:call-with-program
-                      (package-compiler-command)
+                      command
                       (lambda (process)
                         (loop for line = (tuatara.io:read-line-bounded (sb-ext:process-output process) *package-child-line-limit*)
                               while line

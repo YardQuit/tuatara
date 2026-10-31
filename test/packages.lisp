@@ -59,13 +59,20 @@ them and compiled, the session's lists of them and their versions' setting."
   (makunbound 'tuatara-user::*package-test-two*)
   (makunbound 'tuatara-user::*package-test-config*))
 
+(defparameter *package-until-bound* 120
+  "The bound on a wait of the package tests: loading a package fetches,
+checks and compiles it apart in the background, and the first one compiled
+makes the core it is compiled from; each test waits for that to happen, this
+only ends a wait that never would.")
+
 (defmacro with-package-repository ((dir where) &body body)
   "Run BODY with DIR a new repository of packages (PACKAGE-REPOSITORY) and
 WHERE its file:// address, all of it forgotten afterwards."
   `(with-test-directory (,dir)
      (package-repository ,dir)
      (let ((,where (format nil "file://~a" (string-right-trim "/" (namestring ,dir))))
-           (tuatara.defaults::*package-sources* '()))
+           (tuatara.defaults::*package-sources* '())
+           (*until-bound* *package-until-bound*))
        (unwind-protect (progn ,@body)
          (forget-test-packages ,dir)))))
 
@@ -251,7 +258,8 @@ WHERE its file:// address, all of it forgotten afterwards."
 TEXT, as the source \"mine\"; all of it forgotten afterwards."
   `(with-test-directory (,dir)
      (alexandria:write-string-into-file ,text (merge-pathnames (format nil "~a.lisp" ,name) ,dir))
-     (let ((tuatara.defaults::*package-sources* '()))
+     (let ((tuatara.defaults::*package-sources* '())
+           (*until-bound* *package-until-bound*))
        (unwind-protect (progn (tuatara-user:package-source "mine" (namestring ,dir)) ,@body)
          (forget-test-packages ,dir)))))
 
@@ -345,7 +353,8 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
      (format nil "(eval-when (:compile-toplevel)~%  (sleep 1.5)~%  (with-open-file (o ~s :direction :output :if-exists :supersede) (print (sb-posix:getpid) o)))~%(defvar *package-test-half-b* t)~%"
              (namestring (merge-pathnames "compiled-by" dir)))
      (merge-pathnames "b.lisp" dir))
-    (let ((tuatara.defaults::*package-sources* '()) (tuatara-user:*package-ask-before-loading* nil) (seen-half 0) (polled 0))
+    (let ((tuatara.defaults::*package-sources* '()) (tuatara-user:*package-ask-before-loading* nil) (seen-half 0) (polled 0)
+          (*until-bound* *package-until-bound*))
       (unwind-protect
            (progn (tuatara-user:package-source "mine" (namestring dir))
                   (auto-save-session
@@ -480,7 +489,7 @@ after."
                                        (merge-pathnames "one.lisp" dir))
     (alexandria:write-string-into-file (format nil "(defparameter *package-test-version* \"stopper\")~%") (merge-pathnames "two.lisp" dir))
     (let ((tuatara.defaults::*package-sources* '()) (tuatara-user:*package-ask-before-loading* nil)
-          (tuatara.command::*editor-held-seconds* 1))
+          (tuatara.command::*editor-held-seconds* 1) (*until-bound* *package-until-bound*))
       (unwind-protect
            (let ((f (auto-save-session
                      (list (list :until (lambda () (tuatara-user:package-source "mine" (namestring dir))
@@ -522,6 +531,27 @@ after."
       (tuatara.io:ensure-private-directory open)
       (is = #o700 (logand (sb-posix:stat-mode (sb-posix:stat open)) #o777))))
   (fail (tuatara.io:ensure-private-directory "/usr/") 'tuatara.io:file-system-error))
+
+(define-test (packages compiled-apart-from-one-core)
+  ;; run from the sources, a package is compiled apart by SBCL started from one core
+  ;; saved for these sources, made once and used by every compiling after
+  (unless tuatara.io:*saved-program*
+    (with-folder-package (dir "corea" "(defparameter *package-test-version* \"a\")")
+      (alexandria:write-string-into-file "(defparameter *package-test-two* \"b\")" (merge-pathnames "coreb.lisp" dir))
+      (let ((tuatara-user:*package-ask-before-loading* nil) (cores '()))
+        (flet ((note () (let ((core (tuatara.defaults::compiler-core)))
+                          (push (and core (sb-posix:stat-ino (sb-posix:stat core))) cores))))
+          (auto-save-session
+           (list (list :until (lambda () (tuatara-user:load-package "corea" :source "mine") t))
+                 (list :until (lambda () (package-test-version)))
+                 (list :until (lambda () (note) t))
+                 (list :until (lambda () (tuatara-user:load-package "coreb" :source "mine") t))
+                 (list :until (lambda () (boundp 'tuatara-user::*package-test-two*)))
+                 (list :until (lambda () (note) t)))))
+        (is equal "a" (package-test-version))
+        (true (first cores) "a core was made")
+        (is equal (first cores) (second cores) "and kept")
+        (true (member "--core" (tuatara.defaults::package-compiler-command) :test #'equal))))))
 
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another
@@ -658,7 +688,8 @@ holding TEXT, for a source that is a folder of the disk."
 loading, and what the packages left forgotten afterwards."
   `(with-test-directory (,dir)
      (let ((tuatara-user:*package-ask-before-loading* nil)
-           (tuatara.defaults::*package-sources* '()))
+           (tuatara.defaults::*package-sources* '())
+           (*until-bound* *package-until-bound*))
        (unwind-protect (progn ,@body)
          (forget-test-packages ,dir)
          (setf tuatara.defaults::*deferred-packages* '() tuatara.defaults::*packages-waiting* '())
