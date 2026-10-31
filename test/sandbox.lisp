@@ -53,6 +53,22 @@ as text, how it went, and what it said on its error output."
                                         :job job))
       (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second))))))
 
+(defun gone-within (mark seconds)
+  "True once no process has MARK in its command line, looked for over SECONDS."
+  (loop repeat (ceiling seconds 0.02)
+        thereis (zerop (processes-running mark))
+        do (sleep 0.02)))
+
+(define-test (sandbox program-refusing-to-end-killed)
+  ;; a program that will not end when asked is killed, with what it started,
+  ;; once its time to end is up
+  (let ((mark (format nil "31.~d" (+ 100000 (random 900000))))
+        (start (get-internal-real-time)))
+    (tuatara.io:call-with-program (list (tuatara.io:find-program "sh") "-c" (format nil "trap '' TERM; sleep ~a & wait" mark))
+                                  (lambda (process) (declare (ignore process)) (sleep 0.2)))
+    (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second)))
+    (true (gone-within mark 2))))
+
 (define-test (sandbox found)
   (multiple-value-bind (status detail path) (tuatara.io:sandbox-status :again t)
     (is eq :ready status)

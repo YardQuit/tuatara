@@ -140,6 +140,10 @@ looked for again; PROGRAM is left as it is when it is not found."
 one that writes more, a clipboard of a huge copy or a program gone wrong, is
 stopped and its output not taken, so that it cannot fill memory.")
 
+(defparameter *program-end-grace* 2
+  "The seconds a program no longer wanted has to end once asked to (SIGTERM),
+before it is killed (CALL-WITH-PROGRAM).")
+
 (defun call-with-program (command function &key job input output error directory (environment nil environment-p)
                                                preserve-fds (external-format '(:utf-8 :replacement #\?)))
   "Start COMMAND, a program's full name and its arguments (never through a
@@ -151,7 +155,9 @@ runs, ENVIRONMENT, when given, all it sees of one; PRESERVE-FDS, descriptors
 it is given besides (pipes of its own, named in its arguments). With JOB, it
 is the program the job runs (TUATARA.RUNTIME:JOB-PROGRAM-STARTED): stopping
 the job ends it. However FUNCTION ends, the program is ended when it still
-runs, waited for and closed, so that none is left behind."
+runs, asked to (SIGTERM) and, not ended within *PROGRAM-END-GRACE* seconds,
+killed with what it started (SIGKILL), waited for and closed, so that none is
+left behind."
   (let ((process (apply #'sb-ext:run-program (first command) (rest command)
                         :wait nil :input input :output output :error error :external-format external-format
                         (append (and directory (list :directory directory))
@@ -160,7 +166,12 @@ runs, waited for and closed, so that none is left behind."
     (when job (tuatara.runtime:job-program-started job process))
     (unwind-protect (funcall function process)
       (when (sb-ext:process-alive-p process)
-        (ignore-errors (sb-ext:process-kill process 15)))
+        (ignore-errors (sb-ext:process-kill process sb-unix:sigterm))
+        (loop repeat (ceiling *program-end-grace* 0.01)
+              while (sb-ext:process-alive-p process)
+              do (sleep 0.01))
+        (when (process-unreaped-p process)
+          (ignore-errors (sb-ext:process-kill process sb-unix:sigkill :process-group))))
       (ignore-errors (sb-ext:process-wait process))
       (ignore-errors (sb-ext:process-close process)))))
 
