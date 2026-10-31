@@ -235,23 +235,23 @@ editor's thread, which is woken for it (TAKE-IN-THREAD-MESSAGES)."
           (setf (editor-deferred editor) (append (editor-deferred editor) (list function)))
           (wake-editor editor)))))
 
-(defstruct (editor-hold (:constructor make-editor-hold (editor worker words)) (:copier nil))
+(defstruct (editor-hold (:constructor make-editor-hold (editor words stop)) (:copier nil))
   "The running EDITOR's thread asked to wait between two commands for work on
-another thread, WORKER (CALL-WITH-EDITOR-HELD), WORDS saying what it is.
-STATE is :ASKED until it waits, :HELD while it does, :GIVEN-UP when the work
-stopped asking first; WAITING is signalled once it waits, GO-ON lets it go
-on."
+another thread (CALL-WITH-EDITOR-HELD), WORDS saying what it is, STOP a
+function asking it to stop where it safely can, or NIL. STATE is :ASKED
+until it waits, :HELD while it does, :GIVEN-UP when the work stopped asking
+first; WAITING is signalled once it waits, GO-ON lets it go on."
   editor
-  worker
   words
+  stop
   (state :asked)
   (waiting (sb-thread:make-semaphore :name "tuatara editor waiting"))
   (go-on (sb-thread:make-semaphore :name "tuatara editor goes on")))
 
 (setf (documentation 'editor-hold-p 'function) "True when OBJECT is an EDITOR-HOLD."
       (documentation 'editor-hold-editor 'function) "The editor an EDITOR-HOLD keeps waiting."
-      (documentation 'editor-hold-worker 'function) "The thread whose work an EDITOR-HOLD waits for."
       (documentation 'editor-hold-words 'function) "What the work an EDITOR-HOLD waits for is, in words."
+      (documentation 'editor-hold-stop 'function) "The function asking the work an EDITOR-HOLD waits for to stop, or NIL."
       (documentation 'editor-hold-state 'function) "Whether the editor of an EDITOR-HOLD has been asked to wait, waits, or was given up."
       (documentation 'editor-hold-waiting 'function) "Signalled once the editor of an EDITOR-HOLD waits."
       (documentation 'editor-hold-go-on 'function) "Signalled to let the editor of an EDITOR-HOLD go on.")
@@ -259,40 +259,49 @@ on."
 (defparameter *editor-held-seconds* 3
   "The seconds the editor may wait for work holding it (CALL-WITH-EDITOR-HELD)
 before that is taken for a fault: said, in the debug log too, and \\`C-g'
-then stops the work.")
+then asks the work to stop where it safely can.")
 
 (defun wait-while-held (hold)
   "On the editor's thread: wait until the work HOLD waits for lets it go on,
-counted as idle meanwhile (no hang is reported). Once that has taken
-*EDITOR-HELD-SECONDS*, it is said, in the debug log too, and \\`C-g' stops
-the work (its thread made to end, as a job asked to stop does); other keys
-are kept for after."
-  (let ((said nil))
+counted as idle meanwhile (no hang is reported), however long it takes, for
+the editor going on before would let commands run with that work half done.
+Once that has taken *EDITOR-HELD-SECONDS*, it is said, in the debug log too,
+and \\`C-g' asks the work to stop where it safely can (HOLD's STOP), the
+waiting going on, said; other keys are kept for after."
+  (let* ((editor *editor*)
+         (frontend (and editor (frame-frontend (editor-frame editor))))
+         (go-on (editor-hold-go-on hold)))
     (tuatara.runtime:note-editor-busy nil)
     (unwind-protect
-         (wait-while-interruptibly
-          (lambda (seconds) (not (sb-thread:wait-on-semaphore (editor-hold-go-on hold) :timeout seconds)))
-          :grace *editor-held-seconds*
-          :message (lambda ()
-                     (unless said
-                       (setf said t)
-                       (tuatara.runtime:debug-report :hang "~a has held the editor for more than ~d seconds"
-                                                     (editor-hold-words hold) *editor-held-seconds*))
-                     (format nil "~a is taking long" (editor-hold-words hold)))
-          :stop (lambda ()
-                  (ignore-errors (sb-thread:interrupt-thread (editor-hold-worker hold)
-                                                             (lambda () (error 'tuatara.runtime:job-stopped)))))
-          :thread (editor-hold-worker hold))
+         (unless (sb-thread:wait-on-semaphore go-on :timeout *editor-held-seconds*)
+           (flet ((say (stopping)
+                    (when editor
+                      (echo "~a" (if stopping
+                                     (format nil "~a: stopping where it safely can, and waiting for that" (editor-hold-words hold))
+                                     (format nil "~a is taking long~:[~*~;; ~a stops it where it safely can~]"
+                                             (editor-hold-words hold) (editor-hold-stop hold)
+                                             (substitute-command-keys "\\`C-g'"))))
+                      (ignore-errors (redisplay editor)))))
+             (tuatara.runtime:debug-report :hang "~a has held the editor for more than ~d seconds"
+                                           (editor-hold-words hold) *editor-held-seconds*)
+             (say nil)
+             (loop (when (sb-thread:wait-on-semaphore go-on :timeout 1/20) (return))
+                   (when (and frontend (tuatara.frontend:frontend-input-pending-p frontend)
+                              (keep-or-quit-event editor (tuatara.frontend:frontend-read-event-timeout frontend 1/100))
+                              (editor-hold-stop hold))
+                     (funcall (editor-hold-stop hold))
+                     (say t)))))
       (tuatara.runtime:note-editor-busy t))))
 
-(defun hold-editor (words)
+(defun hold-editor (words stop)
   "Ask the running editor's thread to wait between two commands, as a command
 of its own (DEFER-ACTION), for the work of this thread, WORDS saying what it
-is (WAIT-WHILE-HELD), and return the EDITOR-HOLD once it waits; NIL when the
+is, STOP a function asking it to stop where it safely can (WAIT-WHILE-HELD),
+and return the EDITOR-HOLD once it waits; NIL when the
 editor stops running first. A job asked to stop meanwhile ends here; the
 editor is never left waiting for work that gave up."
   (let* ((editor (running-editor))
-         (hold (and editor (make-editor-hold editor sb-thread:*current-thread* words)))
+         (hold (and editor (make-editor-hold editor words stop)))
          (got nil))
     (when hold
       (defer-action (lambda ()
@@ -311,7 +320,7 @@ editor is never left waiting for work that gave up."
           (unless (eq :asked (sb-ext:compare-and-swap (editor-hold-state hold) :asked :given-up))
             (sb-thread:signal-semaphore (editor-hold-go-on hold))))))))
 
-(defun call-with-editor-held (function &key (words "Work in the background"))
+(defun call-with-editor-held (function &key (words "Work in the background") stop)
   "Call FUNCTION, on a thread other than the editor's, while the editor's
 thread waits between two commands all the while, and return what it
 returns: for work in the background that changes what commands use (a
@@ -319,12 +328,14 @@ package's definitions loaded), so that no command runs meanwhile. Keys
 pressed meanwhile wait and are handled after. *EDITOR* is the running
 editor's in FUNCTION, as in a command. The work is meant to take
 milliseconds: one that takes more than *EDITOR-HELD-SECONDS* is a fault,
-said, WORDS saying what it is, and \\`C-g' then stops it (WAIT-WHILE-HELD).
+said, WORDS saying what it is, and \\`C-g' then calls STOP, a function
+asking it to stop where it safely can, the editor waiting on until it has
+ended (WAIT-WHILE-HELD).
 On the editor's own thread, or with no editor running, FUNCTION is called at
 once. An error when the editor stops before it waits."
   (if (not (away-from-editor-p))
       (funcall function)
-      (let ((hold (or (hold-editor words) (error "The editor stopped before the work could be done"))))
+      (let ((hold (or (hold-editor words stop) (error "The editor stopped before the work could be done"))))
         (unwind-protect (let ((*editor* (editor-hold-editor hold))) (funcall function))
           (setf (editor-hold-state hold) :released)
           (sb-thread:signal-semaphore (editor-hold-go-on hold))))))

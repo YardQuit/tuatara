@@ -388,7 +388,7 @@ the error that ended it, said on the echo row too, the package not counted as
 loaded. Returns LOADED, or NIL when it failed."
   (flet ((failed (e)
            (push (cons name (princ-to-string e)) *package-failures*)
-           (if (typep e 'package-lacks-names)
+           (if (typep e '(or package-lacks-names package-load-stopped))
                (progn (pushnew name *refused-packages* :test #'string=)
                       (message "~a" e))
                (message "Loading package ~a...failed: ~a" name e))
@@ -880,36 +880,64 @@ compiled apart (REFUSE-PACKAGE)."
 code uses without defining them (BESIDE-FASL), which it returns. Its
 other warnings are said in *Messages*, the first of them; a file that cannot
 be compiled at all is an error saying why (an unclosed parenthesis, where).
-Where it may be compiled is *PACKAGE-COMPILING*'s (NOTE-PACKAGE-COMPILING)."
+Where it may be compiled is *PACKAGE-COMPILING*'s (NOTE-PACKAGE-COMPILING).
+FASL is written whole or not at all: compiled under another name beside it
+and renamed over it, after the names it needs are kept, so that a load
+reading it meanwhile (another process compiling the package, one stopped)
+finds the old one or the new, and the new one's names with it."
   (let ((*package* (find-package :tuatara-user))
         (said '())
         (needed '())
-        (report (make-string-output-stream)))
-    (let ((output (handler-bind ((warning (lambda (w)
-                                            (multiple-value-bind (kind name) (undefined-name w)
-                                              (cond (kind (let ((entry (needed-name kind name)))
-                                                            (when entry (pushnew entry needed :test #'equal))))
-                                                    ((not (typep w 'style-warning)) (push (princ-to-string w) said))))
-                                            (muffle-warning w))))
-                    (let ((*error-output* report))
-                      (note-package-compiling file)
-                      ;; a compilation unit of its own: what it finds undefined is said at its end
-                      (with-compilation-unit (:override t)
-                        (compile-file file :output-file fasl :verbose nil :print nil))))))
-      (unless output
-        (error "~a could not be compiled~@[: ~a~]" (abbreviated-path (tuatara.io:native file))
-               (or (compile-failure-words (get-output-stream-string report)) (first said))))
-      (write-kept-list (beside-fasl fasl "needs") needed)
-      (when said
-        (log-message (format nil "~a compiled with ~d warning~:p: ~a" (abbreviated-path (tuatara.io:native file))
-                             (length said) (first (last said)))))
-      needed)))
+        (report (make-string-output-stream))
+        (temporary (format nil "~a.~d.~a.new" fasl (sb-posix:getpid) (tuatara.io:random-name))))
+    (unwind-protect
+         (let ((output (handler-bind ((warning (lambda (w)
+                                                 (multiple-value-bind (kind name) (undefined-name w)
+                                                   (cond (kind (let ((entry (needed-name kind name)))
+                                                                 (when entry (pushnew entry needed :test #'equal))))
+                                                         ((not (typep w 'style-warning)) (push (princ-to-string w) said))))
+                                                 (muffle-warning w))))
+                         (let ((*error-output* report))
+                           (note-package-compiling file)
+                           ;; a compilation unit of its own: what it finds undefined is said at its end
+                           (with-compilation-unit (:override t)
+                             (compile-file file :output-file temporary :verbose nil :print nil))))))
+           (unless output
+             (error "~a could not be compiled~@[: ~a~]" (abbreviated-path (tuatara.io:native file))
+                    (or (compile-failure-words (get-output-stream-string report)) (first said))))
+           ;; the names first: a fasl is never there before the names it needs
+           (write-kept-list (beside-fasl fasl "needs") needed)
+           (sb-posix:rename (tuatara.io:native output) fasl)
+           (when said
+             (log-message (format nil "~a compiled with ~d warning~:p: ~a" (abbreviated-path (tuatara.io:native file))
+                                  (length said) (first (last said)))))
+           needed)
+      (when (probe-file temporary) (ignore-errors (delete-file temporary))))))
+
+(defvar *package-load-stop* nil
+  "While a package loads in the background (START-PACKAGE-LOAD), a cons whose
+car turns true when the loading is asked to stop: it stops before the next
+file of the package (LOAD-CHECKED-FILE); NIL otherwise.")
+
+(define-condition package-load-stopped (error)
+  ((name :initarg :name :reader package-load-stopped-name))
+  (:report (lambda (condition stream)
+             (format stream "The package ~a is half loaded; restart Tuatara before using it (its commands are taken out)"
+                     (package-load-stopped-name condition))))
+  (:documentation "Signalled when the loading of the package NAME was stopped between two of
+its files: what of it loaded is taken out (FORGET-PACKAGE-CODE), its
+functions left behind until Tuatara starts again."))
+
+(setf (documentation 'package-load-stopped-name 'function) "The name of the package stopped as it loaded.")
 
 (defun load-checked-file (file check)
   "Compile FILE when it has changed since (COMPILE-PACKAGE-FILE) and load it.
 With CHECK, the names its code uses without defining them are added to it,
 and it is refused before it loads when one of them is another's and not
-there (OUTSIDE-NAME-P)."
+there (OUTSIDE-NAME-P). A PACKAGE-LOAD-STOPPED, nothing of FILE loaded, once
+the loading was asked to stop (*PACKAGE-LOAD-STOP*)."
+  (when (and *package-load-stop* (car *package-load-stop*) *loading-package-name*)
+    (error 'package-load-stopped :name *loading-package-name*))
   (let ((fasl (package-fasl file)))
     (tuatara.io:ensure-private-directory (directory-namestring fasl))
     (let ((needed (multiple-value-bind (kept read) (read-kept-list (beside-fasl fasl "needs"))
@@ -962,7 +990,11 @@ editor instead."
         (let* ((check (make-package-check *loading-package-name* (beside-fasl (package-fasl file) "refused")))
                (*package-check* check))
           (refuse-as-before check)
-          (load-checked-file file check)
+          ;; stopped between its files: what of it loaded taken out again
+          (handler-bind ((package-load-stopped (lambda (e)
+                                                 (declare (ignore e))
+                                                 (forget-package-code (package-check-own check)))))
+            (load-checked-file file check))
           (let ((missing (remove-if #'needed-name-present-p (package-check-needs check))))
             (when missing (refuse-package check missing)))))
     file))
@@ -1902,8 +1934,12 @@ when it was stopped on purpose. Returns the job, or NIL."
              (handler-case
                  (let ((apart (and compile (funcall compile job))))
                    (tuatara.runtime:job-check-stop)
-                   (call-with-editor-held (lambda () (let ((*package-compiling* (if apart :refused nil))) (funcall load)))
-                                          :words (format nil "Loading the package ~a" name)))
+                   (let ((stop (list nil)))
+                     (call-with-editor-held (lambda () (let ((*package-compiling* (if apart :refused nil))
+                                                             (*package-load-stop* stop))
+                                                         (funcall load)))
+                                            :words (format nil "Loading the package ~a" name)
+                                            :stop (lambda () (setf (car stop) t)))))
                (error (e) (values nil e)))
            (setf (package-fetch-loaded job) loaded
                  (package-fetch-failure job) failure)))
@@ -1923,7 +1959,7 @@ it was stopped on purpose."
                (:stopped "it was stopped")
                (t (or (tuatara.runtime:job-error job) "it ended unexpectedly")))
              (package-fetch-compiled job)
-             (eq status :stopped))))
+             (or (eq status :stopped) (typep (package-fetch-failure job) 'package-load-stopped)))))
 
 ;;; Compiling a package apart
 
@@ -1947,31 +1983,61 @@ a process compiling a package apart (:APART)."
      (finish-output)
      (setf *package-compiling* :apart-said))))
 
-(defun package-request-text (folder name file)
+(defun package-request-text (folder name file token)
   "What a process compiling the package NAME in FOLDER apart is given to do
 \(COMPILE-PACKAGE-CHILD), as text read back without evaluating anything: the
 package, FILE its entry when named; the packages loaded so far, to load
-first, oldest first; and where this Tuatara keeps compiled packages."
+first, oldest first; where this Tuatara keeps compiled packages; and TOKEN,
+which the process is given apart too (PACKAGE-REQUEST-ALLOWED-P)."
   (with-standard-io-syntax
     (let ((*print-readably* t))
       (prin1-to-string
-       (list :name name :folder (tuatara.io:native folder) :file file
+       (list :token token :name name :folder (tuatara.io:native folder) :file file
              :prelude (reverse (remove name *loaded-package-folders* :key #'first :test #'string=))
              :cache (tuatara.io:native (tuatara.io:cache-directory))
              :packages (packages-directory)
              :identity (tuatara-identity))))))
 
-(defun package-compiler-command (request)
-  "The command that runs this Tuatara again to compile a package apart, as
-REQUEST, a file, says (COMPILE-PACKAGE-CHILD): the saved executable with
---compile-package, or, run from its sources, SBCL loading them first."
+(defparameter *package-child-environment*
+  '("PATH" "HOME" "USER" "LOGNAME" "LANG" "LC_ALL" "LC_CTYPE" "TZ" "TMPDIR"
+    "XDG_CONFIG_HOME" "XDG_CACHE_HOME" "XDG_DATA_HOME" "XDG_STATE_HOME" "XDG_RUNTIME_DIR"
+    "SBCL_HOME" "QUICKLISP_SETUP")
+  "The variables of the editor's environment a process compiling a package
+apart is given, and no others: none to reach the desktop, the keyring's
+agent or the session's message bus.")
+
+(defun package-child-environment (request token)
+  "The environment of a process compiling a package apart, as REQUEST, a
+file, and TOKEN say (COMPILE-PACKAGE-CHILD): those of
+*PACKAGE-CHILD-ENVIRONMENT* the editor has, and what tells the process what
+to do."
+  (append (loop for name in *package-child-environment*
+                for value = (uiop:getenv name)
+                when value collect (format nil "~a=~a" name value))
+          (list "TUATARA_HEAP_DECIDED=1"
+                (format nil "TUATARA_COMPILE_PACKAGE=~a" request)
+                (format nil "TUATARA_COMPILE_TOKEN=~a" token)
+                (format nil "TUATARA_COMPILE_CACHE=~a" (package-cache)))))
+
+(defun package-compiler-command ()
+  "The command that runs this Tuatara again to compile a package apart, told
+what to do by its environment (PACKAGE-CHILD-ENVIRONMENT): the saved
+executable, or, run from its sources, SBCL loading them first."
   (if tuatara.io:*saved-program*
-      (list tuatara.io:*saved-program* "--compile-package" request)
+      (list tuatara.io:*saved-program*)
       (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--non-interactive" "--no-sysinit" "--no-userinit"
             "--load" (uiop:native-namestring (asdf:system-relative-pathname :tuatara "tools/quicklisp.lisp"))
             "--eval" (format nil "(progn (push ~s asdf:*central-registry*) (funcall (find-symbol \"QUICKLOAD\" \"QL\") :tuatara/defaults :silent t))"
                              (uiop:native-namestring (asdf:system-source-directory :tuatara)))
-            "--eval" (format nil "(sb-ext:exit :code (tuatara.defaults::compile-package-child ~s) :abort t)" request))))
+            "--eval" "(sb-ext:exit :code (tuatara.defaults::compile-package-child) :abort t)")))
+
+(defparameter *package-child-line-limit* 1024
+  "The most characters kept of a line a process compiling a package apart
+says; the rest of it is read and let go.")
+
+(defparameter *package-child-said-limit* (* 64 1024)
+  "The most characters read and kept in all of what a process compiling a
+package apart says; the rest is read and let go, so that it never waits.")
 
 (defun compile-package-apart (job folder name file)
   "Compile the package NAME in FOLDER, FILE its entry when named, in a process
@@ -1983,18 +2049,22 @@ as a file of it begins compiling, said. True when it was all compiled so;
 NIL when it failed there, as code of the package's that needs what only the
 editor has does, the last of what the process said kept in *Messages*. It
 is refused for names this Tuatara lacks only as it loads in the editor
-\(REFUSE-PACKAGE)."
+\(REFUSE-PACKAGE). What the process says is read a line of at most
+*PACKAGE-CHILD-LINE-LIMIT* at a time, *PACKAGE-CHILD-SAID-LIMIT* in all."
   (let ((request (format nil "~acompile-~a.request" (package-cache) (tuatara.io:random-name)))
-        (said '()) (kept 0))
+        (token (tuatara.io:random-name))
+        (said '()) (kept 0) (read 0))
     (tuatara.io:ensure-private-directory (package-cache))
-    (tuatara.io:write-private-file request (package-request-text folder name file))
+    (tuatara.io:write-private-file request (package-request-text folder name file token))
     (unwind-protect
          (let ((code (tuatara.io:call-with-program
-                      (package-compiler-command request)
+                      (package-compiler-command)
                       (lambda (process)
-                        (loop for line = (read-line (sb-ext:process-output process) nil)
+                        (loop for line = (tuatara.io:read-line-bounded (sb-ext:process-output process) *package-child-line-limit*)
                               while line
-                              do (cond ((string= line *package-compiling-line*)
+                              do (incf read (length line))
+                                 (cond ((> read *package-child-said-limit*))
+                                       ((string= line *package-compiling-line*)
                                         (unless (package-fetch-compiled job)
                                           (setf (package-fetch-compiled job) t)
                                           (message "Compiling the package ~a in the background..." name)))
@@ -2004,7 +2074,7 @@ is refused for names this Tuatara lacks only as it loads in the editor
                         (sb-ext:process-wait process)
                         (sb-ext:process-exit-code process))
                       :job job :output :stream :error :output
-                      :environment (cons "TUATARA_HEAP_DECIDED=1" (sb-ext:posix-environ)))))
+                      :environment (package-child-environment request token))))
            (tuatara.runtime:job-check-stop)
            (cond ((eql code 0) t)
                  (t (let ((words (format nil "The package ~a could not be compiled apart from the editor, and is compiled as it loads~@[: ~{~a~^ ~}~]"
@@ -2014,29 +2084,60 @@ is refused for names this Tuatara lacks only as it loads in the editor
                     nil)))
       (ignore-errors (delete-file request)))))
 
-(defun compile-package-child (request)
-  "Compile a package as REQUEST, a file PACKAGE-REQUEST-TEXT wrote, says: what
-`tuatara --compile-package REQUEST' does, in a process of its own. The
-packages loaded in the editor are loaded first, one that fails left out,
+(defun package-request-allowed-p (request token cache)
+  "True when REQUEST, a file, is one the editor wrote for a process compiling
+a package apart (COMPILE-PACKAGE-APART): a regular file, not a link, in CACHE,
+the folder of compiled packages the editor named, called compile-*.request,
+yours and read and written by you alone; and TOKEN, given in the
+environment, is the one it holds (checked by COMPILE-PACKAGE-CHILD)."
+  (let ((stat (and request (plusp (length request)) token (plusp (length token)) cache
+                   (ignore-errors (sb-posix:lstat request))))
+        (name (and request (tuatara.io:native-file-name request))))
+    (and stat
+         (= (logand (sb-posix:stat-mode stat) #o170000) #o100000)
+         (= (logand (sb-posix:stat-mode stat) #o777) #o600)
+         (= (sb-posix:stat-uid stat) (sb-posix:getuid))
+         (uiop:string-prefix-p "compile-" name)
+         (uiop:string-suffix-p name ".request")
+         (equal (tuatara.io:real-path (tuatara.io:parent-path request))
+                (tuatara.io:real-path cache)))))
+
+(defun compile-package-child ()
+  "Compile a package as the editor asked in a process of its own: the
+request it wrote (PACKAGE-REQUEST-TEXT), named in the environment as
+TUATARA_COMPILE_PACKAGE, taken only when PACKAGE-REQUEST-ALLOWED-P and
+holding the token TUATARA_COMPILE_TOKEN gives; never from the command line.
+The packages loaded in the editor are loaded first, one that fails left out,
 then the package, each file compiled that changed since, as a load in the
 editor would, into the same place (PACKAGE-FASL), nothing refused
 \(REFUSE-PACKAGE). Returns the exit code: 0 when it loaded, 1 when it
-failed, why printed."
-  (handler-case
-      (let ((plist (with-standard-io-syntax
-                     (let ((*read-eval* nil)) (read-from-string (tuatara.io:file-text request))))))
-        (setf *tuatara-identity* (getf plist :identity)
-              tuatara-user:*cache-directory* (getf plist :cache)
-              tuatara-user:*packages-directory* (getf plist :packages))
-        (let ((*package-compiling* :apart))
-          (loop for (name folder file) in (getf plist :prelude)
-                do (handler-case (load-package-entry (pathname folder) name file)
-                     (error (e) (format t "~&~a was left out: ~a~%" name e))))
-          (load-package-entry (pathname (getf plist :folder)) (getf plist :name) (getf plist :file)))
-        0)
-    (serious-condition (e)
-      (format t "~&~a~%" e)
-      1)))
+failed, why printed, 2 when the request was not taken."
+  (let ((request (uiop:getenv "TUATARA_COMPILE_PACKAGE"))
+        (token (uiop:getenv "TUATARA_COMPILE_TOKEN"))
+        (cache (uiop:getenv "TUATARA_COMPILE_CACHE")))
+    (dolist (name '("TUATARA_COMPILE_PACKAGE" "TUATARA_COMPILE_TOKEN" "TUATARA_COMPILE_CACHE"))
+      (sb-posix:unsetenv name))
+    (unless (package-request-allowed-p request token cache)
+      (format t "~&Not a request of the editor's: nothing compiled~%")
+      (return-from compile-package-child 2))
+    (handler-case
+        (let ((plist (with-standard-io-syntax
+                       (let ((*read-eval* nil)) (read-from-string (tuatara.io:file-text request))))))
+          (unless (and (listp plist) (equal (getf plist :token) token))
+            (format t "~&Not a request of the editor's: nothing compiled~%")
+            (return-from compile-package-child 2))
+          (setf *tuatara-identity* (getf plist :identity)
+                tuatara-user:*cache-directory* (getf plist :cache)
+                tuatara-user:*packages-directory* (getf plist :packages))
+          (let ((*package-compiling* :apart))
+            (loop for (name folder file) in (getf plist :prelude)
+                  do (handler-case (load-package-entry (pathname folder) name file)
+                       (error (e) (format t "~&~a was left out: ~a~%" name e))))
+            (load-package-entry (pathname (getf plist :folder)) (getf plist :name) (getf plist :file)))
+          0)
+      (serious-condition (e)
+        (format t "~&~a~%" e)
+        1))))
 
 (defun start-package-fetch (name where version file key &key quiet)
   "Fetch the package NAME (FETCH-PACKAGE) in the background, and see who

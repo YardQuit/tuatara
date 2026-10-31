@@ -283,8 +283,9 @@ starts again with that one (HEAP-TO-RESTART-WITH), and its random numbers are
 new (FRESH-RANDOM-STATE), its arguments read even when one is not UTF-8
 \(COMMAND-LINE-ARGUMENTS); run from the AppImage, the
 programs it starts are given the environment as it was before
-\(LEAVE-APPIMAGE-ENVIRONMENT). Run as `tuatara --compile-package REQUEST' by
-the editor itself, it compiles a package apart from it instead
+\(LEAVE-APPIMAGE-ENVIRONMENT). Run again by the editor itself with
+TUATARA_COMPILE_PACKAGE in its environment, it compiles a package apart from
+it instead, its arguments never looked at
 \(TUATARA.DEFAULTS::COMPILE-PACKAGE-CHILD)."
   (sb-ext:disable-debugger)
   (setf sb-ext:*posix-argv* (command-line-arguments))
@@ -299,9 +300,10 @@ the editor itself, it compiles a package apart from it instead
       (setf tuatara.io:*saved-program* appimage)))
   (leave-appimage-environment)
   (uiop:call-image-restore-hook)
-  ;; run again by the editor to compile a package apart from it
-  (when (equal (second sb-ext:*posix-argv*) "--compile-package")
-    (let ((code (tuatara.defaults::compile-package-child (third sb-ext:*posix-argv*))))
+  ;; run again by the editor to compile a package apart from it: told so by the
+  ;; environment the editor gave it, never by the command line
+  (when (uiop:getenv "TUATARA_COMPILE_PACKAGE")
+    (let ((code (tuatara.defaults::compile-package-child)))
       (finish-output)
       (sb-ext:exit :code code :abort t)))
   (let ((code (main (rest sb-ext:*posix-argv*))))

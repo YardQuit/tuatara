@@ -412,6 +412,106 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
       (is equal '("C-f") (map 'list (lambda (event) (tuatara.frontend:key-description (tuatara.frontend:key-spec (tuatara.frontend:event-key event))))
                               tuatara.defaults::*last-recorded-keys*)))))
 
+(defun compile-child-with (request token)
+  "What COMPILE-PACKAGE-CHILD answers with REQUEST and TOKEN in the
+environment as the editor gives them (NIL leaves one out), the folder of
+compiled packages named as the editor names it; the environment as before
+after."
+  (let ((names '("TUATARA_COMPILE_PACKAGE" "TUATARA_COMPILE_TOKEN" "TUATARA_COMPILE_CACHE")))
+    (unwind-protect
+         (progn (loop for name in names
+                      for value in (list request token (tuatara.defaults::package-cache))
+                      do (if value (sb-posix:setenv name value 1) (sb-posix:unsetenv name)))
+                (let ((*standard-output* (make-broadcast-stream))) (tuatara.defaults::compile-package-child)))
+      (dolist (name names) (sb-posix:unsetenv name)))))
+
+(define-test (packages compiling-apart-never-from-file-names)
+  ;; files named --compile-package and a in a folder, as `tuatara *' there passes them: they
+  ;; are files to open, and nothing they name is ever compiled or loaded; only a request the
+  ;; editor wrote in its folder of compiled packages, its own and private, with the token
+  ;; it gave in the environment, is taken
+  (with-test-directory (dir)
+    (let* ((marker (merge-pathnames "ran" dir))
+           (evil (ensure-directories-exist (merge-pathnames "evil/" dir)))
+           (plist (lambda (token)
+                    (with-standard-io-syntax
+                      (prin1-to-string (list :token token :name "evil" :folder (namestring evil) :file nil :prelude '()
+                                             :cache (tuatara.io:native (tuatara.io:cache-directory))
+                                             :packages (tuatara.defaults::packages-directory)
+                                             :identity (tuatara.defaults::tuatara-identity))))))
+           (in-cache (format nil "~acompile-test-~a.request" (tuatara.defaults::package-cache) (tuatara.io:random-name))))
+      (alexandria:write-string-into-file (format nil "(with-open-file (o ~s :direction :output :if-exists :supersede) (print :ran o))~%"
+                                                 (namestring marker))
+                                         (merge-pathnames "evil.lisp" evil))
+      (alexandria:write-string-into-file "" (merge-pathnames "--compile-package" dir))
+      (alexandria:write-string-into-file (funcall plist "guessed") (merge-pathnames "a" dir))
+      (unwind-protect
+           (progn
+             ;; the command line names files, never the mode
+             (is equal '("--compile-package" "a") (getf (tuatara.terminal::read-options '("--compile-package" "a") :directory (namestring dir)) :files))
+             ;; no request in the environment, as when started by hand
+             (is = 2 (compile-child-with nil nil))
+             ;; a request outside the folder of compiled packages, its token right or not
+             (is = 2 (compile-child-with (namestring (merge-pathnames "a" dir)) "guessed"))
+             ;; in that folder, but readable by others
+             (tuatara.io:ensure-private-directory (tuatara.defaults::package-cache))
+             (tuatara.io:write-private-file in-cache (funcall plist "right"))
+             (sb-posix:chmod in-cache #o644)
+             (is = 2 (compile-child-with in-cache "right"))
+             ;; private, but another token
+             (sb-posix:chmod in-cache #o600)
+             (is = 2 (compile-child-with in-cache "wrong"))
+             ;; a link to a private request
+             (let ((link (format nil "~acompile-link-~a.request" (tuatara.defaults::package-cache) (tuatara.io:random-name))))
+               (sb-posix:symlink in-cache link)
+               (unwind-protect (is = 2 (compile-child-with link "right"))
+                 (ignore-errors (sb-posix:unlink link))))
+             (false (probe-file marker) "nothing of the folder was loaded"))
+        (ignore-errors (delete-file in-cache))))))
+
+(define-test (packages stopped-between-files-while-held)
+  ;; C-g once a held load takes long stops it before its next file, the editor waiting
+  ;; until then; what of it loaded is taken out, and it is said to be half loaded
+  (with-test-directory (dir)
+    ;; a Lisp package of its own, as a package has
+    (alexandria:write-string-into-file (format nil "(defpackage #:stopper (:use #:cl #:tuatara))~%(load-package-file \"one.lisp\")~%(load-package-file \"two.lisp\")~%")
+                                       (merge-pathnames "stopper.lisp" dir))
+    (alexandria:write-string-into-file (format nil "(in-package #:stopper)~%(define-command stopper-hello () \"Say hello.\" nil)~%(sleep 2)~%")
+                                       (merge-pathnames "one.lisp" dir))
+    (alexandria:write-string-into-file (format nil "(defparameter *package-test-version* \"stopper\")~%") (merge-pathnames "two.lisp" dir))
+    (let ((tuatara.defaults::*package-sources* '()) (tuatara-user:*package-ask-before-loading* nil)
+          (tuatara.command::*editor-held-seconds* 1))
+      (unwind-protect
+           (let ((f (auto-save-session
+                     (list (list :until (lambda () (tuatara-user:package-source "mine" (namestring dir))
+                                          (tuatara-user:load-package "stopper" :source "mine") t))
+                           (list :until (lambda () (search "is taking long" (or (tuatara.command:editor-message tuatara.command:*editor*) ""))) 60)
+                           "C-g"
+                           (list :until (lambda () (search "half loaded" (or (tuatara.command:editor-message tuatara.command:*editor*) ""))) 60))
+                     :width 200 :pending t)))
+             (true (tuatara.frontend.fake:fake-frame-showing f "Loading the package stopper: stopping where it safely can"))
+             (true (tuatara.frontend.fake:fake-frame-showing f "The package stopper is half loaded; restart Tuatara before using it"))
+             (false (package-test-version) "its second file never loaded")
+             (false (tuatara.command:find-command "stopper-hello") "its command taken out")
+             (false (tuatara.defaults::package-loaded-p "stopper")))
+        (forget-test-packages dir)))))
+
+(define-test (packages compiled-files-written-whole)
+  ;; a compiled file is renamed into place whole: another inode once compiled again, and
+  ;; nothing left beside it
+  (with-test-directory (dir)
+    (let ((file (merge-pathnames "whole.lisp" dir)))
+      (alexandria:write-string-into-file "(defparameter *package-test-whole* 1)" file)
+      (let* ((fasl (tuatara.defaults::package-fasl file)))
+        (tuatara.io:ensure-private-directory (directory-namestring fasl))
+        (tuatara.defaults::compile-package-file file fasl)
+        (let ((first (sb-posix:stat-ino (sb-posix:stat fasl))))
+          (tuatara.defaults::compile-package-file file fasl)
+          (isnt = first (sb-posix:stat-ino (sb-posix:stat fasl)) "written in place"))
+        (is equal '() (remove-if-not (lambda (p) (search ".new" (namestring p)))
+                                     (uiop:directory-files (directory-namestring fasl))))
+        (uiop:delete-directory-tree (pathname (directory-namestring fasl)) :validate (lambda (p) (search "/tuatara/packages/" (namestring p))))))))
+
 (define-test (packages scanned-from-the-init-file)
   ;; package-scan: each load-package with :source loaded by itself, one left inside another
   ;; by an open parenthesis too; a group of settings left alone; where reading stopped said

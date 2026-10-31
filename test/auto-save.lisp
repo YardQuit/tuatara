@@ -9,11 +9,15 @@ never into the file; a save deletes the copy, quitting without one keeps it, the
 so and M-x recover-file takes it back as one edit; nothing opened safely is copied; a name too
 long is kept beside its copy.")
 
-(defun auto-save-session (steps &key (width 100) (height 20))
+(defun auto-save-session (steps &key (width 100) (height 20) pending)
   "Run an editor session on STEPS, each a string of keys, (:wait SECONDS), or
-\(:until FUNCTION) waiting (ten seconds at most) until FUNCTION of no
-arguments is true. Returns the frontend and the editor."
+\(:until FUNCTION [SECONDS]) waiting (SECONDS at most, ten when not given)
+until FUNCTION of no arguments is true. With PENDING, what is queued counts
+as typed meanwhile, as keys pressed while the editor waits are. Returns the
+frontend and the editor."
   (let ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height)))
+    (when pending
+      (setf (tuatara.frontend.fake:fake-pending f) (lambda (f) (tuatara.frontend.fake::fake-events f))))
     (labels ((take (steps start)
                (let ((step (first steps)))
                  (cond ((null steps))
@@ -22,7 +26,7 @@ arguments is true. Returns the frontend and the editor."
                             (take (rest steps) (get-internal-real-time))
                             (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        ((and (consp step) (eq (first step) :until))
-                        (if (or (funcall (second step)) (> (- (get-internal-real-time) start) (* 10 internal-time-units-per-second)))
+                        (if (or (funcall (second step)) (> (- (get-internal-real-time) start) (* (or (third step) 10) internal-time-units-per-second)))
                             (take (rest steps) (get-internal-real-time))
                             (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (take steps start))))))
                        (t (queue-test-keys f (list step))

@@ -592,7 +592,8 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
                        (trust-version dir "one" :gpg primary))
                      (auto-save-session
                       (list (list :until (lambda () (tuatara-user:load-package "pkgv" :source where :version "latest") t))
-                            (list :until (lambda () (echo-says "is refused")))))
+                            ;; fetched, checked and refused: no time of its own, however long that takes
+                            (list :until (lambda () (echo-says "is refused")) 120)))
                      (is equal (format nil "key:~a" subkey)
                          (second (tuatara.defaults::state-list-find tuatara.defaults::*package-trust* where)))
                      (uiop:run-program (format nil "gpg --homedir ~a --export ~a | gpg --batch --import" home primary)
@@ -601,7 +602,8 @@ the tests' own keyring lacks: the folder and the key's fingerprint."
                        (trust-version dir "two" :gpg primary))
                      (auto-save-session
                       (list (list :until (lambda () (tuatara.defaults::update-packages (list "pkgv")) t))
-                            (list :until (lambda () (trust-version-loaded)))))
+                            ;; fetched, checked, compiled apart and loaded, however long that takes
+                            (list :until (lambda () (trust-version-loaded)) 120)))
                      (is equal "two" (trust-version-loaded))
                      (is equal primary (second (tuatara.defaults::state-list-find tuatara.defaults::*package-trust* where))))))
             (stop-gnupg home))))))
