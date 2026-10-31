@@ -39,7 +39,7 @@
    #:version-current-p #:version-commit #:edits-batch #:swap-batch #:version-swap #:version-adopt #:version-undo-edits
    #:batch #:batch-p #:batch-edits #:batch-deltas #:batch-positions #:batch-swap
    #:swap #:swap-p #:make-swap #:swap-before #:swap-after #:swap-forward #:swap-backward
-   #:map-position #:map-forward
+   #:map-position #:map-forward #:changed-stretches
    #:anchor #:anchor-p #:make-anchor #:anchor-position #:anchor-move #:anchor-link #:anchor-bias
    ;; invariants
    #:check-rope #:summarise #:continuation-byte-p

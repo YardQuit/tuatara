@@ -202,6 +202,60 @@ their links. Complexity: O(versions between × log edits)."
                        link next))))
     position))
 
+;;; What changed between two versions
+
+(defun stretches-through (stretches batch)
+  "STRETCHES, as CHANGED-STRETCHES gives them up to the text before BATCH,
+carried through BATCH: each edit of it joined to the stretches it meets or
+touches, those after it moved. Complexity: O(edits + stretches)."
+  (let* ((edits (batch-edits batch))
+         (n (length edits))
+         (k 0) (out '())
+         ;; between stretches, the text before BATCH less the first version's; after it less before
+         (shift 0) (delta 0))
+    (declare (type fixnum n k shift delta))
+    (loop
+      (let ((stretch (first stretches))
+            (edit (and (< k n) (svref edits k))))
+        (unless (or stretch edit) (return))
+        (let* ((start (min (if stretch (third stretch) most-positive-fixnum)
+                           (if edit (edit-start edit) most-positive-fixnum)))
+               (end start) (old-start (- start shift)) (grown 0))
+          (declare (type fixnum start end old-start grown))
+          ;; everything that meets what is gathered so far, gathered
+          (loop
+            (let ((stretch (first stretches))
+                  (edit (and (< k n) (svref edits k))))
+              (cond ((and stretch (<= (the fixnum (third stretch)) end))
+                     (setf end (max end (the fixnum (fourth stretch)))
+                           shift (- (the fixnum (fourth stretch)) (the fixnum (second stretch))))
+                     (pop stretches))
+                    ((and edit (<= (edit-start edit) end))
+                     (setf end (max end (edit-end edit)))
+                     (incf grown (- (edit-insert-length edit) (edit-delete-length edit)))
+                     (incf k))
+                    (t (return)))))
+          (push (list old-start (- end shift) (+ start delta) (+ end delta grown)) out)
+          (incf delta grown))))
+    (nreverse out)))
+
+(defun changed-stretches (from to)
+  "The stretches of a text that differ between its versions FROM and TO, TO
+the later: a list in order of (OLD-START OLD-END NEW-START NEW-END), byte
+offsets of each in FROM's text and in TO's, the text between them the same in
+both; :WHOLE when that is not known, the whole text swapped between them or TO
+not after FROM. The edits of every version between are taken in one pass.
+Complexity: O(edits + stretches) for each version between."
+  (let ((stretches '()) (at from))
+    (loop until (eq at to)
+          do (let* ((next (version-next at))
+                    (batch (and next (version-batch next))))
+               (when (or (null batch) (batch-swap batch))
+                 (return-from changed-stretches :whole))
+               (setf stretches (stretches-through stretches batch)
+                     at next)))
+    stretches))
+
 ;;; Anchors
 
 (defstruct (anchor (:constructor %make-anchor (link cached bias)) (:copier nil))
