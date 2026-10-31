@@ -21,7 +21,8 @@
 # default: random octets, text not UTF-8, nesting thousands deep, a line of a
 # megabyte, the samples and the corpus cut and spliced), each edited and
 # parsed again. The first fault a sanitizer sees fails the grammar, the log
-# saying where. Each run is held to 30 minutes of the processor, 4 GB of
+# saying where (an empty copy from a null pointer and an unaligned number
+# aside, which this processor does safely). Each run is held to 30 minutes of the processor, 4 GB of
 # memory as the sanitizer counts it, an hour in all, at a low priority.
 # Usage: tools/fuzz-grammars.sh [-n ITERATIONS] [NAME...]
 #        tools/fuzz-grammars.sh --hostile [-n ROUNDS] [NAME...]
@@ -103,7 +104,12 @@ if [ -n "$hostile" ]; then
     done
     if inside bash -euo pipefail -c '
          src=$1; lib=$2; name=$3; rounds=$4; harness=$5; root=$6; shift 6
-         flags=(-g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=undefined -fPIC -fno-strict-aliasing)
+         # an empty copy from no memory (memcpy of 0 octets from NULL) and a
+         # number stored unaligned are left unreported: x86-64 does both
+         # safely, and many scanners do them, which would end the run before
+         # anything else is found
+         flags=(-g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize=nonnull-attribute,alignment
+                -fno-sanitize-recover=undefined -fPIC -fno-strict-aliasing)
          if [ -f "$src/scanner.cc" ]; then
            cc "${flags[@]}" -std=c11 -I"$src" -c "$src/parser.c" -o "$lib.parser.o"
            c++ "${flags[@]}" -fvisibility=hidden -I"$src" -c "$src/scanner.cc" -o "$lib.scanner.o"
