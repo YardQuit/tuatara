@@ -535,13 +535,24 @@ octets."
             ((too-large-here-p start end "Evaluating"))
             (t (evaluate-and-report b (tuatara.buffer:buffer-string b :start start :end end)))))))
 
+(defun init-file-buffer-p (buffer)
+  "True when BUFFER visits the init file (CONFIG-FILE)."
+  (let ((file (tuatara.buffer:buffer-file buffer)))
+    (and file (equal (tuatara.io:real-path-or-parent file)
+                     (tuatara.io:real-path-or-parent (tuatara.io:native (config-file)))))))
+
 (define-command eval-buffer ()
   "Evaluate every Lisp form in the current buffer one after another, as a
 file's are, and show the last one's value; not a buffer of more than
-*REWRITE-THRESHOLD* octets."
+*REWRITE-THRESHOLD* octets. In the init file, the packages it loads are
+loaded as at the start, each before the forms after it are evaluated
+\(CALL-WITH-START-PACKAGES)."
   (let ((b (current-buffer)))
     (unless (too-large-here-p 0 (tuatara.buffer:buffer-size b) "Evaluating")
-      (evaluate-and-report b (tuatara.buffer:buffer-string b)))))
+      (flet ((evaluate () (evaluate-and-report b (tuatara.buffer:buffer-string b))))
+        (if (init-file-buffer-p b)
+            (call-with-start-packages #'evaluate)
+            (evaluate))))))
 
 (define-command eval-expression ()
   "Read a Lisp expression in the minibuffer and evaluate it in the running

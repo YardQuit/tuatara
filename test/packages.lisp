@@ -334,6 +334,71 @@ TEXT, as the source \"mine\"; all of it forgotten afterwards."
              (true (tuatara.frontend.fake:fake-frame-showing f "The package slowpkg is compiled and loaded")))
         (makunbound 'tuatara-user::*package-test-loads*)))))
 
+(define-test (packages never-half-loaded-to-commands)
+  ;; an entry loading a second file slow to compile: no command runs while the entry is
+  ;; part loaded, and the package's compile-time code runs in another process
+  (with-test-directory (dir)
+    (alexandria:write-string-into-file
+     (format nil "(defparameter *package-test-half-a* t)~%(load-package-file \"b.lisp\")~%(defparameter *package-test-version* \"half\")~%")
+     (merge-pathnames "halfpkg.lisp" dir))
+    (alexandria:write-string-into-file
+     (format nil "(eval-when (:compile-toplevel)~%  (sleep 1.5)~%  (with-open-file (o ~s :direction :output :if-exists :supersede) (print (sb-posix:getpid) o)))~%(defvar *package-test-half-b* t)~%"
+             (namestring (merge-pathnames "compiled-by" dir)))
+     (merge-pathnames "b.lisp" dir))
+    (let ((tuatara.defaults::*package-sources* '()) (tuatara-user:*package-ask-before-loading* nil) (seen-half 0) (polled 0))
+      (unwind-protect
+           (progn (tuatara-user:package-source "mine" (namestring dir))
+                  (auto-save-session
+                   (list (list :until (lambda () (tuatara-user:load-package "halfpkg" :source "mine") t))
+                         (list :until (lambda ()
+                                        (incf polled)
+                                        (when (and (boundp 'tuatara-user::*package-test-half-a*)
+                                                   (not (package-test-version)))
+                                          (incf seen-half))
+                                        (package-test-version))))
+                   :width 160)
+                  (is equal "half" (package-test-version))
+                  (is = 0 seen-half "commands ran ~d times with the package part loaded" seen-half)
+                  (true (> polled 20) "the editor went on while it compiled: ~d" polled)
+                  (let ((pid (with-open-file (i (merge-pathnames "compiled-by" dir)) (read i))))
+                    (true (integerp pid))
+                    (isnt = (sb-posix:getpid) pid "compiled in the editor's own process")))
+        (makunbound 'tuatara-user::*package-test-half-a*)
+        (makunbound 'tuatara-user::*package-test-half-b*)
+        (forget-test-packages dir)))))
+
+(define-test (packages stopped-while-compiling)
+  ;; stopping the loading while the package compiles ends the compiling at once, and
+  ;; nothing is loaded
+  (with-folder-package (dir "stopped" (format nil "(eval-when (:compile-toplevel) (sleep 8))~%(defparameter *package-test-version* \"stopped\")~%"))
+    (let ((tuatara-user:*package-ask-before-loading* nil) (began nil) (took nil))
+      (let ((f (auto-save-session
+                (list (list :until (lambda () (tuatara-user:load-package "stopped" :source "mine") t))
+                      (list :until (lambda () (search "Compiling the package stopped" (or (tuatara.command:editor-message tuatara.command:*editor*) ""))))
+                      (list :until (lambda ()
+                                     (setf began (get-internal-real-time))
+                                     (dolist (job tuatara.runtime:*jobs*)
+                                       (when (tuatara.defaults::package-fetch-p job) (tuatara.runtime:job-stop job)))
+                                     t))
+                      (list :until (lambda ()
+                                     (when (search "it was stopped" (or (tuatara.command:editor-message tuatara.command:*editor*) ""))
+                                       (setf took (tuatara.runtime:milliseconds-since began))))))
+                :width 160)))
+        (true (tuatara.frontend.fake:fake-frame-showing f "Loading package stopped...failed: it was stopped"))
+        (true (and took (< took 3000)) "ended ~a ms after it was stopped" took)
+        (false (package-test-version))))))
+
+(define-test (packages long-load-said)
+  ;; a load that holds the editor longer than it should is said, and then loads
+  (with-folder-package (dir "longload" (format nil "(sleep 2)~%(defparameter *package-test-version* \"long\")~%"))
+    (let ((tuatara-user:*package-ask-before-loading* nil) (tuatara.command::*editor-held-seconds* 1))
+      (let ((f (auto-save-session
+                (list (list :until (lambda () (tuatara-user:load-package "longload" :source "mine") t))
+                      (list :until (lambda () (package-test-version))))
+                :width 160)))
+        (is equal "long" (package-test-version))
+        (true (tuatara.frontend.fake:fake-frame-showing f "Loading the package longload is taking long"))))))
+
 (define-test (packages question-out-of-recorded-keys)
   ;; keys being recorded are no part of the question: C-g there leaves the recording going,
   ;; and neither the question nor its answer is recorded

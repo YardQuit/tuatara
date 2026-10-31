@@ -13,7 +13,7 @@
            #:define-command #:find-command #:command-symbol #:command-names #:*commands* #:forget-command
            #:quit #:keyboard-quit-signal #:editor #:editor-p #:make-editor #:*editor* #:current-buffer #:*current-buffer* #:*command-refusal-function* #:current-window
            #:message #:say-with-command-messages #:*messages-kept* #:*exit-functions* #:*startup-buffers* #:*exit-code* #:cursor-look #:*cursor-colour-functions* #:echo #:*message-log-max* #:log-message #:add-to-log #:messages-buffer #:*messages-made-function* #:read-string #:finish-minibuffer #:minibuffer-previous-history #:minibuffer-next-history #:echo-question-p #:yes-or-no-p* #:read-password #:wipe-string #:*minibuffer-hidden* #:show-buffer #:run-editor #:*visit-file-function* #:command-loop #:redisplay #:redisplay-or-say
-           #:quit-key-p #:*keys-as-typed* #:wait-interruptibly #:wait-until-interruptibly #:wait-while-interruptibly #:editor-unread #:editor-deferred #:running-editor #:defer-action #:call-with-editor-held #:call-with-editor-let-go #:away-from-editor-p #:wake-editor
+           #:quit-key-p #:*keys-as-typed* #:wait-interruptibly #:wait-until-interruptibly #:wait-while-interruptibly #:editor-unread #:editor-deferred #:running-editor #:defer-action #:call-with-editor-held #:away-from-editor-p #:wake-editor
            #:editor-frontend #:editor-window #:editor-global-keymap #:editor-state-keymap #:editor-minibuffer-keymap
            #:editor-message #:editor-kill-ring #:editor-running #:editor-last-command #:editor-this-command
            #:editor-prefix-argument #:prefix-argument #:editor-mode-line-function #:editor-cursor-shape-function

@@ -235,40 +235,70 @@ editor's thread, which is woken for it (TAKE-IN-THREAD-MESSAGES)."
           (setf (editor-deferred editor) (append (editor-deferred editor) (list function)))
           (wake-editor editor)))))
 
-(defstruct (editor-hold (:constructor make-editor-hold (editor)) (:copier nil))
+(defstruct (editor-hold (:constructor make-editor-hold (editor worker words)) (:copier nil))
   "The running EDITOR's thread asked to wait between two commands for work on
-another thread (CALL-WITH-EDITOR-HELD). STATE is :ASKED until it waits,
-:HELD while it does, :GIVEN-UP when the work stopped asking first; WAITING
-is signalled once it waits, GO-ON lets it go on."
+another thread, WORKER (CALL-WITH-EDITOR-HELD), WORDS saying what it is.
+STATE is :ASKED until it waits, :HELD while it does, :GIVEN-UP when the work
+stopped asking first; WAITING is signalled once it waits, GO-ON lets it go
+on."
   editor
+  worker
+  words
   (state :asked)
   (waiting (sb-thread:make-semaphore :name "tuatara editor waiting"))
   (go-on (sb-thread:make-semaphore :name "tuatara editor goes on")))
 
 (setf (documentation 'editor-hold-p 'function) "True when OBJECT is an EDITOR-HOLD."
       (documentation 'editor-hold-editor 'function) "The editor an EDITOR-HOLD keeps waiting."
+      (documentation 'editor-hold-worker 'function) "The thread whose work an EDITOR-HOLD waits for."
+      (documentation 'editor-hold-words 'function) "What the work an EDITOR-HOLD waits for is, in words."
       (documentation 'editor-hold-state 'function) "Whether the editor of an EDITOR-HOLD has been asked to wait, waits, or was given up."
       (documentation 'editor-hold-waiting 'function) "Signalled once the editor of an EDITOR-HOLD waits."
       (documentation 'editor-hold-go-on 'function) "Signalled to let the editor of an EDITOR-HOLD go on.")
 
-(defvar *editor-hold* nil
-  "On a thread whose work holds the editor's thread (CALL-WITH-EDITOR-HELD),
-a list of the EDITOR-HOLD in force, or of NIL while the editor is let go
-\(CALL-WITH-EDITOR-LET-GO); NIL on any other thread.")
+(defparameter *editor-held-seconds* 3
+  "The seconds the editor may wait for work holding it (CALL-WITH-EDITOR-HELD)
+before that is taken for a fault: said, in the debug log too, and \\`C-g'
+then stops the work.")
 
-(defun hold-editor ()
+(defun wait-while-held (hold)
+  "On the editor's thread: wait until the work HOLD waits for lets it go on,
+counted as idle meanwhile (no hang is reported). Once that has taken
+*EDITOR-HELD-SECONDS*, it is said, in the debug log too, and \\`C-g' stops
+the work (its thread made to end, as a job asked to stop does); other keys
+are kept for after."
+  (let ((said nil))
+    (tuatara.runtime:note-editor-busy nil)
+    (unwind-protect
+         (wait-while-interruptibly
+          (lambda (seconds) (not (sb-thread:wait-on-semaphore (editor-hold-go-on hold) :timeout seconds)))
+          :grace *editor-held-seconds*
+          :message (lambda ()
+                     (unless said
+                       (setf said t)
+                       (tuatara.runtime:debug-report :hang "~a has held the editor for more than ~d seconds"
+                                                     (editor-hold-words hold) *editor-held-seconds*))
+                     (format nil "~a is taking long" (editor-hold-words hold)))
+          :stop (lambda ()
+                  (ignore-errors (sb-thread:interrupt-thread (editor-hold-worker hold)
+                                                             (lambda () (error 'tuatara.runtime:job-stopped)))))
+          :thread (editor-hold-worker hold))
+      (tuatara.runtime:note-editor-busy t))))
+
+(defun hold-editor (words)
   "Ask the running editor's thread to wait between two commands, as a command
-of its own (DEFER-ACTION), and return the EDITOR-HOLD once it waits; NIL when
-the editor stops running first. A job asked to stop meanwhile ends here; the
+of its own (DEFER-ACTION), for the work of this thread, WORDS saying what it
+is (WAIT-WHILE-HELD), and return the EDITOR-HOLD once it waits; NIL when the
+editor stops running first. A job asked to stop meanwhile ends here; the
 editor is never left waiting for work that gave up."
   (let* ((editor (running-editor))
-         (hold (and editor (make-editor-hold editor)))
+         (hold (and editor (make-editor-hold editor sb-thread:*current-thread* words)))
          (got nil))
     (when hold
       (defer-action (lambda ()
                       (when (eq :asked (sb-ext:compare-and-swap (editor-hold-state hold) :asked :held))
                         (sb-thread:signal-semaphore (editor-hold-waiting hold))
-                        (sb-thread:wait-on-semaphore (editor-hold-go-on hold)))))
+                        (wait-while-held hold))))
       (unwind-protect
            (loop
              (when (sb-thread:wait-on-semaphore (editor-hold-waiting hold) :timeout 1/10)
@@ -281,41 +311,23 @@ editor is never left waiting for work that gave up."
           (unless (eq :asked (sb-ext:compare-and-swap (editor-hold-state hold) :asked :given-up))
             (sb-thread:signal-semaphore (editor-hold-go-on hold))))))))
 
-(defun release-editor (hold)
-  "Let the editor HOLD keeps waiting go on with its commands."
-  (setf (editor-hold-state hold) :released)
-  (sb-thread:signal-semaphore (editor-hold-go-on hold)))
-
-(defun call-with-editor-held (function)
+(defun call-with-editor-held (function &key (words "Work in the background"))
   "Call FUNCTION, on a thread other than the editor's, while the editor's
-thread waits between two commands, and return what it returns: for work in
-the background that changes what commands use (a package's definitions
-loaded), so that no command runs meanwhile. Keys pressed meanwhile wait and
-are handled after. Parts of FUNCTION that take long and change nothing
-commands use let the editor go on meanwhile (CALL-WITH-EDITOR-LET-GO). On
-the editor's own thread, with no editor running, or with the editor held
-already, FUNCTION is called at once. An error when the editor stops before
-it waits."
-  (if (or (not (away-from-editor-p)) (and *editor-hold* (first *editor-hold*)))
+thread waits between two commands all the while, and return what it
+returns: for work in the background that changes what commands use (a
+package's definitions loaded), so that no command runs meanwhile. Keys
+pressed meanwhile wait and are handled after. *EDITOR* is the running
+editor's in FUNCTION, as in a command. The work is meant to take
+milliseconds: one that takes more than *EDITOR-HELD-SECONDS* is a fault,
+said, WORDS saying what it is, and \\`C-g' then stops it (WAIT-WHILE-HELD).
+On the editor's own thread, or with no editor running, FUNCTION is called at
+once. An error when the editor stops before it waits."
+  (if (not (away-from-editor-p))
       (funcall function)
-      (let ((*editor-hold* (list (or (hold-editor) (error "The editor stopped before the work could be done")))))
-        (unwind-protect (funcall function)
-          (when (first *editor-hold*)
-            (release-editor (first *editor-hold*)))))))
-
-(defun call-with-editor-let-go (function)
-  "Call FUNCTION, part of work holding the editor's thread
-\(CALL-WITH-EDITOR-HELD) that takes long and changes nothing commands use,
-with the editor going on with its commands meanwhile, and hold it again
-after; return what FUNCTION returns. Elsewhere, call FUNCTION. An error when
-the editor stops meanwhile."
-  (let ((cell *editor-hold*))
-    (if (and cell (first cell))
-        (progn (release-editor (first cell))
-               (setf (first cell) nil)
-               (multiple-value-prog1 (funcall function)
-                 (setf (first cell) (or (hold-editor) (error "The editor stopped before the work could be done")))))
-        (funcall function))))
+      (let ((hold (or (hold-editor words) (error "The editor stopped before the work could be done"))))
+        (unwind-protect (let ((*editor* (editor-hold-editor hold))) (funcall function))
+          (setf (editor-hold-state hold) :released)
+          (sb-thread:signal-semaphore (editor-hold-go-on hold))))))
 
 (defvar *exit-functions* '()
   "Functions called with the editor once its command loop has stopped, however

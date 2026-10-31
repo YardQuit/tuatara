@@ -373,6 +373,13 @@ run before it had loaded run (*COMMANDS-AFTER-LOAD*)."
     (setf *commands-after-load* (remove name *commands-after-load* :key #'first :test #'string=))
     (dolist (entry (reverse commands)) (defer-action (cddr entry)))))
 
+(defvar *package-compiling* nil
+  "How a package's files that changed are compiled as it loads: NIL, here, at
+once; :APART, here in a process compiling it apart from the editor
+\(COMPILE-PACKAGE-CHILD), saying so on its output the first time; :REFUSED,
+not at all, an error, while the editor waits for the loading of what was
+compiled apart (START-PACKAGE-LOAD).")
+
 (defun package-load-ended (name where start loaded failure)
   "What follows the loading of the package NAME from WHERE, begun at START
 \(internal real time): when it loaded (LOADED, the file it was loaded by),
@@ -404,28 +411,30 @@ the init file is not being read, which goes on only once its packages have
 loaded."
   (and (running-editor) (not (away-from-editor-p)) (null *start-package-times*)))
 
-(defun loading-package (name where load &optional then)
+(defun loading-package (name where load &optional then compile)
   "Load the package NAME by calling LOAD, then what follows (PACKAGE-LOADED),
 timed: said in *Messages*, WHERE being where it is loaded from, with the
 milliseconds it took; a failure said on the echo row too, the package not
 counted as loaded (PACKAGE-LOAD-ENDED). THEN, a function, is called with the
-file loaded, or NIL when it failed, and what it returns returned. While the
-editor's session runs (LOAD-IN-BACKGROUND-P) the package is compiled and
-loaded in the background (START-PACKAGE-LOAD), the editor going on with
-your keys meanwhile, and THEN called on the editor's thread once it has
-loaded: NIL is returned at once, and without THEN, once it has loaded,
-that it was compiled and loaded is said. Without THEN, what LOAD returned is
-returned, or NIL."
+file loaded, or NIL when it failed, and true as a second argument when it
+was stopped on purpose; what it returns is returned. While the editor's
+session runs (LOAD-IN-BACKGROUND-P) the package is loaded in the background
+\(START-PACKAGE-LOAD): COMPILE, a function of the job, compiles it first
+apart from the editor, which goes on with your keys meanwhile; LOAD then
+runs while the editor waits, and THEN is called on the editor's thread once
+it has loaded: NIL is returned at once, and without THEN, once it has
+loaded, that it was compiled and loaded is said. Without THEN, what LOAD
+returned is returned, or NIL."
   (let ((start (get-internal-real-time))
         (given then)
         (then (or then #'identity)))
     (if (load-in-background-p)
-        (progn (start-package-load name where load
-                                   (lambda (loaded failure compiled)
+        (progn (start-package-load name where load compile
+                                   (lambda (loaded failure compiled stopped)
                                      (let ((loaded (package-load-ended name where start loaded failure)))
                                        (when (and loaded compiled (not given))
                                          (message "The package ~a is compiled and loaded" name))
-                                       (funcall then loaded))))
+                                       (if given (funcall then loaded stopped) (funcall then loaded)))))
                nil)
         (multiple-value-bind (loaded failure) (handler-case (funcall load) (error (e) (values nil e)))
           (funcall then (package-load-ended name where start loaded failure))))))
@@ -827,7 +836,11 @@ rest). Faces and settings they define stay, doing nothing."
   "Refuse the package CHECK is about, for the names NEEDED (NEEDED-NAME) it
 uses that are not there: its files and those names kept to refuse it again
 before it loads (BESIDE-FASL), what of it loaded taken out
-\(FORGET-PACKAGE-CODE), and a PACKAGE-LACKS-NAMES error signalled."
+\(FORGET-PACKAGE-CODE), and a PACKAGE-LACKS-NAMES error signalled. Nothing is
+refused while a package is compiled apart (*PACKAGE-COMPILING* :APART), where
+names the editor has may be missing: the editor refuses it as it loads."
+  (when (member *package-compiling* '(:apart :apart-said))
+    (return-from refuse-package nil))
   (let* ((own (package-check-own check))
          (words (sort (remove-duplicates (mapcar (lambda (n) (needed-name-words n own)) needed) :test #'string=)
                       #'string<)))
@@ -843,8 +856,9 @@ before it loads (BESIDE-FASL), what of it loaded taken out
 (defun refuse-as-before (check)
   "Refuse at once the package CHECK is about when it was refused for names
 this Tuatara lacks (BESIDE-FASL), its files are as they were then and those
-names are not there still; else forget that it was."
-  (let ((file (package-check-refusal check)))
+names are not there still; else forget that it was. Not while a package is
+compiled apart (REFUSE-PACKAGE)."
+  (let ((file (and (not (member *package-compiling* '(:apart :apart-said))) (package-check-refusal check))))
     (multiple-value-bind (kept read) (read-kept-list file)
       (when read
         (let* ((needs (ignore-errors (getf kept :needs)))
@@ -866,8 +880,7 @@ names are not there still; else forget that it was."
 code uses without defining them (BESIDE-FASL), which it returns. Its
 other warnings are said in *Messages*, the first of them; a file that cannot
 be compiled at all is an error saying why (an unclosed parenthesis, where).
-In a package's loading in the background the editor goes on with your keys
-while it compiles (CALL-WITH-EDITOR-LET-GO)."
+Where it may be compiled is *PACKAGE-COMPILING*'s (NOTE-PACKAGE-COMPILING)."
   (let ((*package* (find-package :tuatara-user))
         (said '())
         (needed '())
@@ -879,13 +892,10 @@ while it compiles (CALL-WITH-EDITOR-LET-GO)."
                                                     ((not (typep w 'style-warning)) (push (princ-to-string w) said))))
                                             (muffle-warning w))))
                     (let ((*error-output* report))
-                      (note-package-compiling)
-                      ;; the longest part of loading a package: the editor goes on meanwhile
-                      (call-with-editor-let-go
-                       (lambda ()
-                         ;; a compilation unit of its own: what it finds undefined is said at its end
-                         (with-compilation-unit (:override t)
-                           (compile-file file :output-file fasl :verbose nil :print nil))))))))
+                      (note-package-compiling file)
+                      ;; a compilation unit of its own: what it finds undefined is said at its end
+                      (with-compilation-unit (:override t)
+                        (compile-file file :output-file fasl :verbose nil :print nil))))))
       (unless output
         (error "~a could not be compiled~@[: ~a~]" (abbreviated-path (tuatara.io:native file))
                (or (compile-failure-words (get-output-stream-string report)) (first said))))
@@ -934,7 +944,17 @@ its files have loaded, Tuatara's above all: a package load-package loads
 that uses a name this Tuatara lacks is refused, with an error naming them,
 and what of it loaded is taken out again. A name of Tuatara's or of another
 library is looked for before the file using it loads; a package refused is
-refused again before any of it loads, until its files or Tuatara change."
+refused again before any of it loads, until its files or Tuatara change.
+
+A package loaded while the editor runs is first compiled in a process of
+its own, Tuatara run again without a window or a buffer shown, where its
+files load as they are compiled; then they are loaded in the editor, the
+editor waiting meanwhile, *EDITOR* the editor's. So the code a package runs
+as it loads runs twice, once there with no editor: it defines, binds keys
+and adds to lists, and leaves to its commands anything that needs the
+editor, a buffer, or changes outside Tuatara (files written, programs
+started). Where it fails there, the package is compiled as it loads in the
+editor instead."
   (let ((file (tuatara-user:package-file name)))
     (unless (probe-file file) (error "The package has no file ~a" (abbreviated-path (tuatara.io:native file))))
     (if (or *package-check* (not *loading-package-name*))
@@ -1057,29 +1077,38 @@ than this one: it is not loaded."))
       (documentation 'package-needs-newer-tuatara-needed 'function) "The version of Tuatara it needs.")
 
 (defvar *loaded-package-folders* '()
-  "The folder each package loaded this session was loaded from, each (NAME .
-FOLDER): never deleted while the editor runs.")
+  "The folder each package loaded this session was loaded from, each (NAME
+FOLDER FILE), FILE its entry when named, the one loaded last first: never
+deleted while the editor runs.")
+
+(defun load-package-entry (folder name file)
+  "Load the package called NAME in FOLDER by its entry (PACKAGE-ENTRY), FILE
+when given, its files compiled when they have changed since; one that needs
+a newer Tuatara (PACKAGE-NEEDED-VERSION) is an error, nothing of it loaded.
+Returns its entry's file."
+  (let ((entry (or (package-entry folder name file)
+                   (error "The package ~a has no ~:[~a.lisp or load.lisp~;~:*~a~] in ~a" name file name
+                          (abbreviated-path (tuatara.io:native folder)))))
+        (needed (unfitting-version folder name file)))
+    (when needed
+      (error 'package-needs-newer-tuatara :name name :needed needed))
+    (let ((*package-folder* folder) (*loading-package-name* name) (*package-check* nil))
+      (prog1 (tuatara-user:load-package-file entry)
+        (setf *loaded-package-folders*
+              (cons (list name (tuatara.io:native folder) file)
+                    (remove name *loaded-package-folders* :key #'first :test #'string=)))))))
 
 (defun load-package-folder (folder name file &optional then)
-  "Load the package called NAME in FOLDER by its entry (PACKAGE-ENTRY), its
-files compiled, then what follows (LOADING-PACKAGE): its :config, the
-packages waiting for it, the time it took said. One that needs a newer
-Tuatara (PACKAGE-NEEDED-VERSION) is not loaded. Returns its entry's file, or
-NIL when it failed or loads in the background; THEN, when given, is called
-with that once it has loaded, and what it returns returned (LOADING-PACKAGE)."
+  "Load the package called NAME in FOLDER by its entry (LOAD-PACKAGE-ENTRY),
+its files compiled, then what follows (LOADING-PACKAGE): its :config, the
+packages waiting for it, the time it took said. Returns its entry's file, or
+NIL when it failed or loads in the background, its files compiled apart
+\(COMPILE-PACKAGE-APART); THEN, when given, is called with that once it has
+loaded, and what it returns returned (LOADING-PACKAGE)."
   (loading-package name (abbreviated-path (tuatara.io:native folder))
-                   (lambda ()
-                     (let ((entry (or (package-entry folder name file)
-                                      (error "The package ~a has no ~:[~a.lisp or load.lisp~;~:*~a~] in ~a" name file name
-                                             (abbreviated-path (tuatara.io:native folder)))))
-                           (needed (unfitting-version folder name file)))
-                       (when needed
-                         (error 'package-needs-newer-tuatara :name name :needed needed))
-                       (let ((*package-folder* folder) (*loading-package-name* name) (*package-check* nil))
-                         (prog1 (tuatara-user:load-package-file entry)
-                           (setf *loaded-package-folders*
-                                 (acons name (tuatara.io:native folder) (remove name *loaded-package-folders* :key #'car :test #'string=)))))))
-                   then))
+                   (lambda () (load-package-entry folder name file))
+                   then
+                   (lambda (job) (compile-package-apart job folder name file))))
 
 (defun package-question (name where folder then &optional signer)
   "Ask whether to compile and load the package NAME from WHERE, kept in
@@ -1718,7 +1747,7 @@ loaded, and fetches that version again when it next needs it."
                      when (uiop:string-prefix-p prefix (first entry))
                        collect (second entry)
                        and when (fifth entry) collect (fifth entry)))
-         (loaded (cdr (assoc name *loaded-package-folders* :test #'string=))))
+         (loaded (second (assoc name *loaded-package-folders* :test #'string=))))
     (dolist (folder (ignore-errors (uiop:subdirectories (package-kept-folder where name))))
       (let ((native (tuatara.io:native folder))
             (commit (car (last (pathname-directory folder)))))
@@ -1746,15 +1775,15 @@ again as the one taken, said, and loaded in its place once who signed it is
 checked against the trust in force now (START-PACKAGE-CHECK). Gives
 :TAKEN and the file loaded, :PREVIOUS when the version before it is being
 checked, or NIL: to THEN, a function of them, when given, once it has
-loaded, which may be later, in the background (LOAD-PACKAGE-FOLDER), and
+loaded (a loading stopped on purpose falls back on nothing), which may be later, in the background (LOAD-PACKAGE-FOLDER), and
 returns what THEN returns; else returns them, or NIL when it loads later."
   (load-package-folder
    folder name file
-   (lambda (loaded)
+   (lambda (loaded &optional stopped)
      (multiple-value-call (or then #'values)
        (if loaded
            (values :taken loaded)
-           (let ((back (and before (package-folder-of name where before))))
+           (let ((back (and before (not stopped) (package-folder-of name where before))))
              (when (and back (probe-file back))
                (state-list-put *fetched-packages* (list before))
                (message "The package ~a could not be loaded (~a): the version before it, ~a, is loaded in its place once who signed it is checked"
@@ -1844,50 +1873,170 @@ TAKE-PACKAGE-IN-HAND); let go again when the job cannot be started."
           (let-package-go job)
           (setf *fetching-packages* (remove name *fetching-packages* :test #'string=)))))))
 
-(defun start-package-load (name where load then)
-  "Compile and load the package NAME, of WHERE, in the background by calling
-LOAD on a job's thread, the editor going on with your keys while its files
-compile; the rest of the loading, which changes what commands use, done
-while the editor waits between two commands (CALL-WITH-EDITOR-HELD). The
-package is held in hand meanwhile (*PACKAGES-IN-HAND*), from the fetch or
-check deciding on it when there is one. Once it has loaded, THEN is called
-on the editor's thread with the file it was loaded by, or NIL, the error
-that ended it, or NIL, and true when a file of it was compiled. Returns the
-job."
-  (let ((job (make-package-fetch name where nil nil nil)))
+(defun start-package-load (name where load compile then)
+  "Load the package NAME, of WHERE, in the background: a job calls COMPILE,
+a function of it, which compiles the package apart from the editor
+\(COMPILE-PACKAGE-APART), the editor going on with your keys meanwhile; then
+LOAD, the editor waiting between two commands all the while it runs
+\(CALL-WITH-EDITOR-HELD), so that no command runs with the package part
+loaded, nor compiles any of it there (*PACKAGE-COMPILING* :REFUSED); when it
+could not be compiled apart, what is left to compile is compiled as it
+loads, the editor waiting for that too. The
+package is held in hand meanwhile (*PACKAGES-IN-HAND*), taken over from the
+fetch or check deciding on it; while another fetch, check or loading holds
+it, nothing starts, said (TAKE-PACKAGE-IN-HAND). Once it has loaded, THEN
+is called on the editor's thread with the file it was loaded by, or NIL, the
+error that ended it, or NIL, true when a file of it was compiled, and true
+when it was stopped on purpose. Returns the job, or NIL."
+  (let ((job (make-package-fetch name where nil nil nil))
+        (deciding *package-job-deciding*))
     (setf (package-fetch-load job) load
-          (package-fetch-then job) then
-          *packages-in-hand* (acons name job (remove name *packages-in-hand* :key #'car :test #'string=)))
-    (tuatara.runtime:start-job-thread
-     job
-     (lambda (job)
-       (multiple-value-bind (loaded failure)
-           (handler-case (call-with-editor-held load)
-             (error (e) (values nil e)))
-         (setf (package-fetch-loaded job) loaded
-               (package-fetch-failure job) failure)))
-     :name "tuatara package load")))
+          (package-fetch-then job) then)
+    (when (if (and deciding (eq (cdr (assoc name *packages-in-hand* :test #'string=)) deciding))
+              (progn (setf (cdr (assoc name *packages-in-hand* :test #'string=)) job) t)
+              (take-package-in-hand job))
+      (tuatara.runtime:start-job-thread
+       job
+       (lambda (job)
+         (multiple-value-bind (loaded failure)
+             (handler-case
+                 (let ((apart (and compile (funcall compile job))))
+                   (tuatara.runtime:job-check-stop)
+                   (call-with-editor-held (lambda () (let ((*package-compiling* (if apart :refused nil))) (funcall load)))
+                                          :words (format nil "Loading the package ~a" name)))
+               (error (e) (values nil e)))
+           (setf (package-fetch-loaded job) loaded
+                 (package-fetch-failure job) failure)))
+       :name "tuatara package load"))))
 
 (defun package-load-taken-in (job)
   "Finish the loading JOB did in the background (START-PACKAGE-LOAD): its
 package let go, and its THEN called with what it loaded, the error that
-ended it or why it stopped, and whether a file of it was compiled."
+ended it or why it stopped, whether a file of it was compiled, and whether
+it was stopped on purpose."
   (let-package-go job)
-  (funcall (package-fetch-then job)
-           (and (eq (package-fetch-status job) :done) (package-fetch-loaded job))
-           (case (package-fetch-status job)
-             (:done (package-fetch-failure job))
-             (:stopped "it was stopped")
-             (t (or (tuatara.runtime:job-error job) "it ended unexpectedly")))
-           (package-fetch-compiled job)))
+  (let ((status (package-fetch-status job)))
+    (funcall (package-fetch-then job)
+             (and (eq status :done) (package-fetch-loaded job))
+             (case status
+               (:done (package-fetch-failure job))
+               (:stopped "it was stopped")
+               (t (or (tuatara.runtime:job-error job) "it ended unexpectedly")))
+             (package-fetch-compiled job)
+             (eq status :stopped))))
 
-(defun note-package-compiling ()
-  "In a package's loading in the background (START-PACKAGE-LOAD), as its
-first file to be compiled begins: noted in its job, and said."
-  (let ((job tuatara.runtime:*job*))
-    (when (and (package-fetch-p job) (package-fetch-load job) (not (package-fetch-compiled job)))
-      (setf (package-fetch-compiled job) t)
-      (message "Compiling the package ~a in the background..." (package-fetch-name job)))))
+;;; Compiling a package apart
+
+(defparameter *package-compiling-line* ";;; tuatara: compiling"
+  "What a process compiling a package apart prints on a line of its own as it
+begins compiling a file of it (COMPILE-PACKAGE-CHILD).")
+
+(defparameter *package-child-said-lines* 40
+  "The most lines kept of what a process compiling a package apart said, the
+last ones, to say why it failed.")
+
+(defun note-package-compiling (file)
+  "As FILE, of a package, is about to be compiled: an error while the editor
+waits for a package to load (*PACKAGE-COMPILING* :REFUSED), for FILE changed
+after the package was compiled apart; said on the output the first time in
+a process compiling a package apart (:APART)."
+  (case *package-compiling*
+    (:refused (error "~a changed while the package was being compiled; it loads as changed the next time it is loaded"
+                     (abbreviated-path (tuatara.io:native file))))
+    (:apart (format t "~&~a~%" *package-compiling-line*)
+     (finish-output)
+     (setf *package-compiling* :apart-said))))
+
+(defun package-request-text (folder name file)
+  "What a process compiling the package NAME in FOLDER apart is given to do
+\(COMPILE-PACKAGE-CHILD), as text read back without evaluating anything: the
+package, FILE its entry when named; the packages loaded so far, to load
+first, oldest first; and where this Tuatara keeps compiled packages."
+  (with-standard-io-syntax
+    (let ((*print-readably* t))
+      (prin1-to-string
+       (list :name name :folder (tuatara.io:native folder) :file file
+             :prelude (reverse (remove name *loaded-package-folders* :key #'first :test #'string=))
+             :cache (tuatara.io:native (tuatara.io:cache-directory))
+             :packages (packages-directory)
+             :identity (tuatara-identity))))))
+
+(defun package-compiler-command (request)
+  "The command that runs this Tuatara again to compile a package apart, as
+REQUEST, a file, says (COMPILE-PACKAGE-CHILD): the saved executable with
+--compile-package, or, run from its sources, SBCL loading them first."
+  (if tuatara.io:*saved-program*
+      (list tuatara.io:*saved-program* "--compile-package" request)
+      (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--non-interactive" "--no-sysinit" "--no-userinit"
+            "--load" (uiop:native-namestring (asdf:system-relative-pathname :tuatara "tools/quicklisp.lisp"))
+            "--eval" (format nil "(progn (push ~s asdf:*central-registry*) (funcall (find-symbol \"QUICKLOAD\" \"QL\") :tuatara/defaults :silent t))"
+                             (uiop:native-namestring (asdf:system-source-directory :tuatara)))
+            "--eval" (format nil "(sb-ext:exit :code (tuatara.defaults::compile-package-child ~s) :abort t)" request))))
+
+(defun compile-package-apart (job folder name file)
+  "Compile the package NAME in FOLDER, FILE its entry when named, in a process
+of its own, this Tuatara run again (PACKAGE-COMPILER-COMMAND): it loads the
+packages loaded here so far, then this one, compiling what changed, as a
+load here would, so that its compile-time code never runs in the editor.
+JOB is the loading's: stopping it ends that process; its COMPILED turns true
+as a file of it begins compiling, said. True when it was all compiled so;
+NIL when it failed there, as code of the package's that needs what only the
+editor has does, the last of what the process said kept in *Messages*. It
+is refused for names this Tuatara lacks only as it loads in the editor
+\(REFUSE-PACKAGE)."
+  (let ((request (format nil "~acompile-~a.request" (package-cache) (tuatara.io:random-name)))
+        (said '()) (kept 0))
+    (tuatara.io:ensure-private-directory (package-cache))
+    (tuatara.io:write-private-file request (package-request-text folder name file))
+    (unwind-protect
+         (let ((code (tuatara.io:call-with-program
+                      (package-compiler-command request)
+                      (lambda (process)
+                        (loop for line = (read-line (sb-ext:process-output process) nil)
+                              while line
+                              do (cond ((string= line *package-compiling-line*)
+                                        (unless (package-fetch-compiled job)
+                                          (setf (package-fetch-compiled job) t)
+                                          (message "Compiling the package ~a in the background..." name)))
+                                       (t (push line said)
+                                          (when (> (incf kept) *package-child-said-lines*)
+                                            (setf said (subseq said 0 *package-child-said-lines*) kept *package-child-said-lines*)))))
+                        (sb-ext:process-wait process)
+                        (sb-ext:process-exit-code process))
+                      :job job :output :stream :error :output
+                      :environment (cons "TUATARA_HEAP_DECIDED=1" (sb-ext:posix-environ)))))
+           (tuatara.runtime:job-check-stop)
+           (cond ((eql code 0) t)
+                 (t (let ((words (format nil "The package ~a could not be compiled apart from the editor, and is compiled as it loads~@[: ~{~a~^ ~}~]"
+                                         name (reverse (mapcar (lambda (l) (string-trim " ;" l)) (remove "" said :test #'string=))))))
+                      ;; *Messages* is the editor's
+                      (defer-action (lambda () (log-message words))))
+                    nil)))
+      (ignore-errors (delete-file request)))))
+
+(defun compile-package-child (request)
+  "Compile a package as REQUEST, a file PACKAGE-REQUEST-TEXT wrote, says: what
+`tuatara --compile-package REQUEST' does, in a process of its own. The
+packages loaded in the editor are loaded first, one that fails left out,
+then the package, each file compiled that changed since, as a load in the
+editor would, into the same place (PACKAGE-FASL), nothing refused
+\(REFUSE-PACKAGE). Returns the exit code: 0 when it loaded, 1 when it
+failed, why printed."
+  (handler-case
+      (let ((plist (with-standard-io-syntax
+                     (let ((*read-eval* nil)) (read-from-string (tuatara.io:file-text request))))))
+        (setf *tuatara-identity* (getf plist :identity)
+              tuatara-user:*cache-directory* (getf plist :cache)
+              tuatara-user:*packages-directory* (getf plist :packages))
+        (let ((*package-compiling* :apart))
+          (loop for (name folder file) in (getf plist :prelude)
+                do (handler-case (load-package-entry (pathname folder) name file)
+                     (error (e) (format t "~&~a was left out: ~a~%" name e))))
+          (load-package-entry (pathname (getf plist :folder)) (getf plist :name) (getf plist :file)))
+        0)
+    (serious-condition (e)
+      (format t "~&~a~%" e)
+      1)))
 
 (defun start-package-fetch (name where version file key &key quiet)
   "Fetch the package NAME (FETCH-PACKAGE) in the background, and see who
@@ -2577,7 +2726,7 @@ things are now on the editor's thread: no package or source named since
 wants it (UNUSED-PACKAGE-FOLDERS), and nothing of it is being fetched,
 checked, decided on or loaded from."
   (and (member folder (unused-package-folders) :key #'car :test #'string=)
-       (notany (lambda (loaded) (tuatara.io:path-within-p (cdr loaded) folder)) *loaded-package-folders*)))
+       (notany (lambda (loaded) (tuatara.io:path-within-p (second loaded) folder)) *loaded-package-folders*)))
 
 (defun sweep-next (folders freed deleted)
   "Delete the first of FOLDERS (each (FOLDER WORDS OCTETS)) still unused
