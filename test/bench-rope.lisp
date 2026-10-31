@@ -7,6 +7,13 @@
 ;;;; fresh processes, rounded up; the margin leaves room for other work running
 ;;;; on the same machine.  The single-position lookups take microseconds, below
 ;;;; what the clock tells apart from a context switch, so they keep 0.05 ms.
+;;;; A benchmark that runs more than once is run once untimed first: in a fresh
+;;;; process the first run of the 33 MB batches takes 45 to 65 ms, 2.5 times a
+;;;; later one, from the first touch of memory the heap has not used yet, and
+;;;; the collections they set off take 75 ms (one run in nine, 130 ms for the
+;;;; file rope); the best of the timed runs is what is kept, so neither counts.
+;;;; A 59 ms best once seen came from other work on the machine slowing every
+;;;; run in a pass; it did not come back in ten fresh processes.
 ;;;; Set a budget again from such runs, never by raising it to make a failure
 ;;;; pass.
 

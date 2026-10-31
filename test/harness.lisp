@@ -42,7 +42,8 @@ in seconds as a double (nanosecond clock), and the bytes consed while it ran
   "Register a benchmark called NAME (a symbol) that runs BODY.
 BUDGET-MS is the wall-time budget in milliseconds, or
 NIL for an unbudgeted measurement. REPS is how many times BODY runs; the best
-time is reported. Redefining a benchmark replaces the earlier registration."
+time is reported. When REPS is more than one, BODY first runs once more,
+untimed, so that the first touch of fresh memory is not in any timed run. Redefining a benchmark replaces the earlier registration."
   `(progn
      (setf *benchmarks* (remove ',name *benchmarks* :key (lambda (b) (getf b :name))))
      (push (list :name ',name :thunk (lambda () ,@body) :budget-ms ,budget-ms :reps ,reps)
@@ -54,6 +55,7 @@ time is reported. Redefining a benchmark replaces the earlier registration."
 A collection runs first so that garbage from earlier work does not land in the measurement."
   (let ((best most-positive-double-float) (bytes 0))
     (sb-ext:gc)
+    (when (> (getf bench :reps) 1) (funcall (getf bench :thunk)))
     (dotimes (i (getf bench :reps))
       (multiple-value-bind (result seconds consed) (measuring (funcall (getf bench :thunk)))
         (declare (ignore result))
