@@ -339,17 +339,17 @@ gives before reading any, and those read so far, newest first. So a key the
 command asks for is asked once and given at every place.")
 
 (defun discard-typed-ahead (editor)
-  "Throw away the keys typed to EDITOR and not read yet, those waiting in
-the frontend too, so that a question asked now is answered only by a key
-pressed once it is shown. Reading stops at a wake-up (a tick); a window
-resized, closed, files dropped or text pasted are kept to be dealt with."
-  (setf (editor-unread editor)
-        (remove :key (editor-unread editor) :key #'tuatara.frontend:event-kind))
+  "Throw away the keys typed to EDITOR, waiting in its frontend and not read
+yet, so that a question asked now is answered only by a key pressed once it
+is shown. Reading stops at a wake-up (a tick), which is kept; a window
+resized, closed, files dropped or text pasted are kept to be dealt with, as
+are keys a command left unread on purpose."
   (let ((frontend (editor-frontend editor)) (kept '()))
     (loop while (tuatara.frontend:frontend-input-pending-p frontend)
           do (let ((event (tuatara.frontend:frontend-read-event-timeout frontend 0)))
                (case (and event (tuatara.frontend:event-kind event))
-                 ((nil :tick) (return))
+                 ((nil) (return))
+                 (:tick (push event kept) (return))
                  (:key)
                  (t (push event kept)))))
     (setf (editor-unread editor) (append (editor-unread editor) (nreverse kept)))))
