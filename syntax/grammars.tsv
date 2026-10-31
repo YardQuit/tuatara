@@ -105,7 +105,7 @@ v	https://github.com/vlang/v-analyzer	59a8889d84a293d7c0366d14c8dbb0eec24fe889	M
 hare	https://git.sr.ht/~ecs/tree-sitter-hare	07035a248943575444aa0b893ffe306e1444c0ab	GPL-3.0-only
 crystal	https://github.com/crystal-lang-tools/tree-sitter-crystal	50ca9e6fcfb16a2cbcad59203cfd8ad650e25c49	MIT
 purescript	https://github.com/postsolar/tree-sitter-purescript	f541f95ffd6852fbbe88636317c613285bc105af	MIT
-sml	https://github.com/Giorbo/tree-sitter-sml	bd4055d5554614520d4a0706b34dc0c317c6b608	MIT
+sml	https://github.com/MatthewFluet/tree-sitter-sml	105585ae935d8662ab61ce2f5479c35d2b1e456e	MIT
 prolog	https://codeberg.org/foxy/tree-sitter-prolog	d8d415f6a1cf80ca138524bcc395810b176d40fa	0BSD	grammars/prolog
 tcl	https://github.com/tree-sitter-grammars/tree-sitter-tcl	56ad1fa6a34ba800e5495d1025a9b0fda338d5b8	MIT
 pascal	https://github.com/Isopod/tree-sitter-pascal	042119eca2e18a60e56317fb06ee3ba5c32cb447	MIT

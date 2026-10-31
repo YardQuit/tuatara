@@ -310,7 +310,9 @@ and the Quicklisp folder."
                    "ckafi/tree-sitter-elvish" "theHamsta/tree-sitter-glsl" "santhoshtr/tree-sitter-wikitext"
                    "amaanq/tree-sitter-kdl" "eonpatapon/tree-sitter-cue" "erasin/tree-sitter-po"
                    "MaeBrooks/tree-sitter-gren" "rhizoome/tree-sitter-ink" "jzelinskie/tree-sitter-spicedb"
-                   "Philipp-M/tree-sitter-yuck"))
+                   "Philipp-M/tree-sitter-yuck"
+                   ;; copies of a grammar kept on elsewhere: taken from where it is kept
+                   "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)
              "~a has moved" old))
     (dolist (orphan '("3d7c53b8038f9ebbb57cd2e61296180aa5c1cf64" "29f9c6707ce9dfc2fc915d175ec720b207f179f3"
