@@ -132,7 +132,7 @@ window at a time, on the stack. Complexity: O(END - START)."
   (let ((window (make-array 65536 :element-type '(unsigned-byte 8)))
         (headlines '()) (todo-lines '()) (code-lines '())
         (low start) (high start))
-    (declare (dynamic-extent window) (type fixnum low high))
+    (declare (dynamic-extent window) (type (simple-array (unsigned-byte 8) (65536)) window) (type fixnum low high))
     (flet ((octet-at (p)
              (declare (type fixnum p))
              (if (< p high) (aref window (- p low)) (tuatara.text:rope-octet rope p))))
@@ -143,7 +143,9 @@ window at a time, on the stack. Complexity: O(END - START)."
                (let ((line low))
                  (declare (type fixnum line))
                  (loop
-                   (multiple-value-bind (kind commented) (org-line-kind #'octet-at line end)
+                   (multiple-value-bind (kind commented)
+                       ;; only a line beginning with a star, a blank, # or : may be one
+                       (and (member (aref window (- line low)) '(42 32 9 35 58)) (org-line-kind #'octet-at line end))
                      (case kind
                        ((nil))
                        (:todo (push line todo-lines))
@@ -226,21 +228,21 @@ that changed it. As a second value, true when it holds a #+TODO: line."
                         found #'<)))
           (setf todo-lines (kept (fifth touched) todo-lines)
                 code-lines (kept (sixth touched) code-lines))))
-      (let ((begins (cond ((and headlines (= (car (first headlines)) start)) headlines)
+      (let ((held (and todo-lines t))
+            (begins (cond ((and headlines (= (car (first headlines)) start)) headlines)
                           ((and touched (> from start)) (cons (list start (first touched) (second touched)) headlines))
                           (t (cons (list start 0 nil) headlines)))))
         (values (loop for ((begin level commented) next) on begins
                       for part-end = (if next (car next) end)
-                      collect (flet ((within (lines)
-                                       (loop for line in lines
-                                             when (and (<= begin line) (< line part-end))
-                                               collect (- line begin))))
-                                (let ((part (make-org-part level (within todo-lines))))
-                                  (setf (org-part-code-lines part) (within code-lines)
-                                        (org-part-commented part) commented
-                                        (org-part-changed part) changed)
-                                  (cons begin part))))
-                (and todo-lines t))))))
+                      ;; the lines in order, each taken by the part it is in
+                      collect (let ((part (make-org-part level (loop while (and todo-lines (< (first todo-lines) part-end))
+                                                                     collect (- (pop todo-lines) begin)))))
+                                (setf (org-part-code-lines part) (loop while (and code-lines (< (first code-lines) part-end))
+                                                                       collect (- (pop code-lines) begin))
+                                      (org-part-commented part) commented
+                                      (org-part-changed part) changed)
+                                (cons begin part)))
+                held)))))
 
 (defun org-parts-take-edits (parts batches rope changed)
   "Bring PARTS up to ROPE, the text after BATCHES (the edit batches since the

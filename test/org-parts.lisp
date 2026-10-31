@@ -395,3 +395,21 @@ headline's title objects too), to tell two parses apart."
                (tuatara.defaults::org-prose-p buffer 20)))
            (true (<= worked 2) "worked out ~d times" worked))
       (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals parts-found-in-time-with-their-number)
+  ;; the parts of a note with many headlines and blocks are found in time growing with them alone: each part
+  ;; looked through all the block lines of the text, 0.9 s for a note of 10 MB
+  (flet ((seconds (count)
+           (let ((buffer (org-parts-buffer (with-output-to-string (out)
+                                             (dotimes (i count) (format out "* H~d~%#+begin_src lisp~%(f)~%#+end_src~%" i)))
+                                           nil)))
+             (unwind-protect
+                  (loop repeat 2
+                        minimize (progn
+                                   (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::org-parts) nil)
+                                   (let ((start (get-internal-real-time)))
+                                     (tuatara.defaults::org-buffer-parts buffer)
+                                     (/ (- (get-internal-real-time) start) internal-time-units-per-second))))
+               (tuatara.buffer:kill-buffer buffer)))))
+    (let ((per-thousand (/ (- (seconds 32000) (seconds 8000)) 24)))
+      (true (< per-thousand 5/1000) "~,2f ms for each thousand parts more" (* 1000 per-thousand)))))
