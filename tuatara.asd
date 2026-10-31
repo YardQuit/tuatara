@@ -24,7 +24,7 @@
                (:module "io"       :serial t :components ((:file "package") (:file "posix") (:file "kinds") (:file "files") (:file "sandbox") (:file "operations") (:file "zip")))
                ;; time zones, read from the system's zoneinfo files as io reads files
                (:module "zones"    :pathname "dates" :components ((:file "zones")))
-               (:module "syntax"   :serial t :components ((:file "package") (:file "named-patterns") (:file "search") (:file "tree-sitter") (:file "parsing") (:file "highlight") (:file "navigation")))
+               (:module "syntax"   :serial t :components ((:file "package") (:file "named-patterns") (:file "search") (:file "helper") (:file "tree-sitter") (:file "parsing") (:file "highlight") (:file "navigation")))
                (:module "frontend" :serial t :components ((:file "package") (:file "interface")))
                (:module "display"  :serial t :components ((:file "package") (:file "faces") (:file "width") (:file "layout") (:file "folds") (:file "hex") (:file "window") (:file "splits")))
                (:module "command"  :serial t :components ((:file "package") (:file "keymap") (:file "command") (:file "completion") (:file "editor") (:file "panel") (:file "dispatch") (:file "menu") (:file "redisplay") (:file "minibuffer") (:file "session") (:file "recorded-keys") (:file "keys") (:file "popup") (:file "windows")))

@@ -59,6 +59,25 @@ of *LSP-TRUSTED-PROJECTS* (where they really are)."
              (some (lambda (trusted) (tuatara.io:path-within-p real trusted))
                    (trusted-setting-folders))))))
 
+(defun buffer-in-trusted-project-p (buffer)
+  "True when BUFFER visits a file of a project you trust (PROJECT-TRUSTED-P):
+its text is then parsed by the program shared by such files, not one of its
+own. Looked up again only when the file, the projects trusted when asked or
+*LSP-TRUSTED-PROJECTS* change."
+  (let* ((file (tuatara.buffer:buffer-file buffer))
+         (key (list file (state-list-entries *lsp-trusted*) *lsp-trusted-projects*))
+         (seen (tuatara.buffer:buffer-local buffer :trusted-project-seen)))
+    (if (and seen (equal (car seen) key))
+        (cdr seen)
+        ;; where the file really is, every link followed: a link in a trusted
+        ;; project to a file elsewhere lends it no trust
+        (let* ((real (and file (ignore-errors (tuatara.io:real-path (tuatara.io:native (tuatara.io:expand-path file))))))
+               (answer (and real
+                            (let ((root (project-root (tuatara.io:parent-path real))))
+                              (and root (project-trusted-p root) t)))))
+          (setf (tuatara.buffer:buffer-local buffer :trusted-project-seen) (cons key answer))
+          answer))))
+
 (defun trust-project (root)
   "True when the project at ROOT may run its own programs: trusted already,
 or asked now, and remembered when the answer is yes. The question says all a

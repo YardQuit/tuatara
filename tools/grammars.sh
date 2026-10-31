@@ -4,7 +4,8 @@
 # Fetch the tree-sitter library and the grammars listed in syntax/grammars.tsv,
 # each at its pinned commit, and compile them (in the toolbox when there is one; a scanner
 # written in C++ with the C++ compiler, the grammar linked with its library) into
-# build/grammars/: libtuatara-syntax.so (tree-sitter with syntax/syntax.c) and
+# build/grammars/: tuatara-syntax-helper (tree-sitter with syntax/syntax.c and
+# syntax/helper.c, the program that runs the grammars for the editor) and
 # one NAME.so per grammar, from the directory the manifest's fifth column
 # names in its repository when it has one, and build/grammars/licenses/NAME/
 # with its licence: its own licence files (LICENSE, COPYING, a LICENSES/
@@ -19,7 +20,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build/grammars"
 sources="$root/build/grammar-sources"
 stamp="$out/.built-from"
-wanted="$(cat "$root/syntax/grammars.tsv" "$root/syntax/syntax.c" "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" "$root"/syntax/patches/*.patch "$root"/syntax/licenses/*.txt "$0" "$root/tools/grammar-build.sh" 2>/dev/null | sha256sum | cut -c1-16)"
+wanted="$(cat "$root/syntax/grammars.tsv" "$root/syntax/syntax.c" "$root/syntax/helper.c" "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" "$root"/syntax/patches/*.patch "$root"/syntax/licenses/*.txt "$0" "$root/tools/grammar-build.sh" 2>/dev/null | sha256sum | cut -c1-16)"
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$wanted" ]; then exit 0; fi
 mkdir -p "$out" "$sources" "$root/build/tools"
 . "$root/tools/inside.sh"
@@ -92,13 +93,17 @@ while IFS=$'"'"'\t'"'"' read -r name url commit license subpath; do
       git -C "$dir" checkout -q -- .
       [ -f "$root/syntax/patches/tree-sitter.patch" ] && git -C "$dir" apply "$root/syntax/patches/tree-sitter.patch"
       # without its assertions, as the grammars are: one that fails would end
-      # the editor, and the patch makes the parser check what a grammar gives
+      # the program, and the patch makes the parser check what a grammar gives
       # it instead (a parse that meets a wrong value fails); what names a
-      # file names it from the top of the sources, not from this machine
-      cc -O2 -fPIC -shared -std=c11 -DNDEBUG -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE \
+      # file names it from the top of the sources, not from this machine;
+      # its names seen by the grammars it loads, which take their memory
+      # through it (syntax/counted-memory.h)
+      cc -O2 -std=c11 -DNDEBUG -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE \
          -ffile-prefix-map="$root/=" -ffile-prefix-map="$dir/=tree-sitter/" \
          -I"$dir/lib/include" -I"$dir/lib/src" \
-         "$dir/lib/src/lib.c" "$root/syntax/syntax.c" -o "$out/libtuatara-syntax.so" ;;
+         "$dir/lib/src/lib.c" "$root/syntax/syntax.c" "$root/syntax/helper.c" \
+         -rdynamic -lpthread -ldl -o "$out/tuatara-syntax-helper"
+      rm -f "$out/libtuatara-syntax.so" ;;
     *)
       patch="$root/syntax/patches/$name.patch"
       made="$commit ${grammar_cflags[*]} $(cat "$root/syntax/safe-ctype.h" "$root/syntax/counted-memory.h" | sha256sum | cut -c1-16)"

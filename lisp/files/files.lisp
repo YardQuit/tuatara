@@ -345,13 +345,15 @@ too). Point and the window stay on the same text. A file that only grew has
 just what it grew by added. Asks first when the buffer has changes not saved.
 In a buffer a command made (a list, help, a report), make it again from what
 it shows, point staying on its entry or its line: \\`r' and \\`g r' there.
-A narrowed buffer is widened: all of it is read again."
+A narrowed buffer is widened: all of it is read again. A grammar that went
+wrong on its text before is tried on it again, the text parsed afresh."
   (let* ((buffer (current-buffer))
          (file (tuatara.buffer:buffer-file buffer))
          (refill (tuatara.buffer:buffer-local buffer :refill)))
-    (cond ((and refill (null file)) (funcall refill buffer))
+    (cond ((and refill (null file)) (funcall refill buffer) (parse-afresh buffer))
           ;; a list or report not made again from anything, or a buffer of your own
-          ((null file) (message (if (tuatara.buffer:buffer-local buffer :read-only)
+          ((null file) (parse-afresh buffer)
+                       (message (if (tuatara.buffer:buffer-local buffer :read-only)
                                     "~a shows what was said or made then: nothing to read again"
                                     "~a visits no file: nothing to read again")
                                 (tuatara.buffer:buffer-name buffer)))
@@ -367,6 +369,7 @@ A narrowed buffer is widened: all of it is read again."
                                 (tuatara.io:append-from-disk buffer)))
                     (said (and (not added) (nth-value 1 (reload-buffer buffer)))))
                (setf (tuatara.buffer:buffer-local buffer :disk-state-said) nil)
+               (parse-afresh buffer)
                (if added
                    (message "Read what ~a grew by on disk (~a)" (tuatara.buffer:buffer-name buffer) (octets-words added))
                    (message "Read ~a again~@[; ~a~]" (tuatara.buffer:buffer-name buffer) said)))))))

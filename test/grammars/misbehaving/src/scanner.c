@@ -6,11 +6,16 @@
    parser is deleted; after "!z" the scanner says its state is longer than
    the buffer for it, and after "!o" it writes 64 octets past that buffer,
    after "!O" 64 KB; "!h" asks tree-sitter's own allocator for a terabyte;
-   any other letter is a plain mark. */
+   "!l" never returns; "!r" takes address space 64 MB at a time until none
+   is given (64 GB at most); "!w" and a path right after it writes a file
+   there; any other letter is a plain mark. */
 
 #include "tree_sitter/parser.h"
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 /* tree-sitter's allocator, where the program has it */
 extern void *(*ts_current_malloc)(size_t) __attribute__((weak));
@@ -68,6 +73,25 @@ bool tree_sitter_misbehaving_external_scanner_scan(void *payload, TSLexer *lexer
     scanner->wrong = what;
   } else if (what == 'h') {
     if (&ts_current_malloc) ts_current_malloc((size_t)1 << 40);
+  } else if (what == 'l') {
+    for (volatile unsigned long n = 0;; n++) {}
+  } else if (what == 'r') {
+    for (int i = 0; i < 1024; i++)
+      if (mmap(NULL, 64 << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0) == MAP_FAILED)
+        break;
+  } else if (what == 'w') {
+    char path[256];
+    int length = 0;
+    while (length < 255 && lexer->lookahead && lexer->lookahead != ' ' && lexer->lookahead != '\n') {
+      path[length++] = (char)lexer->lookahead;
+      lexer->advance(lexer, false);
+    }
+    path[length] = 0;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+      if (write(fd, "written\n", 8) < 0) {}
+      close(fd);
+    }
   } else if (what == 's') {
     lexer->result_symbol = 60000;
   } else if (what == 'm') {

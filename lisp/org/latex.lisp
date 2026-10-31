@@ -1874,9 +1874,13 @@ of TEXT, for the lines an error names."
                             (find-latex-template "article"))
                            (t (find-latex-template "org"))))
            ;; a template setting the note's text in columns: its tables kept whole
+           ;; source blocks coloured by a program of the export's own, as a file's text is
            (body (let ((*org-latex-in-columns* (latex-template-body-in-columns-p template))
                        (*org-latex-text-characters* (or (latex-template-text-characters template) *org-latex-text-characters*)))
-                   (with-output-to-string (s) (org-latex-element tree s))))
+                   (tuatara.syntax:with-own-helper ()
+                     ;; what goes wrong counted against the note, however often exported
+                     (let ((tuatara.syntax:*parsing-buffer* (tuatara.syntax:text-key :file file :text original)))
+                       (with-output-to-string (s) (org-latex-element tree s))))))
            (missing '()))
       (when enhanced
         (multiple-value-setq (body missing) (org-latex-font-plan body (search "{{{fonts}}}" template))))

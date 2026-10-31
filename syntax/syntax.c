@@ -1,9 +1,10 @@
 /* syntax/syntax.c --- The calls into tree-sitter that pass structures by value.
    Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
 
-   Built by tools/grammars.sh together with tree-sitter itself into
-   libtuatara-syntax.so. Lisp's foreign calls do not pass or return C
-   structures by value; these functions take their parts one by one. */
+   Built by tools/grammars.sh together with tree-sitter itself and
+   syntax/helper.c into tuatara-syntax-helper, the program that runs the
+   grammars; the requests it answers call these, which take the parts of
+   tree-sitter's structures one by one. */
 
 #include <malloc.h>
 #include <pthread.h>

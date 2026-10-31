@@ -46,6 +46,8 @@ available unqualified, and the public API of TUATARA is used.")
            #:*lsp-sync-delay* #:*lsp-idle-delay* #:*lsp-hover-echo* #:*lsp-highlight-symbol* #:*lsp-code-lenses* #:*lsp-outline*
            #:*lsp-diagnostics-display* #:*lsp-diagnostics-style* #:*lsp-semantic-tokens* #:*lsp-semantic-faces* #:*format-on-save*
            #:*format-in-sandbox* #:*format-seconds* #:*lsp-location-files-total*
+           ;; the programs that run the grammars
+           #:*syntax-helper-memory* #:*syntax-helper-wait* #:*syntax-helpers-most* #:*syntax-helper-unconfined*
            ;; file-local variables, snippets, bookmarks and version control
            #:*file-local-variables* #:*snippet-directories* #:*snippet-tab* #:*bookmarks-kept* #:*bookmark-set-asks-categories* #:*git-log-length*
            #:*git-recent-commits* #:*git-menus* #:*git-slim-actions* #:*git-diff-lines* #:*git-section-lines* #:*git-watch-seconds*

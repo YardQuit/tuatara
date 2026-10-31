@@ -280,15 +280,20 @@ once in *Messages* (RULES-FAILED)."
     (let ((known (funcall kept language)))
       (if known
           (and (tuatara.syntax:query-p known) known)
-          (let ((query (let ((grammar (tuatara.syntax:find-grammar (language-grammar language)))
-                             (source (funcall source language)))
-                         (when (and grammar source)
-                           (handler-case (tuatara.syntax:compile-query grammar source label)
-                             (error (e)
-                               (rules-failed failure (language-name language) e)
-                               nil))))))
+          (let* ((failed nil)
+                 (grammar (tuatara.syntax:find-grammar (language-grammar language)))
+                 (source (funcall source language))
+                 (query (when (and grammar source)
+                          (handler-case (tuatara.syntax:compile-query grammar source label)
+                            (error (e)
+                              (rules-failed failure (language-name language) e)
+                              (setf failed t)
+                              nil)))))
             (when (and query after) (funcall after query))
-            (funcall (fdefinition (list 'setf kept)) (or query :failed) language)
+            ;; not kept while the program compiling rules is still starting
+            (unless (and (null query) (not failed)
+                         (or (tuatara.syntax:grammar-pending-p (language-grammar language)) (and grammar source)))
+              (funcall (fdefinition (list 'setf kept)) (or query :failed) language))
             query)))))
 
 ;;; Choosing how a language is coloured
@@ -453,11 +458,23 @@ that the colours left are the rich style's, but it shows no colour."
 
 ;;; Parsing the buffers of a language
 
+(defun parse-afresh (buffer)
+  "Forget what went wrong in BUFFER's text and parse it afresh in its mode's
+language, when it has one, grammars that went wrong on it tried again."
+  (tuatara.syntax:forget-text-faults buffer)
+  (let ((language (mode-language (buffer-major-mode buffer))))
+    (when (and language (let ((syntax (tuatara.syntax:buffer-syntax buffer)))
+                          (or (null syntax) (tuatara.syntax:syntax-broken syntax))))
+      (tuatara.syntax:detach-syntax buffer)
+      (start-parsing buffer language))))
+
 (defun start-parsing (buffer language)
   "Keep a syntax tree of BUFFER's text in LANGUAGE's grammar, unless its file
 was visited safely (whose text no parser is given) or the grammar is missing."
   (unless (tuatara.io:safe-visit-p buffer)
     (let ((grammar (tuatara.syntax:find-grammar (language-grammar language))))
+      (setf (tuatara.buffer:buffer-local buffer :syntax-pending)
+            (and (null grammar) (tuatara.syntax:grammar-pending-p (language-grammar language)) language))
       (when grammar
         (tuatara.syntax:attach-syntax buffer grammar)))))
 
@@ -622,7 +639,16 @@ colours, and a grammar that fails, or a parse given up as too slow, say so; and
 a text left alone be parsed afresh (SYNTAX-REFRESH-TICK)."
   (setf tuatara.syntax:*syntax-wake-function* (lambda () (wake-editor editor))
         tuatara.syntax:*syntax-fault-function* 'report-grammar-fault
-        tuatara.syntax:*syntax-slow-function* 'report-slow-parse)
+        tuatara.syntax:*syntax-slow-function* 'report-slow-parse
+        tuatara.syntax:*syntax-helper-shared-function* 'buffer-in-trusted-project-p
+        tuatara.syntax:*helper-ended-function* 'report-helper-ended
+        tuatara.syntax:*helper-refused-function* 'report-no-sandbox-for-grammars
+        tuatara.syntax:*helper-in-use-function* 'buffer-shown-p
+        tuatara.syntax:*must-not-wait-function* 'on-editor-thread-p)
+  ;; the helpers all share started now, in the background: the first start
+  ;; looks for the sandbox, which may take a moment
+  (sb-thread:make-thread (lambda () (ignore-errors (tuatara.syntax:rules-helper) (tuatara.syntax:shared-helper)))
+                         :name "syntax helpers starting")
   (pushnew 'syntax-refresh-tick *tick-functions*))
 
 (defun syntax-refresh-tick (editor)
@@ -631,6 +657,23 @@ left alone long enough since parses after its edits
 (TUATARA.SYNTAX:REFRESH-SYNTAX). Asks to be called when the next one is due."
   (declare (ignore editor))
   (let ((soonest nil))
+    ;; a buffer whose grammar was not to be had yet, its loader starting
+    (dolist (buffer tuatara.buffer:*buffers*)
+      (let ((language (tuatara.buffer:buffer-local buffer :syntax-pending))
+            (next (or (tuatara.buffer:buffer-local buffer :syntax-pending-next) 0))
+            (now (get-internal-real-time)))
+        (when (and language (null (tuatara.syntax:buffer-syntax buffer)))
+          (if (< now next)
+              (setf soonest (/ (- next now) internal-time-units-per-second))
+              (let ((tries (setf (tuatara.buffer:buffer-local buffer :syntax-pending-tries)
+                                 (1+ (or (tuatara.buffer:buffer-local buffer :syntax-pending-tries) 0)))))
+                (start-parsing buffer language)
+                ;; tried less and less often while the grammar cannot be had yet
+                (when (tuatara.buffer:buffer-local buffer :syntax-pending)
+                  (let ((wait (min 10 (* 0.2 (expt 2 (min tries 6))))))
+                    (setf (tuatara.buffer:buffer-local buffer :syntax-pending-next)
+                          (+ now (round (* wait internal-time-units-per-second)))
+                          soonest (min (or soonest wait) wait)))))))))
     (dolist (buffer tuatara.buffer:*buffers* soonest)
       (let* ((syntax (tuatara.syntax:buffer-syntax buffer))
              (wait (and syntax (tuatara.syntax:refresh-syntax syntax))))
@@ -658,21 +701,54 @@ memory, or that memory ran short, and it was given up."
        (message "The ~a grammar took too long to read ~a (over ~,0f seconds): its colours are off in that buffer."
                 grammar buffer (tuatara.syntax:parse-time-limit bytes))))))
 
+(defun on-editor-thread-p ()
+  "True on the thread of the editor running, which never waits for a program to start."
+  (and (running-editor) (not (away-from-editor-p))))
+
+(defun buffer-shown-p (buffer)
+  "True when BUFFER is shown in a window of the editor running, from any thread."
+  (let ((editor (running-editor)))
+    (and editor (buffer-windows buffer editor) t)))
+
+(defun report-helper-ended (helper)
+  "Say that HELPER, a program running the grammars, ended while no parse ran
+in it (a parse that was running says so itself); its text is parsed again
+in a new one when it is next shown or edited."
+  (when (zerop (car (tuatara.syntax:helper-parsing helper)))
+    (message "The program running the grammars ~(~a~); text is parsed again in a new one."
+             (case (tuatara.syntax:helper-ended helper)
+               (:hung "stopped answering and was ended")
+               (:broken "answered what cannot be right and was ended")
+               (t "ended")))))
+
+(defun report-no-sandbox-for-grammars (trusted)
+  "Say that text is not parsed, so not coloured, because there is no sandbox
+to run the grammars in: TRUSTED when it is that of a project you trust."
+  (message "~:[Files outside the projects you trust~;No text~] are coloured or parsed: there is no sandbox (bwrap) to run the grammars in. Install bubblewrap~:[~;, or set *syntax-helper-unconfined* to run them for the projects you trust without it~]; M-x check-health says more."
+           trusted trusted))
+
 (defun report-grammar-fault (syntax)
   "Say that the grammar of SYNTAX failed while reading its buffer and is off
 until the editor starts again; and, when its code may have damaged the
-editor's memory, to save and restart."
+editor's memory (not when it ran in the program parsing for the editor), to
+save and restart."
   (let* ((grammar (tuatara.syntax:syntax-grammar syntax))
          (fault (tuatara.syntax:grammar-faulted grammar))
-         (clean (typep fault 'tuatara.syntax:grammar-failure)))
+         ;; the program parsing ended, or the grammar only gave it a wrong value:
+         ;; the editor's own memory is as it was
+         (clean (or (eq fault :crashed) (typep fault 'tuatara.syntax:grammar-failure))))
     (tuatara.runtime:debug-report :error "the ~a grammar failed reading ~a~@[: ~a~]"
                                   (tuatara.syntax:grammar-name grammar)
                                   (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
                                   (and (typep fault 'condition) fault))
-    (message "The ~a grammar failed while reading ~a: its colours and syntax are off until Tuatara starts again.~:[ Save your work and restart.~;~]"
-             (tuatara.syntax:grammar-name grammar)
-             (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
-             clean)))
+    (if fault
+        (message "The ~a grammar failed while reading ~a, as it did on other texts: its colours and syntax are off until Tuatara starts again.~:[ Save your work and restart.~;~]"
+                 (tuatara.syntax:grammar-name grammar)
+                 (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))
+                 clean)
+        (message "The ~a grammar failed while reading ~a: its colours and syntax are off in that buffer; other texts keep them."
+                 (tuatara.syntax:grammar-name grammar)
+                 (tuatara.buffer:buffer-name (tuatara.syntax:syntax-buffer syntax))))))
 
 ;;; The languages
 

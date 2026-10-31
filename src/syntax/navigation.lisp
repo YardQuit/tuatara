@@ -20,14 +20,21 @@ is no tree."
   (let ((tree (syntax-tree syntax))
         (symbols (grammar-symbols (syntax-grammar syntax))))
     (when tree
-      (with-foreign-memory (sap (* 4 5 +deepest+))
-        (loop for i from 0 below (ts-call "tuatara_ancestry" :i32 :pointer tree :u32 start :u32 end
-                                          :pointer sap :u32 +deepest+)
-              collect (flet ((at (k) (sb-sys:sap-ref-32 sap (* 4 (+ (* 5 i) k)))))
-                        (make-tree-node (at 0) (at 1)
-                                        ;; the symbols past the grammar's own are tree-sitter's errors
-                                        (if (< (at 2) (length symbols)) (aref symbols (at 2)) "ERROR")
-                                        (logbitp 0 (at 3)) (at 4) (logbitp 1 (at 3)) (at 2))))))))
+      (with-call (call (tree-helper tree) +op-ancestry+)
+        (call-u32 call (tree-number tree)) (call-u32 call start) (call-u32 call end)
+        (when (eql 0 (call-send call))
+          ;; each node around the one before it, all within the text
+          (loop with bytes = (tuatara.text:rope-bytes (syntax-rope syntax))
+                with low = most-positive-fixnum and high = -1
+                for i from 0 below (min +deepest+ (floor (call-in-size call) 20))
+                collect (flet ((at (k) (reply-u32 call (+ (* 5 i) k))))
+                          (unless (and (<= (at 0) (min low (at 1))) (<= (max high (at 0)) (at 1) bytes))
+                            (reply-overrun call))
+                          (setf low (at 0) high (at 1))
+                          (make-tree-node (at 0) (at 1)
+                                          ;; the symbols past the grammar's own are tree-sitter's errors
+                                          (if (< (at 2) (length symbols)) (aref symbols (at 2)) "ERROR")
+                                          (logbitp 0 (at 3)) (at 4) (logbitp 1 (at 3)) (at 2)))))))))
 
 (defun select-node (syntax start end how)
   "The octets a named node of SYNTAX's tree starts and ends at, as two values,
@@ -39,11 +46,14 @@ the nearest node around it that has one. NIL when there is no tree or no such
 node."
   (let ((tree (syntax-tree syntax)))
     (when tree
-      (with-foreign-memory (sap (* 4 2))
-        (when (= 1 (ts-call "tuatara_select_node" :i32 :pointer tree :u32 start :u32 end
-                            :i32 (ecase how (:smallest 0) (:larger 1) (:first-child 2) (:next 3) (:previous 4))
-                            :pointer sap))
-          (values (sb-sys:sap-ref-32 sap 0) (sb-sys:sap-ref-32 sap 4)))))))
+      (with-call (call (tree-helper tree) +op-select+)
+        (call-u32 call (tree-number tree)) (call-u32 call start) (call-u32 call end)
+        (call-u32 call (ecase how (:smallest 0) (:larger 1) (:first-child 2) (:next 3) (:previous 4)))
+        (when (and (eql 0 (call-send call)) (= 1 (reply-u32 call 0)))
+          (let ((from (reply-u32 call 1)) (to (reply-u32 call 2)))
+            (unless (<= from to (tuatara.text:rope-bytes (syntax-rope syntax)))
+              (reply-overrun call))
+            (values from to)))))))
 
 ;;; Kinds of node
 

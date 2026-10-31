@@ -4,13 +4,15 @@
 (defpackage #:tuatara.syntax
   (:use #:cl #:alexandria)
   (:import-from #:tuatara.io #:null-pointer #:null-pointer-p #:sap-octets #:with-foreign-memory)
+  (:import-from #:tuatara-user #:*syntax-helper-memory* #:*syntax-helper-wait* #:*syntax-helpers-most* #:*syntax-helper-unconfined*)
   (:documentation "The search and regex interface, the tree-sitter binding, parsing in the background, colouring and moving by syntax.")
   (:export #:search-forward #:search-backward #:search-all #:case-fold-p #:*serial-window* #:*parallel-piece*
            #:compile-regex #:compile-pattern #:*regex-thorough* #:regex-search-forward #:regex-search-backward #:regex-search-all
            #:literal-pattern-p #:regex-case-fold-p #:map-regex-matches #:matched-text #:map-slice-matches #:make-decoder #:with-decoder #:*regex-longest-match*
            #:map-literal-matches #:collect-matches #:join-pieces #:bracket-end #:pattern-refused #:pattern-refused-words #:pattern-group-count
            ;; tree-sitter: grammars, parsing, queries
-           #:find-grammar #:grammar #:grammar-p #:grammar-name #:grammar-symbols #:syntax-library-p
+           #:find-grammar #:grammar-pending-p #:grammar #:grammar-p #:grammar-name #:grammar-symbols #:syntax-helper-program
+           #:*helper* #:*parsing-buffer* #:text-key #:forget-text-faults #:with-own-helper #:buffer-helper #:buffer-helper-soon #:shared-helper #:rules-helper #:forget-buffer-helper #:helper-memory #:*syntax-helper-memory* #:*syntax-helper-wait* #:*syntax-helper-shared-function* #:*helper-ended-function* #:*helper-refused-function* #:*helper-in-use-function* #:*must-not-wait-function* #:helper-parsing #:helper-kind #:helper #:helper-p #:helper-alive #:helper-shared #:helper-ended #:stop-helpers #:tree #:tree-p #:parser #:parser-p
            #:*grammar-directories* #:grammar-directories #:forget-grammars
            #:make-parser #:delete-parser #:parse-rope #:delete-tree #:edit-tree #:tree-has-error-p
            #:compile-query #:query #:query-p #:query-grammar #:query-captures #:query-properties

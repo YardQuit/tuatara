@@ -47,39 +47,61 @@ may win and then takes the colour away."
 value or without."
   (loop for (k) on properties by #'cddr thereis (eq k key)))
 
-(defun content-ranges (tree start end symbol include-children &optional (from start) (to end))
-  "The text of the node of TREE from START below END of type SYMBOL that is in
-another language, as a list of (START . END), of it only what lies from FROM
-below TO: all of it when INCLUDE-CHILDREN is :ALL, the parts between its named
-children when it is :UNNAMED (its literal tokens kept), else the parts between
-all its children."
-  (let ((low (max start from)) (high (min end to)))
-    (cond ((>= low high) '())
-          ((eq include-children :all) (list (cons low high)))
-          (t (let ((ranges '()) (at low))
-               (dolist (child (node-child-ranges tree start end symbol :named (eq include-children :unnamed)
-                                                                       :from low :to high))
-                 (when (< at (car child)) (push (cons at (min (car child) high)) ranges))
-                 (setf at (max at (cdr child))))
-               (when (< at high) (push (cons at high) ranges))
-               (nreverse ranges))))))
+(defun content-ranges (low high children from to)
+  "The parts of the text from LOW below HIGH between the children whose
+starts and ends are the numbers of the fixnum vector CHILDREN from FROM
+below TO, two each, as a list of (START . END); the whole of it when there
+are none."
+  (let ((ranges '()) (at low))
+    (loop for i from from below to by 2
+          do (when (< at (aref children i)) (push (cons at (min (aref children i) high)) ranges))
+             (setf at (max at (aref children (1+ i)))))
+    (when (< at high) (push (cons at high) ranges))
+    (nreverse ranges)))
 
-(defun injection-layers (query tree rope start end &optional (from 0) (to most-positive-fixnum))
-  "The texts in another language that QUERY, a language's injection rules,
-finds in TREE (the tree of ROPE) touching octets START below END: a list of
-(NAME RANGES), NAME the language as the rules name it, or as (:SHEBANG LINE)
-or (:FILENAME NAME) where a #! line or a file name says which, and RANGES its
-text, each (START . END), in order, of it only what lies from FROM below TO.
-What the matches of one pattern that combines its texts find is one text."
+(defstruct (injection-texts (:constructor make-injection-texts (tree properties found texts count asked)) (:copier nil))
+  "The texts in another language a language's injection rules found in TREE,
+before the children of their nodes are known: FOUND, for each match finding
+some, (NAME . HOW-MANY) in order, the language and how many of TEXTS are its;
+TEXTS, seven numbers for each of COUNT nodes holding such text: its match's
+pattern, 0 when all its children are part of it, 1 when only its named ones
+are left out, else 2; the part of it wanted (start, end); the node's start,
+end and symbol. ASKED of them need their children; PROPERTIES are the rules'
+#set! directives by pattern."
+  (tree nil :read-only t)
+  (properties #() :read-only t)
+  (found '() :read-only t)
+  (texts #() :type (simple-array fixnum (*)) :read-only t)
+  (count 0 :type fixnum :read-only t)
+  (asked 0 :type fixnum :read-only t))
+
+(setf (documentation 'injection-texts-tree 'function) "The tree the texts were found in."
+      (documentation 'injection-texts-properties 'function) "The rules' #set! directives by pattern."
+      (documentation 'injection-texts-found 'function) "For each match finding text, its language and how many texts."
+      (documentation 'injection-texts-texts 'function) "Seven numbers for each node holding such text."
+      (documentation 'injection-texts-count 'function) "How many nodes hold such text."
+      (documentation 'injection-texts-asked 'function) "How many of the nodes need their children."
+      (documentation 'injection-texts-p 'function) "True when OBJECT is an INJECTION-TEXTS.")
+
+(defun find-injection-texts (query tree rope start end from to)
+  "The texts in another language QUERY, a language's injection rules, finds
+in TREE (the tree of ROPE) touching octets START below END, of them only
+what lies from FROM below TO, as INJECTION-TEXTS; NIL when there are none."
   (let ((names (query-captures query))
         (properties (query-properties query))
-        (combined (make-hash-table :test 'equal))
-        (layers '()))
+        (found '())
+        ;; seven numbers for each node holding such text: its match's pattern,
+        ;; 0 when all its children count, 1 when only its named ones are left
+        ;; out, else 2; the part of it wanted; its start, end and symbol
+        (texts (make-array 0 :element-type 'fixnum))
+        (count 0)
+        (asked 0))
+    (declare (type (simple-array fixnum (*)) texts) (type fixnum count asked))
     (map-query-matches
-     (lambda (pattern captures count)
+     (lambda (pattern captures n)
        (let* ((set (aref properties pattern))
               (name (or (getf set :injection.language)
-                        (loop for i from 0 below count
+                        (loop for i from 0 below n
                               for capture = (aref names (aref captures (* 4 i)))
                               for from = (aref captures (+ 1 (* 4 i)))
                               for to = (aref captures (+ 2 (* 4 i)))
@@ -93,52 +115,123 @@ What the matches of one pattern that combines its texts find is one text."
                                               (list :shebang (subseq line 0 (position #\Newline line)))))
                               when (string= capture "injection.filename")
                                 return (list :filename (capture-text rope from (min to (+ from 256)))))))
-              (include-children (cond ((directive-p set :injection.include-children) :all)
-                                      ((directive-p set :injection.include-unnamed-children) :unnamed)))
-              (ranges (loop for i from 0 below count
-                            when (string= (aref names (aref captures (* 4 i))) "injection.content")
-                              append (content-ranges tree (aref captures (+ 1 (* 4 i))) (aref captures (+ 2 (* 4 i)))
-                                                     (aref captures (+ 3 (* 4 i))) include-children from to))))
-         (when (and name ranges)
-           (if (directive-p set :injection.combined)
-               (let ((key (cons pattern name)))
-                 (setf (gethash key combined) (append (gethash key combined) ranges)))
-               (push (list name (tuatara.text:merge-ranges ranges)) layers)))))
+              (children (cond ((directive-p set :injection.include-children) 0)
+                              ((directive-p set :injection.include-unnamed-children) 1)
+                              (t 2)))
+              (before count))
+         (when name
+           (dotimes (i n)
+             (when (string= (aref names (aref captures (* 4 i))) "injection.content")
+               (let ((low (max (aref captures (+ 1 (* 4 i))) from))
+                     (high (min (aref captures (+ 2 (* 4 i))) to)))
+                 (when (< low high)
+                   (when (> (* 7 (1+ count)) (length texts))
+                     (setf texts (replace (make-array (max 70 (* 2 (length texts))) :element-type 'fixnum) texts)))
+                   (let ((at (* 7 count)))
+                     (setf (aref texts at) pattern (aref texts (+ at 1)) children
+                           (aref texts (+ at 2)) low (aref texts (+ at 3)) high
+                           (aref texts (+ at 4)) (aref captures (+ 1 (* 4 i)))
+                           (aref texts (+ at 5)) (aref captures (+ 2 (* 4 i)))
+                           (aref texts (+ at 6)) (aref captures (+ 3 (* 4 i)))))
+                   (unless (= children 0) (incf asked))
+                   (incf count)))))
+           (when (> count before) (push (cons name (- count before)) found)))))
      query tree rope start end)
-    (maphash (lambda (key ranges) (push (list (cdr key) (tuatara.text:merge-ranges ranges)) layers)) combined)
-    layers))
+    (and (plusp count)
+         (make-injection-texts tree properties (nreverse found) texts count asked))))
+
+(defun injection-texts-children (all helper)
+  "The children of the nodes of each of ALL, INJECTION-TEXTS of trees HELPER
+holds, that need them, asked for in one request: two values as
+NODE-CHILDREN-MANY gives them, in the order of ALL; NIL when none are asked
+for or they cannot be had."
+  (let ((asked (loop for texts in all sum (injection-texts-asked texts))))
+    (when (plusp asked)
+      (let ((nodes (make-array (* 7 asked) :element-type 'fixnum)) (k 0))
+        (dolist (found all)
+          (let ((texts (injection-texts-texts found)) (number (tree-number (injection-texts-tree found))))
+            (dotimes (i (injection-texts-count found))
+              (let ((at (* 7 i)))
+                (unless (= (aref texts (+ at 1)) 0)
+                  (setf (aref nodes k) number
+                        (aref nodes (+ k 1)) (aref texts (+ at 4)) (aref nodes (+ k 2)) (aref texts (+ at 5))
+                        (aref nodes (+ k 3)) (aref texts (+ at 6))
+                        (aref nodes (+ k 4)) (if (= (aref texts (+ at 1)) 1) 1 0)
+                        (aref nodes (+ k 5)) (aref texts (+ at 2)) (aref nodes (+ k 6)) (aref texts (+ at 3)))
+                  (incf k 7))))))
+        (node-children-many helper nodes asked)))))
+
+(defun injection-texts-layers (found pairs starts first)
+  "The texts of FOUND, INJECTION-TEXTS, as INJECTION-LAYERS gives them, the
+children of its nodes that need them in PAIRS from the FIRST of STARTS on
+\(INJECTION-TEXTS-CHILDREN); the whole of each node's text when PAIRS is NIL."
+  (let ((texts (injection-texts-texts found))
+        (properties (injection-texts-properties found))
+        (combined '()) (layers '()) (i 0) (j first))
+    (declare (type fixnum i j))
+    (loop for (name . texts-of-match) in (injection-texts-found found)
+          for pattern = (aref texts (* 7 i))
+          for ranges = (loop repeat texts-of-match
+                             for at = (* 7 i)
+                             for low = (aref texts (+ at 2)) for high = (aref texts (+ at 3))
+                             append (if (= (aref texts (+ at 1)) 0)
+                                        (list (cons low high))
+                                        (prog1 (if pairs
+                                                   (content-ranges low high pairs (aref starts j) (aref starts (1+ j)))
+                                                   (list (cons low high)))
+                                          (incf j)))
+                             do (incf i))
+          do (if (directive-p (aref properties pattern) :injection.combined)
+                 (let ((entry (assoc (cons pattern name) combined :test #'equal)))
+                   (if entry
+                       (setf (cdr entry) (append (cdr entry) ranges))
+                       (push (cons (cons pattern name) ranges) combined)))
+                 (push (list name (tuatara.text:merge-ranges ranges)) layers)))
+    (dolist (entry (reverse combined) layers)
+      (push (list (cdar entry) (tuatara.text:merge-ranges (cdr entry))) layers))))
+
+(defun injection-layers (query tree rope start end &optional (from 0) (to most-positive-fixnum))
+  "The texts in another language that QUERY, a language's injection rules,
+finds in TREE (the tree of ROPE) touching octets START below END: a list of
+(NAME RANGES), NAME the language as the rules name it, or as (:SHEBANG LINE)
+or (:FILENAME NAME) where a #! line or a file name says which, and RANGES its
+text, each (START . END), in order, of it only what lies from FROM below TO:
+all of a node's text when the rules include its children, the parts between
+its named children when they include its unnamed ones, else the parts
+between all its children. What the matches of one pattern that combines its
+texts find is one text."
+  (let ((found (find-injection-texts query tree rope start end from to)))
+    (when found
+      (multiple-value-bind (pairs starts) (injection-texts-children (list found) (tree-helper tree))
+        (injection-texts-layers found pairs starts 0)))))
 
 (defparameter *injection-time-limit* 0.5
   "The seconds a parse of text in another language may take while lines are
 coloured; past it that text is left without its colours.")
 
+(defun note-parse-failure (grammar why helper)
+  "Turn GRAMMAR off for the text being parsed (*PARSING-BUFFER*'s, else
+HELPER's), and for all once it has gone wrong on several
+\(GRAMMAR-WENT-WRONG), when a parse of text in it went wrong as WHY says: a
+failure inside the grammar's own code, or the program parsing ending as it
+parsed or taking too long, so that it is not tried again on each redraw."
+  (let ((where (or *parsing-buffer* helper)))
+    (case why
+      (:failed (grammar-went-wrong grammar where (make-condition 'grammar-failure :grammar grammar)))
+      ((:crashed :hung) (grammar-went-wrong grammar where why)))))
+
 (defun parse-ranges (grammar rope ranges)
   "A syntax tree of ROPE's text in GRAMMAR, reading only RANGES, each (START .
-END), in order and apart; NIL when it cannot be parsed, with :SLOW, :MEMORY or
-:FAILED as a second value when it took too long or too much memory or the
-grammar went wrong (PARSE-ROPE). A failure inside the
-grammar's own code turns the grammar off, as a failed parse of a buffer
-does."
-  (unless (grammar-faulted grammar)
-    (let ((parser (make-parser grammar)))
-      (handler-case
-          (multiple-value-bind (tree why unusable)
-              (if (set-included-ranges parser rope ranges)
-                  (parse-rope parser rope :limit *injection-time-limit*
-                                          :budget (parse-memory-limit (loop for (start . end) in ranges sum (- end start))))
-                  nil)
-            ;; a parser left half way when memory ran out is let go
-            (if unusable
-                (parser-let-go grammar "a text in another language")
-                (delete-parser parser))
-            (when (eq why :failed)
-              (setf (grammar-faulted grammar) (make-condition 'grammar-failure :grammar grammar)))
-            (values tree why))
-        (sb-sys:memory-fault-error (fault)
-          ;; the parser is left alone: its memory may be damaged
-          (setf (grammar-faulted grammar) fault)
-          nil)
-        (error () (delete-parser parser) nil)))))
+END), in order and apart; NIL when it cannot be parsed, with why as a second
+value (PARSE-ROPE). A failure turns the grammar off (NOTE-PARSE-FAILURE)."
+  (let ((helper (current-helper)))
+    (unless (or (null helper) (grammar-off-p grammar (or *parsing-buffer* helper)))
+      (multiple-value-bind (tree why)
+          (parse-rope-ranges grammar rope ranges :limit *injection-time-limit* :helper helper
+                                                 :budget (parse-memory-limit (loop for (start . end) in ranges
+                                                                                   sum (- end start))))
+        (note-parse-failure grammar why helper)
+        (values tree why)))))
 
 (defparameter *injection-depth* 3
   "How deeply text in another language may hold text in yet another.")
@@ -189,31 +282,91 @@ the text, not again each time the window scrolls."
     (cdr (or (syntax-injected syntax)
              (setf (syntax-injected syntax) (cons (syntax-generation syntax) (make-hash-table :test 'equal)))))))
 
+(defun layers-highlights (resolve layers rope start end depth)
+  "The colours of each of LAYERS, (NAME RANGES), the text of ROPE in RANGES
+read as the language NAME, as LANGUAGE-HIGHLIGHTS gives them: a list of
+them, in the order of LAYERS. Those of one depth are parsed and their rules'
+matches found in one request, and the children of the nodes holding text in
+yet other languages in them asked for in one more."
+  (let* ((helper (current-helper))
+         (layers (loop for (name ranges) in layers
+                       collect (multiple-value-bind (grammar colours faces inner locals face-of) (funcall resolve name)
+                                 (and helper grammar colours ranges (not (grammar-off-p grammar (or *parsing-buffer* helper)))
+                                      (let ((key (and *injected-trees* (list name ranges))))
+                                        (multiple-value-bind (tree known)
+                                            (if key (gethash key *injected-trees*) (values nil nil))
+                                          (and (or tree (not known))
+                                               (list :grammar grammar :ranges ranges :colours colours :faces faces
+                                                     :inner (and inner (< depth *injection-depth*) inner)
+                                                     :locals (and face-of locals) :face-of face-of :key key :tree tree
+                                                     :local-from (max (car (first ranges)) (- start *locals-reach*))))))))))
+         (wanted (remove nil layers)))
+    (if (null wanted)
+        (make-list (length layers))
+        (parse-texts
+         rope
+         (loop for layer in wanted
+               collect (destructuring-bind (&key grammar ranges colours inner locals tree local-from &allow-other-keys) layer
+                         (make-text-parse grammar ranges tree
+                                          (remove nil (list (list colours start end)
+                                                            (and locals (list locals local-from end))
+                                                            (and inner (list inner start end))))
+                                          *injection-time-limit*
+                                          (parse-memory-limit (loop for (s . e) in ranges sum (- e s))))))
+         ;; in HELPER, the current one
+         (lambda (trees)
+           (let ((made '()))
+             (unwind-protect
+                  (let* ((trees (loop for layer in wanted
+                                      for (tree why) in trees
+                                      do (destructuring-bind (&key grammar key ((:tree given)) &allow-other-keys) layer
+                                           (note-parse-failure grammar why helper)
+                                           (unless given
+                                             (if key (setf (gethash key *injected-trees*) tree) (when tree (push tree made)))))
+                                      collect tree))
+                         ;; each one's own colours, and where text in yet other languages lies in it
+                         (own (loop for layer in wanted
+                                    for tree in trees
+                                    collect (when tree
+                                              (destructuring-bind (&key colours faces locals face-of local-from &allow-other-keys) layer
+                                                (multiple-value-bind (local-ranges references)
+                                                    (and locals (local-highlights locals tree rope local-from start end face-of))
+                                                  (append (let ((*local-references* references))
+                                                            (rich-highlights colours tree rope start end faces))
+                                                          local-ranges))))))
+                         (from (injection-cut rope (max 0 (- start *injection-reach*))))
+                         (to (tuatara.text:rope-char-start rope (min (tuatara.text:rope-bytes rope) (+ end *injection-reach*))))
+                         (found (loop for layer in wanted
+                                      for tree in trees
+                                      collect (let ((inner (getf layer :inner)))
+                                                (and tree inner (find-injection-texts inner tree rope start end from to)))))
+                         (inner-layers
+                           (let ((all (remove nil found)))
+                             (when all
+                               (multiple-value-bind (pairs starts) (injection-texts-children all (tree-helper (injection-texts-tree (first all))))
+                                 (let ((first 0))
+                                   (loop for texts in found
+                                         collect (when texts
+                                                   (prog1 (injection-texts-layers texts pairs starts first)
+                                                     (incf first (injection-texts-asked texts))))))))))
+                         (inner (and inner-layers
+                                     (layers-highlights resolve (loop for list in inner-layers append list)
+                                                        rope start end (1+ depth))))
+                         (results (loop for colours in own
+                                        for list in (or inner-layers (make-list (length own)))
+                                        collect (append colours
+                                                        (loop repeat (length list) append (pop inner))))))
+                    (loop for layer in layers
+                          collect (and layer (pop results))))
+               (dolist (tree made) (delete-tree tree)))))))))
+
 (defun language-highlights (resolve name ranges rope start end &optional (depth 1))
   "The colours of the text of ROPE in RANGES (each (START . END), in order and
 apart) read as the language NAME, from octet START below END, as RICH-HIGHLIGHTS
 gives them, with those of text in other languages inside it: RESOLVE is a
 function of a language's name returning what SYNTAX-HIGHLIGHTS's INJECTIONS
 resolve to. NIL for a language not coloured, or text that cannot be parsed."
-  (multiple-value-bind (grammar colours faces inner locals face-of) (funcall resolve name)
-    (let* ((key (and *injected-trees* grammar colours ranges (list name ranges)))
-           (inner-tree (if key
-                           (multiple-value-bind (tree known) (gethash key *injected-trees*)
-                             (if known tree (setf (gethash key *injected-trees*) (parse-ranges grammar rope ranges))))
-                           (and grammar colours ranges (parse-ranges grammar rope ranges)))))
-      (when inner-tree
-        (unwind-protect
-             (multiple-value-bind (local-ranges references)
-                 (and locals face-of
-                      (local-highlights locals inner-tree rope
-                                        (max (car (first ranges)) (- start *locals-reach*))
-                                        start end face-of))
-               (append (let ((*local-references* references))
-                         (rich-highlights colours inner-tree rope start end faces))
-                       local-ranges
-                       (when (and inner (< depth *injection-depth*))
-                         (injected-highlights (list inner resolve) inner-tree rope start end (1+ depth)))))
-          (unless key (delete-tree inner-tree)))))))
+  (first (layers-highlights resolve (list (list name ranges)) rope start end depth)))
 
 (defun injected-highlights (injections tree rope start end &optional (depth 1))
   "The colours of the text in other languages that INJECTIONS finds in TREE (the
@@ -221,10 +374,13 @@ tree of ROPE) from octet START below END, as RICH-HIGHLIGHTS gives them, a
 name defined earlier in the same text coloured as its definition where the
 language has rules for local names. See SYNTAX-HIGHLIGHTS for INJECTIONS."
   (destructuring-bind (query resolve) injections
-    (loop with from = (injection-cut rope (max 0 (- start *injection-reach*)))
-          with to = (tuatara.text:rope-char-start rope (min (tuatara.text:rope-bytes rope) (+ end *injection-reach*)))
-          for (name ranges) in (injection-layers query tree rope start end from to)
-          append (language-highlights resolve name ranges rope start end depth))))
+    (let ((layers (injection-layers query tree rope start end
+                                    (injection-cut rope (max 0 (- start *injection-reach*)))
+                                    (tuatara.text:rope-char-start rope (min (tuatara.text:rope-bytes rope)
+                                                                             (+ end *injection-reach*))))))
+      (and layers
+           (loop for colours in (layers-highlights resolve layers rope start end depth)
+                 append colours)))))
 
 ;;; Local names
 
@@ -344,11 +500,16 @@ takes too long or too much memory leaves it uncoloured from then on
 are the same."
   (let* ((rope (tuatara.buffer:buffer-text (syntax-buffer syntax)))
          (key (list :slice rope start end query faces (and injections (first injections))
-                    (and injections (car *rules-generation*)))))
-    (kept-colours
+                    (and injections (car *rules-generation*))))
+         ;; none while its helper starts: shown once it has (BUFFER-HELPER-SOON)
+         (helper (buffer-helper-soon (syntax-buffer syntax))))
+    (when helper
+     (kept-colours
      syntax key
      (lambda ()
-        (let* ((bytes (tuatara.text:rope-bytes rope))
+        (let* ((*helper* helper)
+               (*parsing-buffer* (syntax-buffer syntax))
+               (bytes (tuatara.text:rope-bytes rope))
                (from (injection-cut rope (max 0 (- start *syntax-slice-reach*))))
                (to (let ((reach (+ end *syntax-slice-reach*)))
                      (if (>= reach bytes) bytes (max end (injection-cut rope reach)))))
@@ -369,7 +530,7 @@ are the same."
                                                                                           (- start from) (- end from)))))
                                     collect (list (+ s from) (+ e from) face))
                            (delete-tree tree)))))
-          ranges)))))
+          ranges))))))
 
 (defun syntax-highlights (syntax query faces start end &optional injections locals)
   "The syntax colours of SYNTAX's buffer text from octet START below END under
@@ -400,18 +561,24 @@ again while nothing they depend on has changed."
          syntax key
          (lambda ()
             (let* ((rope (syntax-rope syntax))
+                   (*helper* (or (syntax-helper syntax) :none))
+                   (*parsing-buffer* (syntax-buffer syntax))
                    (*injected-trees* (and injections (keep-injected-trees syntax)))
-                   (ranges (multiple-value-bind (local-ranges local-references)
-                               (and locals
-                                    ;; definitions may begin as early as the top-level form holding START
+                   ;; definitions may begin as early as the top-level form holding START
+                   (local-from (and locals
                                     (let* ((chain (node-ancestry syntax start start))
                                            (from (if (rest chain) (tree-node-start (car (last chain 2))) start)))
-                                      (local-highlights (first locals) tree rope
-                                                        (max (min from start) (- start *locals-reach*)) start end
-                                                        (second locals))))
-                             ;; the local names known first, for the rules' #is-not? local
-                             (append (let ((*local-references* local-references))
-                                       (rich-highlights query tree rope start end faces))
-                                     local-ranges
-                                     (and injections (injected-highlights injections tree rope start end))))))
-              ranges)))))))
+                                      (max (min from start) (- start *locals-reach*))))))
+              ;; the matches of all three rules asked for at once
+              (call-with-prefetched-matches
+               (tree-helper tree) (remove nil (list (and locals (list (first locals) tree local-from end))
+                                          (list query tree start end)
+                                          (and injections (list (first injections) tree start end))))
+               (lambda ()
+                 (multiple-value-bind (local-ranges local-references)
+                     (and locals (local-highlights (first locals) tree rope local-from start end (second locals)))
+                   ;; the local names known first, for the rules' #is-not? local
+                   (append (let ((*local-references* local-references))
+                             (rich-highlights query tree rope start end faces))
+                           local-ranges
+                           (and injections (injected-highlights injections tree rope start end)))))))))))))

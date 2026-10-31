@@ -630,9 +630,12 @@ what is shown."
                             (window-from (tuatara.syntax:injection-cut rope (max from (- start reach))))
                             (window-to (tuatara.text:rope-char-start rope (min to (+ end reach)))))
                        (when (< window-from window-to)
-                         (tuatara.syntax:language-highlights (injection-resolver style level)
-                                                             (symbol-name (language-name language))
-                                                             (list (cons window-from window-to)) rope start end)))))))
+                         ;; parsed by the program parsing this buffer's text, as its own
+                         (let ((tuatara.syntax:*helper* (or (tuatara.syntax:buffer-helper-soon buffer) :none))
+                               (tuatara.syntax:*parsing-buffer* buffer))
+                           (tuatara.syntax:language-highlights (injection-resolver style level)
+                                                               (symbol-name (language-name language))
+                                                               (list (cons window-from window-to)) rope start end))))))))
 
 (defun org-fontify-drawer (node)
   "A drawer: its first and last lines in :org-drawer; in an :EXPORT: drawer each

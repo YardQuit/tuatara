@@ -2,55 +2,19 @@
 ;;;; Copyright (C) 2026 Michael A Jones.  GPL-3.0-or-later; see LICENSE.
 ;;;;
 ;;;; Tree-sitter parses text into a syntax tree with a grammar compiled to C, and
-;;;; finds patterns in the tree with queries. The library and the grammars are
-;;;; compiled from pinned sources by tools/grammars.sh into a directory of shared
-;;;; objects beside the program, loaded when a buffer first needs one and never
-;;;; kept in a saved image. The parser reads the text through a callback that
-;;;; copies it from the rope a piece at a time, so the text is never copied whole.
+;;;; finds patterns in the tree with queries. The grammars are compiled from
+;;;; pinned sources by tools/grammars.sh into a directory beside the program,
+;;;; and run by the program that parses for the editor, shut in
+;;;; (src/syntax/helper.lisp): a grammar, a parser, a tree and a query here
+;;;; stand for those it holds. The parser reads the text from the rope a piece
+;;;; at a time as it asks for it, so the text is never copied whole.
 
 (in-package #:tuatara.syntax)
 
-;;; Calling the library
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun foreign-type (keyword)
-    "The alien type TS-CALL uses for KEYWORD: :pointer, :u16, :u32, :u64, :i32, :i64, :bool or :void."
-    (ecase keyword
-      (:pointer 'sb-sys:system-area-pointer)
-      (:u16 '(sb-alien:unsigned 16))
-      (:u32 '(sb-alien:unsigned 32))
-      (:u64 '(sb-alien:unsigned 64))
-      (:i32 '(sb-alien:signed 32))
-      (:i64 '(sb-alien:signed 64))
-      (:bool '(sb-alien:boolean 8))
-      (:void 'sb-alien:void))))
-
-(defmacro ts-call (name result &rest arguments)
-  "Call the C function NAME of the tree-sitter library, which returns RESULT,
-with ARGUMENTS, alternately a type and a value. The types are the keywords
-FOREIGN-TYPE knows."
-  (let ((pairs (loop for (type value) on arguments by #'cddr collect (list type value))))
-    `(sb-alien:alien-funcall
-      (sb-alien:extern-alien ,name (function ,(foreign-type result) ,@(mapcar (lambda (p) (foreign-type (first p))) pairs)))
-      ,@(mapcar #'second pairs))))
-
-(defun foreign-string (pointer &optional length)
-  "The UTF-8 text of LENGTH octets at the foreign POINTER, as a string; without
-LENGTH, the octets up to the first zero."
-  (tuatara.text:lenient-string (sap-octets pointer length)))
-
-;;; Finding and loading the library and the grammars
-
-(defvar *grammar-directories* '()
-  "Directories searched in order for the tree-sitter library and the grammars;
-when empty, grammars/ beside the program, then the source tree's build/grammars/.")
+;;; Grammars
 
 (defvar *grammars* (make-hash-table :test 'equal :synchronized t)
   "Every grammar looked for, by name: its GRAMMAR, or :MISSING.")
-
-(defun grammar-directories ()
-  "The directories searched for the tree-sitter library and grammars."
-  (or *grammar-directories* (tuatara.runtime:resource-directories "grammars/" "build/grammars/")))
 
 (defun find-grammar-file (name)
   "The first file called NAME in the grammar directories, or NIL."
@@ -58,18 +22,12 @@ when empty, grammars/ beside the program, then the source tree's build/grammars/
         for path = (probe-file (merge-pathnames name directory))
         when path return path))
 
-(defun syntax-library-p ()
-  "True when the tree-sitter library is loaded, loading it the first time it is needed."
-  (let ((path (find-grammar-file "libtuatara-syntax.so")))
-    (and path (tuatara.runtime:foreign-library-p (namestring path)))))
-
-(defstruct (grammar (:constructor make-grammar (name pointer symbols named)) (:copier nil))
-  "A loaded tree-sitter grammar: its NAME, the POINTER to its language,
-SYMBOLS, the name of each of its node types by symbol number, and NAMED,
-true for each that names a node rather than a literal token. FAULTED is set
-when its own code failed while reading a text: it reads nothing more."
+(defstruct (grammar (:constructor make-grammar (name symbols named)) (:copier nil))
+  "A tree-sitter grammar: its NAME, SYMBOLS, the name of each of its node
+types by symbol number, and NAMED, true for each that names a node rather
+than a literal token. FAULTED is what failed once its own code failed while
+reading a text: it reads nothing more."
   (name "" :type string :read-only t)
-  (pointer (null-pointer) :type sb-sys:system-area-pointer :read-only t)
   (symbols #() :type simple-vector :read-only t)
   (named #() :type simple-vector :read-only t)
   (spans-query nil)
@@ -77,58 +35,130 @@ when its own code failed while reading a text: it reads nothing more."
 
 (setf (documentation 'grammar-p 'function) "True when OBJECT is a GRAMMAR."
       (documentation 'grammar-name 'function) "The grammar's name, as its file is named: rust for rust.so."
-      (documentation 'grammar-pointer 'function) "The grammar's tree-sitter language, a foreign pointer."
       (documentation 'grammar-symbols 'function) "The grammar's node type names, by symbol number."
       (documentation 'grammar-named 'function) "For each symbol of the grammar, true when it names a node rather than a literal token."
-      (documentation 'grammar-faulted 'function) "What failed once the grammar's own code failed while reading a text (a GRAMMAR-FAILURE or a memory fault), else NIL; it reads nothing more."
+      (documentation 'grammar-faulted 'function) "What failed once the grammar's own code failed while reading a text (a GRAMMAR-FAILURE, a memory fault, or :CRASHED when it ended the program parsing), else NIL; it reads nothing more."
       (documentation 'grammar-spans-query 'function) "The grammar's query for strings and comments, compiled when first needed.")
 
 (defmethod print-object ((grammar grammar) stream)
   (print-unreadable-object (grammar stream :type t)
     (write-string (grammar-name grammar) stream)))
 
-(defconstant +oldest-grammar-version+ 13
-  "The oldest grammar format the tree-sitter library reads.")
+(defparameter *grammar-faults-before-off* 3
+  "How many different texts a grammar may go wrong on, crashing or failing
+in the program parsing each, before it is turned off for every text: until
+then it is off only for the text it went wrong on, so that one file made to
+break it takes no language's colours away from any other.")
 
-(defconstant +newest-grammar-version+ 15
-  "The newest grammar format the tree-sitter library reads.")
+(sb-ext:defglobal **grammar-faults** (make-hash-table :test 'equal :synchronized t)
+  "For each grammar's name, the texts it went wrong on (TEXT-IDENTITY).")
 
-(defun grammar-entry (path name)
-  "The address of the function tree_sitter_NAME in the grammar library at PATH,
-opened so that the names in it are its own: a grammar with a copy of another's
-code under that one's names (Vue's of HTML's) stays apart from that other one,
-whichever comes first. NIL when it cannot be opened or has no such function."
-  (let ((library (sb-alien:alien-funcall
-                  (sb-alien:extern-alien "dlopen" (function sb-sys:system-area-pointer sb-alien:c-string sb-alien:int))
-                  ;; RTLD_NOW, RTLD_LOCAL being 0: every name bound at once, none of them shared
-                  (sb-ext:native-namestring path) 2)))
-    (unless (null-pointer-p library)
-      (let ((entry (sb-alien:alien-funcall
-                    (sb-alien:extern-alien "dlsym" (function sb-sys:system-area-pointer sb-sys:system-area-pointer sb-alien:c-string))
-                    library (format nil "tree_sitter_~a" (substitute #\_ #\- name)))))
-        (unless (null-pointer-p entry)
-          (sb-sys:sap-int entry))))))
+(defun grammar-went-wrong (grammar where fault)
+  "Note that GRAMMAR went wrong, FAULT saying how (:CRASHED, :HUNG, or a
+GRAMMAR-FAILURE), reading the text of WHERE, a buffer or a helper: it is off
+for that text from now on (FAULTED-NAMES), and for all text once it has
+gone wrong on *GRAMMAR-FAULTS-BEFORE-OFF* texts, each file counted once by
+where it really is however often it is opened, a text with no file by its
+content (TEXT-IDENTITY). Three different texts turning a language off for
+all is as meant: a grammar going wrong that often is not to be trusted.
+With no WHERE, off for all at once. True when it is now off for all."
+  (when where
+    (note-faulted where (grammar-name grammar)))
+  (let ((count (length (sb-ext:with-locked-hash-table (**grammar-faults**)
+                         (pushnew (if where (text-identity where) :none) (gethash (grammar-name grammar) **grammar-faults**)
+                                  :test #'equal)))))
+    (when (or (null where) (>= count *grammar-faults-before-off*))
+      (setf (grammar-faulted grammar) fault)
+      t)))
+
+(defun grammar-off-p (grammar &optional where)
+  "True when GRAMMAR reads nothing more: for any text, or for that of WHERE,
+a buffer or a helper (FAULTED-NAMES)."
+  (or (grammar-faulted grammar)
+      (and where
+           (let ((names (faulted-names where)))
+             (or (member :all names) (member (grammar-name grammar) names :test #'equal)))
+           t)))
+
+(defun helper-gone-why (helper)
+  "Why a parse in HELPER, which ended as it ran, gave nothing: :HUNG when it
+was too long answering, :STOPPED when the editor ended it (for room, or its
+buffer gone), else :CRASHED."
+  (case (and helper (helper-ended helper))
+    (:hung :hung)
+    (:slow :slow)
+    (:stopped :stopped)
+    (t :crashed)))
+
+(defconstant +most-symbols+ 65535
+  "The most node types a grammar may have, as tree-sitter numbers them in 16 bits.")
+
+(defconstant +longest-name+ 4096
+  "The longest name of a node type or a capture a helper's reply may hold.")
+
+(defparameter *grammar-load-deaths-most* 3
+  "How many times a grammar may end the program loading grammars as it is
+loaded before it is given up on, as one missing, until the editor starts again.")
+
+(sb-ext:defglobal **grammar-load-deaths** (make-hash-table :test 'equal :synchronized t)
+  "For each grammar's name, how many times loading it ended the program loading it.")
+
+(sb-ext:defglobal **grammar-loads** (list 0)
+  "How many grammars are being loaded now, in a cons for atomic counting.")
+
+(sb-ext:defglobal **grammar-loads-begun** (list 0)
+  "How many grammar loads have begun, in a cons for atomic counting: one that
+begun while another ran was not alone.")
+
+(defparameter *grammar-load-wait* 30
+  "The seconds loading a grammar may take before it is given up on, this
+time, as slow: a large grammar takes a while on a slow machine.")
 
 (defun load-grammar (name)
-  "Load the grammar NAME from NAME.so in the grammar directories and return it,
-or NIL when it is missing or of a version the library cannot read."
-  (let ((path (and (syntax-library-p) (find-grammar-file (format nil "~a.so" name)))))
-    (when path
-      (let ((address (grammar-entry path name)))
-        (when address
-          (let* ((pointer (sb-alien:alien-funcall
-                           (sb-alien:sap-alien (sb-sys:int-sap address) (function sb-sys:system-area-pointer))))
-                 (version (ts-call "ts_language_abi_version" :u32 :pointer pointer)))
-            (when (<= +oldest-grammar-version+ version +newest-grammar-version+)
-              (let* ((count (ts-call "ts_language_symbol_count" :u32 :pointer pointer))
-                     (symbols (make-array count))
-                     (named (make-array count)))
-                (dotimes (i count)
-                  (let ((name (ts-call "ts_language_symbol_name" :pointer :pointer pointer :u16 i)))
-                    (setf (aref symbols i) (if (null-pointer-p name) "" (foreign-string name))
-                          ;; 0 is a regular symbol, one that names nodes
-                          (aref named i) (zerop (ts-call "ts_language_symbol_type" :u32 :pointer pointer :u16 i)))))
-                (make-grammar name pointer symbols named)))))))))
+  "The grammar NAME, as the helper compiling rules loads it from NAME.so in the grammar
+directories, or NIL when it is missing or of a version tree-sitter cannot
+read; :UNKNOWN when there is no helper to ask, or it did not answer, to be
+asked again. When the helper ends as the grammar loads, alone, that counts
+against it (*GRAMMAR-LOAD-DEATHS-MOST*); a slow load, or the helper ending
+while others load too, does not."
+  (let ((octets (tuatara.text:string-octets name))
+        (helper (rules-helper)))
+    (unless (and helper (helper-alive helper)) (return-from load-grammar :unknown))
+    (let ((loaded
+            (with-call (call helper +op-grammar+)
+              (call-octets call octets)
+              ;; alone: none loading when it began, none begun while it ran
+              (let* ((others (sb-ext:atomic-incf (car **grammar-loads**)))
+                     (begun (sb-ext:atomic-incf (car **grammar-loads-begun**)))
+                     (status (unwind-protect (call-send call :seconds *grammar-load-wait* :late :slow)
+                               (sb-ext:atomic-decf (car **grammar-loads**))))
+                     (alone (and (= 0 others) (= (car **grammar-loads-begun**) (1+ begun)))))
+                (cond ((and (eq status :dead) alone (eq (helper-ended helper) :crashed))
+                       ;; the helper ended loading it: tried again a few times, then given up on
+                       (if (< (incf (gethash name **grammar-load-deaths** 0)) *grammar-load-deaths-most*)
+                           :unknown
+                           (progn (tuatara.runtime:debug-report :error "the ~a grammar ended the program loading it ~d times: not loaded"
+                                                                name *grammar-load-deaths-most*)
+                                  :missing)))
+                      ((eq status :dead) :unknown)
+                      ((not (eql 0 status)) :missing)
+                      (t
+                       (let* ((count (reply-count call 4 8))
+                              (symbols (make-array (if (<= count +most-symbols+) count (reply-overrun call))))
+                              (named (make-array count))
+                              (at 8))
+                         (dotimes (i count)
+                           (let ((length (reply-u32-at call (+ at 4))))
+                             (when (> length +longest-name+) (reply-overrun call))
+                             (setf (aref named i) (= 1 (reply-u32-at call at))
+                                   (aref symbols i) (reply-string call (+ at 8) length))
+                             (incf at (+ 8 (* 4 (ceiling length 4))))))
+                         (make-grammar name symbols named))))))))
+      ;; no answer had at all (the helper gone meanwhile): asked again
+      (case loaded
+        ((nil) :unknown)
+        (:missing nil)
+        (t loaded)))))
 
 (defun grammar-name-p (name)
   "True when NAME can name a grammar: one to 64 lower-case letters, digits,
@@ -139,60 +169,89 @@ and nothing elsewhere."
 
 (defun find-grammar (name)
   "The grammar called NAME (a string such as \"rust\"), loaded the first time it
-is asked for; NIL when there is none, or NAME cannot name one (GRAMMAR-NAME-P)."
+is asked for; NIL when there is none, or NAME cannot name one (GRAMMAR-NAME-P).
+A grammar that could not be asked for, the program parsing having ended, is
+asked for again next time."
   (when (grammar-name-p name)
     (let ((known (gethash name *grammars*)))
       (if known
           (and (grammar-p known) known)
-          (let ((grammar (load-grammar name)))
-            (setf (gethash name *grammars*) (or grammar :missing))
-            grammar)))))
+          (let ((grammar (and (find-grammar-file (format nil "~a.so" name)) (load-grammar name))))
+            (unless (eq grammar :unknown)
+              (setf (gethash name *grammars*) (or grammar :missing)))
+            (and (grammar-p grammar) grammar))))))
+
+(defun grammar-pending-p (name)
+  "True when the grammar NAME is there but not loaded yet, the program loading
+grammars not running (it is started in the background): asked for again, it
+may be had."
+  (and (grammar-name-p name)
+       (null (gethash name *grammars*))
+       (not (helpers-refused-p :rules))
+       (find-grammar-file (format nil "~a.so" name))
+       t))
 
 (defun forget-grammars ()
-  "Forget the loaded grammars, which a saved image does not keep, so that the
-program loads them again when it next needs them."
+  "Forget the grammars looked for, so that they are looked for again when next needed."
   (clrhash *grammars*))
-
-(pushnew 'forget-grammars sb-ext:*save-hooks*)
 
 ;;; Parsers and trees
 
-(defun make-parser (grammar)
-  "A new tree-sitter parser for GRAMMAR, as a foreign pointer; release it with DELETE-PARSER."
-  (let ((parser (ts-call "ts_parser_new" :pointer)))
-    (unless (ts-call "ts_parser_set_language" :bool :pointer parser :pointer (grammar-pointer grammar))
-      (ts-call "ts_parser_delete" :void :pointer parser)
-      (error "The ~a grammar cannot be used." (grammar-name grammar)))
-    parser))
+(defstruct (parser (:constructor %make-parser (helper number grammar)) (:copier nil))
+  "A tree-sitter parser for GRAMMAR, held by HELPER as its parser NUMBER."
+  (helper nil :read-only t)
+  (number 0 :type fixnum :read-only t)
+  (grammar nil :read-only t))
+
+(setf (documentation 'parser-p 'function) "True when OBJECT is a PARSER."
+      (documentation 'parser-helper 'function) "The helper holding the parser."
+      (documentation 'parser-number 'function) "The parser's number in its helper."
+      (documentation 'parser-grammar 'function) "The grammar the parser parses with.")
+
+(defstruct (tree (:constructor %make-tree (helper number)) (:copier nil))
+  "A syntax tree, held by HELPER as its tree NUMBER."
+  (helper nil :read-only t)
+  (number 0 :type fixnum :read-only t))
+
+(setf (documentation 'tree-p 'function) "True when OBJECT is a TREE."
+      (documentation 'tree-helper 'function) "The helper holding the tree."
+      (documentation 'tree-number 'function) "The tree's number in its helper.")
+
+(defun make-parser (grammar &optional (helper (current-helper)))
+  "A new tree-sitter parser for GRAMMAR in HELPER (the one parsing the text
+worked on now unless given); release it with DELETE-PARSER. NIL when there is
+no helper."
+  (let ((octets (tuatara.text:string-octets (grammar-name grammar))))
+    (with-call (call helper +op-parser+)
+      (call-octets call octets)
+      (let ((status (call-send call)))
+        (cond ((eql 0 status)
+               (let ((number (reply-u32 call 0)))
+                 (if (zerop number) (reply-overrun call) (%make-parser helper number grammar))))
+              ((eq status :dead) nil)
+              (t (error "The ~a grammar cannot be used." (grammar-name grammar))))))))
 
 (defun delete-parser (parser)
   "Release PARSER, made by MAKE-PARSER."
-  (ts-call "ts_parser_delete" :void :pointer parser))
+  (when parser
+    (with-call (call (parser-helper parser) +op-parser-delete+)
+      (call-u32 call (parser-number parser))
+      (call-send call))))
 
 (defun copy-tree-pointer (tree)
-  "A copy of TREE that another thread may use; cheap, as the two share their nodes."
-  (ts-call "ts_tree_copy" :pointer :pointer tree))
+  "A copy of TREE that another thread may use; cheap, as the two share their
+nodes. NIL when its helper has ended."
+  (with-call (call (tree-helper tree) +op-copy+)
+    (call-u32 call (tree-number tree))
+    (when (eql 0 (call-send call))
+      (let ((number (reply-u32 call 0)))
+        (and (/= number 0) (%make-tree (tree-helper tree) number))))))
 
 (defun delete-tree (tree)
   "Release TREE."
-  (ts-call "ts_tree_delete" :void :pointer tree))
-
-(defun set-included-ranges (parser rope ranges)
-  "Make PARSER read only RANGES of ROPE's text, each (START . END) in octets,
-in order and apart. True when tree-sitter takes them."
-  (let ((count (length ranges)))
-    (with-foreign-memory (sap (* 4 6 (max 1 count)))
-      (loop for (start . end) in ranges
-            for i from 0
-            do (let ((from (tuatara.text:byte->line rope start))
-                     (to (tuatara.text:byte->line rope end)))
-                 (setf (sb-sys:sap-ref-32 sap (* 4 (* 6 i))) start
-                       (sb-sys:sap-ref-32 sap (* 4 (+ 1 (* 6 i)))) end
-                       (sb-sys:sap-ref-32 sap (* 4 (+ 2 (* 6 i)))) from
-                       (sb-sys:sap-ref-32 sap (* 4 (+ 3 (* 6 i)))) (- start (tuatara.text:line->byte rope from))
-                       (sb-sys:sap-ref-32 sap (* 4 (+ 4 (* 6 i)))) to
-                       (sb-sys:sap-ref-32 sap (* 4 (+ 5 (* 6 i)))) (- end (tuatara.text:line->byte rope to)))))
-      (= 1 (ts-call "tuatara_set_included_ranges" :i32 :pointer parser :pointer sap :u32 count)))))
+  (with-call (call (tree-helper tree) +op-tree-delete+)
+    (call-u32 call (tree-number tree))
+    (call-send call)))
 
 (defconstant +most-children+ 4096
   "The most children of one node looked at.")
@@ -201,25 +260,83 @@ in order and apart. True when tree-sitter takes them."
   "The octets each child of the node of TREE from START below END of type
 SYMBOL starts and ends at, as a list of (START . END): its named children
 alone when NAMED, else named children and literal tokens alike, of those
-ending after FROM and starting before TO; NIL when there is no such node."
-  (with-foreign-memory (sap (* 4 2 +most-children+))
-    (let ((n (ts-call "tuatara_node_child_ranges" :i32 :pointer tree :u32 start :u32 end :u32 symbol
-                      :bool named :u32 from :u32 to :pointer sap :u32 +most-children+)))
-      (loop for i from 0 below (max n 0)
-            collect (cons (sb-sys:sap-ref-32 sap (* 4 (* 2 i))) (sb-sys:sap-ref-32 sap (* 4 (1+ (* 2 i)))))))))
+ending after FROM and starting before TO; NIL when there is no such node. A
+reply with children outside the node ends the helper."
+  (let ((helper (tree-helper tree)))
+    (with-call (call helper +op-children+)
+      (call-u32 call (tree-number tree)) (call-u32 call start) (call-u32 call end) (call-u32 call symbol)
+      (call-u32 call (if named 1 0)) (call-u32 call from) (call-u32 call to)
+      (when (eql 0 (call-send call))
+        (let* ((sap (call-in call)) (size (call-in-size call))
+               (count (if (>= size 4) (sb-sys:signed-sap-ref-32 sap 0) most-positive-fixnum)))
+          (cond ((minusp count) nil)
+                ((or (> count +most-children+) (> (+ 4 (* 8 count)) size)) (reply-malformed helper))
+                (t (loop for i from 0 below count
+                         for s = (sb-sys:sap-ref-32 sap (+ 4 (* 8 i)))
+                         for e = (sb-sys:sap-ref-32 sap (+ 8 (* 8 i)))
+                         unless (<= start s e end)
+                           do (return (reply-malformed helper))
+                         collect (cons s e)))))))))
+
+(defun node-children-many (helper nodes count)
+  "The children of COUNT nodes of trees HELPER holds, asked for in one
+request, NODES holding seven numbers for each: the number of its tree, then
+as NODE-CHILD-RANGES takes them its start, end and symbol, 1 for named
+children alone else 0, and the octets the children must end after and start
+before. Two values: a fixnum vector of the children's starts and ends, two
+numbers each, and a fixnum vector giving for each node where its children
+start in the first, and at COUNT where the last ones end; NIL when the
+helper did not answer, or answered with children outside their nodes, which
+ends it."
+  (declare (type (simple-array fixnum (*)) nodes) (type fixnum count))
+  (when (<= 1 count +most-children+)
+    (with-call (call helper +op-children-many+)
+      (call-u32 call count)
+      (dotimes (i (* 7 count)) (call-u32 call (aref nodes i)))
+      (when (eql 0 (call-send call :most (* count (+ 4 (* 8 +most-children+)))))
+        (let* ((sap (call-in call)) (size (call-in-size call))
+               (starts (make-array (1+ count) :element-type 'fixnum))
+               (total (loop with at = 0 for i from 0 below count
+                            for n = (if (<= (+ at 4) size) (sb-sys:signed-sap-ref-32 sap at) most-positive-fixnum)
+                            do (setf n (max n 0))
+                               (when (or (> n +most-children+) (> (+ at 4 (* 8 n)) size))
+                                 (return (reply-malformed helper)))
+                               (incf at (+ 4 (* 8 n)))
+                            sum n)))
+          (when total
+            (let ((pairs (make-array (* 2 total) :element-type 'fixnum)) (at 0) (k 0))
+              (dotimes (i count)
+                (let ((n (max 0 (sb-sys:signed-sap-ref-32 sap at)))
+                      (low (aref nodes (+ 1 (* 7 i)))) (high (aref nodes (+ 2 (* 7 i)))))
+                  (setf (aref starts i) k)
+                  (dotimes (j n)
+                    (let ((s (sb-sys:sap-ref-32 sap (+ at 4 (* 8 j))))
+                          (e (sb-sys:sap-ref-32 sap (+ at 8 (* 8 j)))))
+                      (unless (<= low s e high)
+                        (return-from node-children-many (reply-malformed helper)))
+                      (setf (aref pairs k) s (aref pairs (1+ k)) e)
+                      (incf k 2)))
+                  (incf at (+ 4 (* 8 n)))))
+              (setf (aref starts count) k)
+              (values pairs starts))))))))
 
 (defun tree-has-error-p (tree)
   "True when TREE's text has syntax errors."
-  (ts-call "tuatara_tree_has_error" :bool :pointer tree))
+  (with-call (call (tree-helper tree) +op-has-error+)
+    (call-u32 call (tree-number tree))
+    (and (eql 0 (call-send call)) (= 1 (reply-u32 call 0)))))
 
 (defun edit-tree (tree start old-end new-end start-point old-end-point new-end-point)
   "Tell TREE that its octets from START below OLD-END became the octets from
 START below NEW-END; each point is a cons of the row and the column (in octets)
 of the offset before it."
-  (ts-call "tuatara_edit" :void :pointer tree :u32 start :u32 old-end :u32 new-end
-           :u32 (car start-point) :u32 (cdr start-point)
-           :u32 (car old-end-point) :u32 (cdr old-end-point)
-           :u32 (car new-end-point) :u32 (cdr new-end-point)))
+  (with-call (call (tree-helper tree) +op-edit+)
+    (call-u32 call (tree-number tree))
+    (call-u32 call start) (call-u32 call old-end) (call-u32 call new-end)
+    (call-u32 call (car start-point)) (call-u32 call (cdr start-point))
+    (call-u32 call (car old-end-point)) (call-u32 call (cdr old-end-point))
+    (call-u32 call (car new-end-point)) (call-u32 call (cdr new-end-point))
+    (call-send call)))
 
 (defstruct (tree-node (:constructor make-tree-node (start end name named children &optional broken symbol)) (:copier nil))
   "A node of a syntax tree: the octets START below END it covers, the NAME of
@@ -244,124 +361,96 @@ the number of its type in the grammar, its SYMBOL."
       (documentation 'tree-node-broken 'function) "True when the node is a syntax error or holds one."
       (documentation 'tree-node-symbol 'function) "The number of the node's type in its grammar.")
 
-;;; Reading the text for the parser
-
-(defconstant +read-size+ 65536
-  "The most octets the parser is given at a time.")
-
-(defstruct (parse-input (:constructor make-parse-input (rope buffer)) (:copier nil))
-  "The text a parse reads: ROPE, copied a piece at a time into the foreign
-BUFFER, which holds the octets from FROM below TO. FAILED is set when reading
-went wrong, and the parse is then thrown away."
-  (rope nil :read-only t)
-  (buffer (null-pointer) :type sb-sys:system-area-pointer :read-only t)
-  (from 0 :type fixnum)
-  (to 0 :type fixnum)
-  (failed nil))
-
-(setf (documentation 'make-parse-input 'function) "A PARSE-INPUT reading ROPE through the foreign BUFFER."
-      (documentation 'parse-input-p 'function) "True when OBJECT is a PARSE-INPUT."
-      (documentation 'parse-input-rope 'function) "The rope being parsed."
-      (documentation 'parse-input-buffer 'function) "The foreign buffer the parser reads from."
-      (documentation 'parse-input-from 'function) "The offset of the first octet in the buffer."
-      (documentation 'parse-input-to 'function) "The offset after the last octet in the buffer."
-      (documentation 'parse-input-failed 'function) "True when reading the text went wrong.")
-
-(defvar *parse-input* nil
-  "The PARSE-INPUT of the parse running in this thread.")
-
-(defun read-for-parse (byte length)
-  "Give the parse running in this thread the text from octet BYTE on: return a
-foreign pointer to the octets, storing how many there are at the foreign
-LENGTH, zero at the end of the text. Never signals: a failure marks the input
-failed and ends the text, so no error unwinds through the parser."
-  (let* ((input *parse-input*)
-         (buffer (parse-input-buffer input)))
-    (handler-case
-        (let* ((rope (parse-input-rope input))
-               (size (tuatara.text:rope-bytes rope))
-               (to (parse-input-to input)))
-          (cond ((>= byte size)
-                 (setf (sb-sys:sap-ref-32 length 0) 0)
-                 buffer)
-                ;; still in the buffer, unless too little is left to finish a character
-                ((and (<= (parse-input-from input) byte) (< byte to) (or (>= (- to byte) 4) (= to size)))
-                 (setf (sb-sys:sap-ref-32 length 0) (- to byte))
-                 (sb-sys:sap+ buffer (- byte (parse-input-from input))))
-                (t
-                 (let ((end (min size (+ byte +read-size+))))
-                   (tuatara.text:rope-copy-to-sap rope byte end buffer)
-                   (setf (parse-input-from input) byte
-                         (parse-input-to input) end
-                         (sb-sys:sap-ref-32 length 0) (- end byte))
-                   buffer))))
-      (serious-condition ()
-        (setf (parse-input-failed input) t
-              (sb-sys:sap-ref-32 length 0) 0)
-        buffer))))
-
-(sb-alien:define-alien-callable tuatara-read-for-parse sb-sys:system-area-pointer
-    ((payload sb-sys:system-area-pointer) (byte (sb-alien:unsigned 32)) (length sb-sys:system-area-pointer))
-  payload                               ; not used: a callable's body takes no declarations
-  (read-for-parse byte length))
+;;; Parsing
 
 (defun parse-rope (parser rope &key old cancel limit budget)
   "Parse ROPE with PARSER and return the new tree, or NIL when the parse was
-cancelled, ran out of time or memory, the grammar went wrong or the text
-could not be read. The second value then says why: :SLOW when it ran out of
-time, :MEMORY when it took more memory than BUDGET, :SHORT when the memory
-the editor may take ran short (or was short, and it did not start) and
-:FAILED when the grammar's own code gave the parser what it cannot have (a
-token the grammar has no number for). The third value is true when PARSER
-was left half way, memory running out within it, and is not to be used
-again, not even to be deleted. A scanner writing past the memory given to it
-for its state faults there, as SB-SYS:MEMORY-FAULT-ERROR. OLD is the tree of
-the text before, edited to match ROPE with EDIT-TREE, or NIL to parse from
-scratch. CANCEL is a foreign 32-bit flag: the parse stops soon after it
-becomes nonzero. LIMIT is how many seconds the parse may take, BUDGET how
-many octets of memory more than the tree-sitter library held before it; NIL
-for no limit."
-  (with-foreign-memory (buffer +read-size+)
-    (with-foreign-memory (own-flag 4 :zero t)
-      (let* ((flag (or cancel own-flag))
-             (input (make-parse-input rope buffer))
-             (tree (let ((*parse-input* input))
-                     (ts-call "tuatara_parse" :pointer :pointer parser :pointer (or old (null-pointer))
-                              :pointer (sb-alien:alien-sap (sb-alien:alien-callable-function 'tuatara-read-for-parse))
-                              :pointer (null-pointer) :pointer flag
-                              :u32 (if limit (max 1 (min #xffffffff (round (* limit 1000)))) 0)
-                              :u64 (if budget (max 1 (min (1- (expt 2 63)) (round budget))) 0)))))
-        (cond ((null-pointer-p tree)
-               (let ((code (sb-sys:signed-sap-ref-32 flag 0)))
-                 (if (= code 7)
-                     (values nil :short t)
-                     (progn (ts-call "ts_parser_reset" :void :pointer parser)
-                            (values nil (case code (2 :slow) (3 :memory) (4 :failed) (6 :short)) nil)))))
-              ((parse-input-failed input)
-               (delete-tree tree)
-               (ts-call "ts_parser_reset" :void :pointer parser)
-               nil)
-              (t tree))))))
+cancelled, ran out of time or memory, the grammar went wrong, the text could
+not be read or the helper holding the parser ended. The second value then
+says why: :SLOW when it ran out of time, :MEMORY when it took more memory
+than BUDGET, :SHORT when the memory the helper may take ran short (or was
+short, and it did not start), :FAILED when the grammar's own code gave the
+parser what it cannot have (a token the grammar has no number for), :CRASHED
+when the helper ended while it parsed, and :HUNG when it went on past LIMIT
+and was ended. The third value is true when PARSER is not to be used again,
+not even to be deleted: left half way, memory running out within it, or its
+helper ended. OLD is the tree of the text before, edited to match ROPE with
+EDIT-TREE, or NIL to parse from scratch. CANCEL is a foreign 32-bit flag: the
+parse stops soon after it becomes nonzero. LIMIT is how many seconds the
+parse may take, BUDGET how many octets of memory more than the parsing
+program held before it; NIL for no limit."
+  (let ((helper (parser-helper parser))
+        (input (make-parse-input rope (tuatara.text:rope-bytes rope) (parser-number parser))))
+    (unless (helper-alive helper)
+      (return-from parse-rope (values nil (helper-gone-why helper) t)))
+    (let ((result
+           (with-call (call helper +op-parse+)
+          (call-u32 call (parser-number parser))
+          (call-u32 call (if old (tree-number old) 0))
+          (call-u32 call (if limit (max 1 (min #xffffffff (round (* limit 1000)))) 0))
+          (call-u64 call (if budget (max 1 (min (1- (expt 2 63)) (round budget))) 0))
+          (multiple-value-list
+           (let* ((asked-to-stop nil)
+                 (status (while-parsing (helper) (call-send call
+                                    :input input
+                                    :seconds (+ (or limit 86400) *syntax-helper-wait*)
+                                    :cancel (lambda ()
+                                              (when (and cancel (not asked-to-stop)
+                                                         (/= 0 (sb-sys:signed-sap-ref-32 cancel 0)))
+                                                (setf asked-to-stop t)
+                                                (send-cancel helper (parser-number parser))))))))
+            (cond ((eq status :dead)
+                   (values nil (helper-gone-why helper) t))
+                  ((/= 0 status) (values nil nil nil))
+                  (t
+                   (let ((number (reply-u32 call 0))
+                         (code (reply-u32 call 1)))
+                     (when (and cancel (/= code 0) (= 0 (sb-sys:signed-sap-ref-32 cancel 0)))
+                       (setf (sb-sys:signed-sap-ref-32 cancel 0) code))
+                     (cond ((and (/= number 0) (parse-input-over input))
+                            ;; read without end: given up as too slow
+                            (delete-tree (%make-tree helper number))
+                            (with-call (reset helper +op-reset+)
+                              (call-u32 reset (parser-number parser))
+                              (call-send reset))
+                            (values nil :slow))
+                           ((parse-input-over input) (values nil :slow))
+                           ((and (/= number 0) (parse-input-failed input))
+                            (delete-tree (%make-tree helper number))
+                            (with-call (reset helper +op-reset+)
+                              (call-u32 reset (parser-number parser))
+                              (call-send reset))
+                            nil)
+                           ((/= number 0) (%make-tree helper number))
+                           (t (values nil (case code (2 :slow) (3 :memory) (4 :failed) ((6 7) :short))
+                                      (= code 7))))))))))))
+      (if result (values-list result) (values nil (helper-gone-why helper) t)))))
 
 ;;; Queries
 
 (defstruct (query (:constructor %make-query) (:copier nil))
-  "A compiled tree-sitter query for GRAMMAR: POINTER to it, the SOURCE text,
-CAPTURES (the name of each capture, by number), PREDICATES (for each pattern, a
-list of the tests its matches must pass), STARTS (the octet in the source each
-pattern starts at) and PROPERTIES (for each pattern, what its #set!
-directives set)."
+  "A tree-sitter query for GRAMMAR, known to the helpers by NUMBER and compiled
+in each when it first runs there: the SOURCE text, CAPTURES (the name of each
+capture, by number), PREDICATES (for each pattern, a list of the tests its
+matches must pass), STARTS (the octet in the source each pattern starts at),
+PROPERTIES (for each pattern, what its #set! directives set), NON-LOCAL (the
+numbers of its patterns that are not local, see QUERY-NON-LOCAL-PATTERNS) and
+DISABLED (the numbers of those made to match nothing)."
   (grammar nil :read-only t)
-  (pointer (null-pointer) :type sb-sys:system-area-pointer :read-only t)
+  (number 0 :type fixnum :read-only t)
   (source "" :type string :read-only t)
   (captures #() :type simple-vector :read-only t)
   (predicates #() :type simple-vector :read-only t)
   (starts #() :type simple-vector :read-only t)
-  (properties #() :type simple-vector :read-only t))
+  (properties #() :type simple-vector :read-only t)
+  (non-local '() :read-only t)
+  (disabled '()))
 
 (setf (documentation 'query-p 'function) "True when OBJECT is a QUERY."
       (documentation 'query-grammar 'function) "The grammar the query is for."
-      (documentation 'query-pointer 'function) "The compiled tree-sitter query, a foreign pointer."
+      (documentation 'query-number 'function) "The number the helpers know the query by."
+      (documentation 'query-non-local 'function) "The numbers of the query's patterns that are not local."
+      (documentation 'query-disabled 'function) "The numbers of the query's patterns made to match nothing."
       (documentation 'query-source 'function) "The text the query was compiled from."
       (documentation 'query-captures 'function) "The query's capture names, by capture number."
       (documentation 'query-predicates 'function) "For each pattern of the query, the tests its matches must pass."
@@ -403,25 +492,22 @@ such as a token the grammar has no number for, and the parse stopped.")
   #("No error" "Syntax error" "Unknown node type" "Unknown field" "Unknown capture" "Impossible pattern" "Wrong grammar")
   "What each tree-sitter query error number means.")
 
-(defun predicate-step-strings (query pattern)
-  "The predicates and directives of PATTERN in the compiled QUERY, as lists
-whose elements are strings (for string steps) and capture numbers."
-  (sb-alien:with-alien ((count (sb-alien:unsigned 32)))
-    (let* ((steps (ts-call "ts_query_predicates_for_pattern" :pointer :pointer query :u32 pattern
-                           :pointer (sb-alien:alien-sap (sb-alien:addr count))))
-           (result '()) (current '()))
-      (dotimes (i count)
-        (let ((type (sb-sys:sap-ref-32 steps (* 8 i)))
-              (value (sb-sys:sap-ref-32 steps (+ 4 (* 8 i)))))
-          (case type
-            (0 (push (nreverse current) result) (setf current '()))
-            (1 (push value current))
-            (2 (push (sb-alien:with-alien ((length (sb-alien:unsigned 32)))
-                       (foreign-string (ts-call "ts_query_string_value_for_id" :pointer :pointer query :u32 value
-                                                :pointer (sb-alien:alien-sap (sb-alien:addr length)))
-                                       length))
-                     current)))))
-      (nreverse result))))
+(defun reply-predicate-steps (call at count &optional (longest +reply-most+))
+  "The COUNT predicate steps of a pattern in CALL's reply to a query, from
+octet AT: as lists whose elements are strings (for string steps) and capture
+numbers, and the octet after them, as two values. A string longer than
+LONGEST octets ends the helper (REPLY-OVERRUN)."
+  (let ((result '()) (current '()))
+    (dotimes (i count)
+      (let ((type (reply-u32-at call at)))
+        (case type
+          (0 (push (nreverse current) result) (setf current '()) (incf at 8))
+          (1 (push (reply-u32-at call (+ at 4)) current) (incf at 8))
+          (t (let ((length (reply-u32-at call (+ at 4))))
+               (when (> length longest) (reply-overrun call))
+               (push (reply-string call (+ at 8) length) current)
+               (incf at (+ 8 (* 4 (ceiling length 4)))))))))
+    (values (nreverse result) at)))
 
 (defun compile-regex-for-query (string)
   "A scanner for the regular expression STRING of a #match? predicate; one that
@@ -442,6 +528,8 @@ A test is a list (KIND CAPTURE ARGUMENT NEGATED). SYMBOLS, the names of the
 grammar's symbols, are for tests of a node's kind. #is? local, true when a
 node the match captures names a local definition, and #is-not? local, true
 when none does, are the test :LOCAL (see *LOCAL-REFERENCES*)."
+  (unless (and steps (stringp (first steps)) (plusp (length (first steps))))
+    (return-from parse-predicate nil))
   (when (and (member (first steps) '("is?" "is-not?") :test #'equal) (equal (second steps) "local"))
     (return-from parse-predicate (list :local nil nil (string= (first steps) "is-not?"))))
   (destructuring-bind (name &optional capture &rest arguments) steps
@@ -476,9 +564,139 @@ when none does, are the test :LOCAL (see *LOCAL-REFERENCES*)."
 
 (defun parse-directive (steps)
   "The property a #set! directive in STEPS sets, as a list (KEY VALUE) of a
-keyword and a string, or NIL."
-  (when (and (string= (first steps) "set!") (stringp (second steps)))
-    (list (intern (string-upcase (second steps)) :keyword) (and (stringp (third steps)) (third steps)))))
+keyword and a string, or NIL: only a property the editor knows of, a
+keyword it already has."
+  (when (and (equal (first steps) "set!") (stringp (second steps)))
+    (let ((key (find-symbol (string-upcase (second steps)) :keyword)))
+      (and key (list key (and (stringp (third steps)) (third steps)))))))
+
+(defun disagreeing-rules (helper grammar)
+  "End HELPER, which compiled a query for GRAMMAR to what its text does not
+say, and signal a QUERY-ERROR."
+  (reply-malformed helper)
+  (error 'query-error :grammar grammar :kind "Error" :line 0
+                      :text "the program compiling the rules answered what they do not say"))
+
+(define-condition query-source-error (error) ()
+  (:documentation "Signalled when the text of a query cannot be read as tree-sitter reads it."))
+
+(defun read-query-source (source)
+  "Read SOURCE, the text of a tree-sitter query, as tree-sitter reads it, for
+what the editor needs of it: the capture names, numbered in the order they
+first come, as a vector; and a vector holding for each pattern, in order, a
+cons of the octet it starts at and its predicates, each a list of the predicate's name (as
+eq? or set!, without # or .) and its arguments, a capture's number or a
+string. Signals QUERY-SOURCE-ERROR when SOURCE is not a query."
+  (let ((at 0) (octet 0) (end (length source))
+        (captures (make-array 0 :adjustable t :fill-pointer t))
+        (patterns '()) (predicates '()))
+    (labels ((next () (and (< at end) (char source at)))
+             (advance ()
+               (incf octet (let ((code (char-code (char source at))))
+                             (cond ((< code #x80) 1) ((< code #x800) 2) ((< code #x10000) 3) (t 4))))
+               (incf at))
+             (fail () (error 'query-source-error))
+             (skip ()
+               (loop for c = (next)
+                     do (cond ((null c) (return))
+                              ((member c '(#\Space #\Tab #\Newline #\Return #\Page #\Vt)) (advance))
+                              ((char= c #\;) (loop until (or (null (next)) (char= (next) #\Newline)) do (advance)))
+                              (t (return)))))
+             (ident-start-p () (let ((c (next))) (and c (or (alphanumericp c) (char= c #\_) (char= c #\-)))))
+             (identifier ()
+               (let ((from at))
+                 (loop do (advance)
+                       while (let ((c (next))) (and c (or (alphanumericp c) (member c '(#\_ #\- #\.))))))
+                 (subseq source from at)))
+             (string-literal ()
+               ;; at the opening quote
+               (advance)
+               (with-output-to-string (out)
+                 (loop (let ((c (next)))
+                         (cond ((null c) (fail))
+                               ((char= c #\Newline) (fail))
+                               ((char= c #\") (advance) (return))
+                               ((char= c #\\)
+                                (advance)
+                                (let ((e (or (next) (fail))))
+                                  (write-char (case e (#\n #\Newline) (#\r #\Return) (#\t #\Tab) (#\0 (code-char 0)) (t e)) out)
+                                  (advance)))
+                               (t (write-char c out) (advance)))))))
+             (capture ()
+               ;; at the @
+               (advance)
+               (unless (ident-start-p) (fail))
+               (let ((name (identifier)))
+                 (unless (find name captures :test #'string=)
+                   (vector-push-extend name captures))))
+             (predicate ()
+               ;; past the # or .
+               (unless (ident-start-p) (fail))
+               (let ((name (identifier)))
+                 (unless (member (next) '(#\? #\!)) (fail))
+                 (setf name (concatenate 'string name (string (next))))
+                 (advance)
+                 (skip)
+                 (let ((steps (list name)))
+                   (loop (let ((c (next)))
+                           (cond ((null c) (fail))
+                                 ((char= c #\)) (advance) (skip) (return))
+                                 ((char= c #\@)
+                                  (advance)
+                                  (unless (ident-start-p) (fail))
+                                  (let ((index (position (identifier) captures :test #'string=)))
+                                    (unless index (fail))
+                                    (push index steps)))
+                                 ((char= c #\") (push (string-literal) steps))
+                                 ((ident-start-p) (push (identifier) steps))
+                                 (t (fail))))
+                         (skip))
+                   (push (nreverse steps) predicates))))
+             (inside (closing)
+               ;; the rest of a group, node or alternation, to its CLOSING character
+               (loop (skip)
+                     (let ((c (next)))
+                       (cond ((null c) (fail))
+                             ((char= c closing) (advance) (return))
+                             ((member c '(#\) #\])) (fail))
+                             (t (part))))))
+             (part ()
+               ;; one thing inside a pattern, its suffixes after it
+               (let ((c (next)))
+                 (cond ((char= c #\()
+                        (advance) (skip)
+                        (if (member (next) '(#\# #\.))
+                            (progn (advance) (predicate))
+                            (inside #\))))
+                       ((char= c #\[) (advance) (inside #\]))
+                       ((char= c #\") (string-literal))
+                       ((char= c #\@) (capture))
+                       ((member c '(#\+ #\* #\? #\. #\! #\: #\/)) (advance))
+                       ((ident-start-p) (identifier))
+                       (t (fail)))))
+             (pattern ()
+               ;; one pattern at the top, its captures and quantifiers after it
+               (let ((c (next)))
+                 (cond ((char= c #\() (part))
+                       ((char= c #\[) (part))
+                       ((char= c #\") (string-literal))
+                       ((ident-start-p) (identifier) (when (eql (next) #\:) (advance) (skip) (pattern)))
+                       ((char= c #\.) (advance) (skip) (pattern))
+                       ((char= c #\!) (advance) (unless (ident-start-p) (fail)) (identifier))
+                       (t (fail))))
+               (loop (skip)
+                     (let ((c (next)))
+                       (cond ((member c '(#\+ #\* #\?)) (advance))
+                             ((eql c #\@) (capture))
+                             (t (return)))))))
+      (skip)
+      (loop while (< at end)
+            do (let ((start octet))
+                 (setf predicates '())
+                 (pattern)
+                 (skip)
+                 (push (cons start (nreverse predicates)) patterns)))
+      (values (coerce captures 'simple-vector) (coerce (nreverse patterns) 'simple-vector)))))
 
 (defun compile-query (grammar source &optional what)
   "Compile SOURCE, the text of a tree-sitter query, for GRAMMAR. Signals a
@@ -492,116 +710,131 @@ are for (colouring, indentation), for the reports of debug mode."
         (tuatara.runtime:debug-report :rules "~a ~@[~a ~]rules, ~:d characters, compiled in ~,1f ms"
                                       (grammar-name grammar) what (length source) (tuatara.runtime:milliseconds-since began))))))
 
+(sb-ext:defglobal **query-numbers** (list 0)
+  "The number of the last query made, in a cons for atomic counting.")
+
+(defun send-query (call number grammar source)
+  "Ask over CALL that SOURCE be compiled for GRAMMAR as query NUMBER; the status of the reply."
+  (call-begin call +op-query+)
+  (let ((name (tuatara.text:string-octets (grammar-name grammar))))
+    (call-u32 call number)
+    (call-u32 call (length name))
+    (call-octets call name :pad t)
+    (call-octets call (sb-ext:string-to-octets source :external-format :utf-8)))
+  ;; all a query's reply says comes from its text: a few octets for each of it
+  (call-send call :most (+ 1024 (* 16 (length source)))))
+
 (defun compile-query-text (grammar source)
-  "The work of COMPILE-QUERY: compile SOURCE, a tree-sitter query, for GRAMMAR."
-  (let ((octets (sb-ext:string-to-octets source :external-format :utf-8)))
-    (sb-alien:with-alien ((offset (sb-alien:unsigned 32)) (kind (sb-alien:unsigned 32)))
-      (let ((pointer (sb-sys:with-pinned-objects (octets)
-                       (ts-call "ts_query_new" :pointer :pointer (grammar-pointer grammar)
-                                :pointer (sb-sys:vector-sap octets) :u32 (length octets)
-                                :pointer (sb-alien:alien-sap (sb-alien:addr offset))
-                                :pointer (sb-alien:alien-sap (sb-alien:addr kind))))))
-        (when (null-pointer-p pointer)
-          (let* ((at (min offset (length octets)))
-                 (line-start (1+ (or (position 10 octets :end at :from-end t) -1)))
-                 (line-end (or (position 10 octets :start at) (length octets))))
-            (error 'query-error :grammar grammar
-                                :kind (if (< kind (length *query-error-kinds*)) (aref *query-error-kinds* kind) "Error")
-                                :line (1+ (count 10 octets :end at))
-                                :text (tuatara.text:lenient-string octets :start line-start :end line-end))))
-        (let* ((patterns (ts-call "ts_query_pattern_count" :u32 :pointer pointer))
-               (captures (make-array (ts-call "ts_query_capture_count" :u32 :pointer pointer)))
-               (predicates (make-array patterns))
-               (starts (make-array patterns))
-               (properties (make-array patterns))
-               (query nil))
-          (unwind-protect
-               (progn
-                 (dotimes (i (length captures))
-                   (setf (aref captures i)
-                         (sb-alien:with-alien ((length (sb-alien:unsigned 32)))
-                           (foreign-string (ts-call "ts_query_capture_name_for_id" :pointer :pointer pointer :u32 i
-                                                    :pointer (sb-alien:alien-sap (sb-alien:addr length)))
-                                           length))))
-                 (fill-patterns pointer predicates properties starts (grammar-symbols grammar))
-                 (setf query (%make-query :grammar grammar :pointer pointer :source source :captures captures
-                                          :predicates predicates :starts starts :properties properties))
-                 (sb-ext:finalize query (lambda () (ts-call "ts_query_delete" :void :pointer pointer)) :dont-save t)
-                 query)
-            (unless query (ts-call "ts_query_delete" :void :pointer pointer))))))))
+  "The work of COMPILE-QUERY: compile SOURCE, a tree-sitter query, for GRAMMAR,
+in the helper compiling rules, which is never given any text to parse."
+  (let ((number (1+ (sb-ext:atomic-incf (car **query-numbers**))))
+        (helper (rules-helper)))
+    (with-call (call helper +op-query+)
+      (unless (eql 0 (send-query call number grammar source))
+        (error 'query-error :grammar grammar :kind "Error" :line 0 :text "the program that parses did not answer"))
+      (when (= 1 (reply-u32 call 0))
+        (let* ((octets (sb-ext:string-to-octets source :external-format :utf-8))
+               (offset (reply-u32 call 1)) (kind (reply-u32 call 2))
+               (at (min offset (length octets)))
+               (line-start (1+ (or (position 10 octets :end at :from-end t) -1)))
+               (line-end (or (position 10 octets :start at) (length octets))))
+          (error 'query-error :grammar grammar
+                              :kind (if (< kind (length *query-error-kinds*)) (aref *query-error-kinds* kind) "Error")
+                              :line (1+ (count 10 octets :end at))
+                              :text (tuatara.text:lenient-string octets :start line-start :end line-end))))
+      ;; the rules as the editor reads them, the helper's answer held to them,
+      ;; each count checked before anything is made of it
+      (multiple-value-bind (own-captures own-patterns)
+          (handler-case (read-query-source source)
+            (query-source-error () (values #() :unread)))
+        (unless (and (vectorp own-patterns) (= (reply-count call 4 4) (length own-captures)))
+          (disagreeing-rules helper grammar))
+      (let* ((captures (make-array (length own-captures)))
+             (at 8))
+        (dotimes (i (length captures))
+          (let ((length (reply-u32-at call at)))
+            (unless (= length (length (tuatara.text:string-octets (aref own-captures i))))
+              (disagreeing-rules helper grammar))
+            (setf (aref captures i) (reply-string call (+ at 4) length))
+            (incf at (+ 4 (* 4 (ceiling length 4))))))
+          (unless (every #'string= own-captures captures)
+            (disagreeing-rules helper grammar))
+        (let* ((patterns (if (= (reply-count call at 12) (length own-patterns))
+                             (length own-patterns)
+                             (disagreeing-rules helper grammar)))
+               (predicates (make-array patterns)) (starts (make-array patterns)) (properties (make-array patterns))
+               (non-local '()))
+          (incf at 4)
+          (dotimes (i patterns)
+            (setf (aref starts i) (reply-u32-at call at))
+            (when (= 1 (reply-u32-at call (+ at 4))) (push i non-local))
+            (multiple-value-bind (steps after)
+                (reply-predicate-steps call (+ at 12)
+                                       (let ((count (reply-count call (+ at 8) 8))
+                                             (own (cdr (elt own-patterns i))))
+                                         ;; each predicate its steps and an end
+                                         (if (= count (loop for predicate in own sum (1+ (length predicate))))
+                                             count
+                                             (disagreeing-rules helper grammar)))
+                                       ;; no string longer than the rules' text, in octets
+                                       (* 4 (length source)))
+              (let ((own (and (< i (length own-patterns)) (elt own-patterns i))))
+                (unless (and own (= (car own) (aref starts i)) (equal (cdr own) steps))
+                  (disagreeing-rules helper grammar)))
+              (setf at after
+                    (aref predicates i) (remove nil (mapcar (lambda (step) (parse-predicate step (grammar-symbols grammar))) steps))
+                    (aref properties i) (loop for (key value) in (remove nil (mapcar #'parse-directive steps))
+                                              append (list key value)))))
+          (unless (= patterns (length own-patterns))
+            (disagreeing-rules helper grammar))
+          (setf (gethash number (helper-queries helper)) t)
+          (let ((query (%make-query :grammar grammar :number number :source source :captures captures
+                                    :predicates predicates :starts starts :properties properties
+                                    :non-local (nreverse non-local))))
+            (sb-ext:finalize query (lambda () (forget-query number)) :dont-save t)
+            query)))))))
+
+(defun forget-query (number)
+  "Have every helper let go of the query NUMBER, no longer used."
+  (dolist (helper (sb-thread:with-mutex (**helpers-lock**) (copy-list **helpers**)))
+    (when (remhash number (helper-queries helper))
+      (with-call (call helper +op-query-delete+)
+        (call-u32 call number)
+        (call-send call)))))
+
+(defun ensure-query (helper query)
+  "Have HELPER hold QUERY, compiling it there the first time; true when it does."
+  (or (gethash (query-number query) (helper-queries helper))
+      (with-call (call helper +op-query+)
+        (when (and (eql 0 (send-query call (query-number query) (query-grammar query) (query-source query)))
+                   (= 0 (reply-u32 call 0)))
+          (dolist (pattern (query-disabled query))
+            (call-begin call +op-disable+)
+            (call-u32 call (query-number query))
+            (call-u32 call pattern)
+            (call-send call))
+          (setf (gethash (query-number query) (helper-queries helper)) t)))))
 
 (defun query-non-local-patterns (query)
   "The numbers of QUERY's patterns with more than one node at their root, such
 as a sibling sequence outside any parent: colouring a window with such a
 query cannot skip the text before the window, so it slows down in large files."
-  (loop for i from 0 below (length (query-predicates query))
-        when (ts-call "ts_query_is_pattern_non_local" :bool :pointer (query-pointer query) :u32 i)
-          collect i))
+  (query-non-local query))
 
 (defun disable-query-pattern (query pattern)
   "Make pattern number PATTERN of QUERY match nothing from now on."
-  (ts-call "ts_query_disable_pattern" :void :pointer (query-pointer query) :u32 pattern))
-
-(defun fill-patterns (pointer predicates properties starts symbols)
-  "Fill in, for each pattern of the compiled query at POINTER, its PREDICATES,
-PROPERTIES and STARTS; SYMBOLS are the names of the grammar's symbols."
-  (dotimes (i (length predicates))
-    (let ((steps (predicate-step-strings pointer i)))
-      (setf (aref predicates i) (remove nil (mapcar (lambda (step) (parse-predicate step symbols)) steps))
-            (aref properties i) (loop for (key value) in (remove nil (mapcar #'parse-directive steps))
-                                      append (list key value))
-            (aref starts i) (ts-call "ts_query_start_byte_for_pattern" :u32 :pointer pointer :u32 i)))))
+  (pushnew pattern (query-disabled query))
+  (dolist (helper (sb-thread:with-mutex (**helpers-lock**) (copy-list **helpers**)))
+    (when (gethash (query-number query) (helper-queries helper))
+      (with-call (call helper +op-disable+)
+        (call-u32 call (query-number query))
+        (call-u32 call pattern)
+        (call-send call)))))
 
 ;;; Running queries
 
 (defconstant +most-captures+ 64
   "The most captures of one match looked at.")
-
-(defstruct (query-run (:constructor %make-query-run) (:copier nil))
-  "What running queries needs in one thread: a tree-sitter query CURSOR, the
-foreign CAPTURES array matches are read into, and PATTERN, where the pattern
-number goes."
-  (cursor (null-pointer) :type sb-sys:system-area-pointer :read-only t)
-  (captures (null-pointer) :type sb-sys:system-area-pointer :read-only t)
-  (pattern (null-pointer) :type sb-sys:system-area-pointer :read-only t))
-
-(setf (documentation 'query-run-p 'function) "True when OBJECT is a QUERY-RUN."
-      (documentation 'query-run-cursor 'function) "The tree-sitter query cursor."
-      (documentation 'query-run-captures 'function) "The foreign array the captures of a match are read into."
-      (documentation 'query-run-pattern 'function) "The foreign number the pattern of a match is read into.")
-
-(defconstant +match-limit+ 256
-  "The most matches a query keeps in progress at once, so that a pattern that
-matches almost anywhere cannot make a query slow.")
-
-(defun make-query-run ()
-  "A QUERY-RUN, for one thread at a time; released when it is garbage collected."
-  (let* ((cursor (ts-call "ts_query_cursor_new" :pointer))
-         (captures (sb-alien:alien-sap (sb-alien:make-alien (sb-alien:unsigned 32) (* 4 +most-captures+))))
-         (pattern (sb-alien:alien-sap (sb-alien:make-alien (sb-alien:unsigned 32))))
-         (run (%make-query-run :cursor cursor :captures captures :pattern pattern)))
-    (ts-call "ts_query_cursor_set_match_limit" :void :pointer cursor :u32 +match-limit+)
-    (sb-ext:finalize run (lambda ()
-                           (ts-call "ts_query_cursor_delete" :void :pointer cursor)
-                           (sb-alien:free-alien (sb-alien:sap-alien captures (* (sb-alien:unsigned 32))))
-                           (sb-alien:free-alien (sb-alien:sap-alien pattern (* (sb-alien:unsigned 32)))))
-                     :dont-save t)
-    run))
-
-(sb-ext:defglobal **idle-query-runs** '()
-  "The QUERY-RUNs no query is using now, to be taken by the next (WITH-QUERY-RUN).")
-
-(sb-ext:defglobal **query-runs-lock** (sb-thread:make-mutex :name "query runs")
-  "Held while a QUERY-RUN is taken from or given back to **IDLE-QUERY-RUNS**.")
-
-(defun call-with-query-run (function)
-  "Call FUNCTION with a QUERY-RUN no other query uses meanwhile, on any thread,
-and a query run inside FUNCTION getting one of its own: taken from those idle,
-or made when none is, and given back once FUNCTION returns."
-  (let ((run (or (sb-thread:with-mutex (**query-runs-lock**) (pop **idle-query-runs**))
-                 (make-query-run))))
-    (unwind-protect (funcall function run)
-      (sb-thread:with-mutex (**query-runs-lock**) (push run **idle-query-runs**)))))
 
 (defun rope-octets-equal-p (rope start end octets)
   "True when the octets of ROPE from START below END are OCTETS, read a
@@ -695,7 +928,16 @@ reading text from ROPE; a capture the match lacks passes."
     (when (= capture (aref captures (* 4 i)))
       (let* ((start (aref captures (+ 1 (* 4 i))))
              (end (aref captures (+ 2 (* 4 i))))
-             (holds (ecase kind
+             (holds (progn
+                      ;; past the text the tests may read, the test does not pass
+                      (unless (capture-text-read
+                               (let ((n (- end start)))
+                                 (ecase kind
+                                   (:match n)
+                                   (:eq (cond ((integerp argument) (* 2 n)) ((= n (length argument)) n) (t 0)))
+                                   (:any-of (if (<= n (car argument)) n 0)))))
+                        (return nil))
+                      (ecase kind
                       (:match (flet ((scan (text length)
                                        (and (cl-ppcre:scan argument text :end length) t)))
                                 (declare (dynamic-extent #'scan))
@@ -715,8 +957,92 @@ reading text from ROPE; a capture the match lacks passes."
                                                    thereis (string= word text :end2 length))))
                                       (declare (dynamic-extent #'any-of))
                                       (call-with-capture-text rope start end #'any-of))
-                                    t)))))
+                                    t))))))
         (when (eq holds negated) (return nil))))))
+
+(defvar *prefetched* nil
+  "Matches asked for ahead, all in one request: (CALL . ENTRIES), ENTRIES a
+vector of six things for each: QUERY TREE START END AT SIZE, the matches of
+QUERY in TREE from START below END being SIZE octets of CALL's reply from AT;
+NIL when there are none.")
+
+(defun most-matches (start end)
+  "The most matches a reply may give for the text from START below END: a
+few for each octet of it, and some, past which the reply cannot be right."
+  (+ (* 4 (max 0 (- end start))) 4096))
+
+(defun matches-reply-most (start end)
+  "The most octets a reply of the matches for the text from START below END may hold."
+  (* (most-matches start end) (+ 8 (* 16 +most-captures+))))
+
+(defvar *capture-text-left* most-positive-fixnum
+  "The octets of captured text the tests of a reply's matches may still read
+\(DECODE-MATCHES): past them, a test of a text is taken as not passing.")
+
+(defun capture-text-read (octets)
+  "True when OCTETS more of captured text may be read by a match's test,
+counted against *CAPTURE-TEXT-LEFT*; else NIL, said once in the debug log."
+  (cond ((zerop octets) t)
+        ((<= octets *capture-text-left*) (decf *capture-text-left* octets) t)
+        (t (when (/= *capture-text-left* -1)
+             (setf *capture-text-left* -1)
+             (tuatara.runtime:debug-report :parse "matches' tests read too much text: the rest taken as not passing"))
+           nil)))
+
+(defun decode-matches (function query rope helper sap at size start end)
+  "Call FUNCTION as MAP-QUERY-MATCHES does for each match of QUERY in the SIZE
+octets at AT of SAP, a reply of HELPER about the tree of ROPE from START
+below END, those passing their predicates. A reply that cannot be right (a
+pattern or a capture the query does not have, a node outside the text, more
+matches than the text asked about could have) ends HELPER, the rest of it
+left alone. Tests of text past what that text holds many times over are
+taken as not passing (CAPTURE-TEXT-READ). A capture may lie outside the text asked about: a match's other
+nodes may lie far from the one that touches it."
+  (declare (type function function) (type fixnum at size start end))
+  (when (<= size 0)
+    (return-from decode-matches nil))
+  (let ((captures (make-array (* 4 +most-captures+) :element-type 'fixnum))
+        (predicates (query-predicates query))
+        (patterns (length (query-predicates query)))
+        (names (length (query-captures query)))
+        (bytes (tuatara.text:rope-bytes rope))
+        (matches-left (most-matches start end))
+        (stop (+ at size))
+        (*capture-text-left* (+ (* 8 (max 0 (- end start))) (* 1024 1024))))
+    (declare (type fixnum patterns names bytes stop matches-left) (dynamic-extent captures))
+    (loop while (< at stop)
+                      do (let ((pattern (sb-sys:sap-ref-32 sap at))
+                               (count (if (<= (+ at 8) stop) (sb-sys:sap-ref-32 sap (+ at 4)) most-positive-fixnum)))
+                           (unless (and (< pattern patterns) (<= count +most-captures+) (<= (+ at 8 (* 16 count)) stop)
+                                        (plusp matches-left))
+                             (return (reply-malformed helper)))
+                           (decf matches-left)
+                           (dotimes (i count)
+                             (let ((number (sb-sys:sap-ref-32 sap (+ at 8 (* 16 i))))
+                                   (s (sb-sys:sap-ref-32 sap (+ at 12 (* 16 i))))
+                                   (e (sb-sys:sap-ref-32 sap (+ at 16 (* 16 i)))))
+                               (unless (and (< number names) (<= s e bytes))
+                                 (return-from decode-matches (reply-malformed helper)))
+                               (setf (aref captures (* 4 i)) number
+                                     (aref captures (+ 1 (* 4 i))) s
+                                     (aref captures (+ 2 (* 4 i))) e
+                                     (aref captures (+ 3 (* 4 i))) (sb-sys:sap-ref-32 sap (+ at 20 (* 16 i))))))
+                           (incf at (+ 8 (* 16 count)))
+                           (when (loop for test in (aref predicates pattern)
+                                       always (test-passes-p test rope captures count))
+                             (funcall function pattern captures count))))))
+
+(defun prefetched-matches (query tree start end)
+  "Where the matches of QUERY in TREE from START below END are among those
+asked for ahead (*PREFETCHED*): the call holding them, the octet they start
+at and their octets, as three values; NIL when they were not asked for."
+  (when *prefetched*
+    (let ((entries (cdr *prefetched*)))
+      (declare (type simple-vector entries))
+      (loop for i from 0 below (length entries) by 6
+            when (and (eq (svref entries i) query) (eq (svref entries (+ i 1)) tree)
+                      (= (svref entries (+ i 2)) start) (= (svref entries (+ i 3)) end))
+              return (values (car *prefetched*) (svref entries (+ i 4)) (svref entries (+ i 5)))))))
 
 (defun map-query-matches (function query tree rope start end)
   "Call FUNCTION with (PATTERN CAPTURES COUNT) for each match of QUERY in TREE
@@ -724,25 +1050,224 @@ reading text from ROPE; a capture the match lacks passes."
 predicates: PATTERN is the pattern's number, and CAPTURES a fixnum vector
 holding COUNT captures as four numbers each: the capture's number, the octets
 its node starts and ends at, and the node's symbol. CAPTURES is reused for the
-next match. Matches with more than +MOST-CAPTURES+ captures are cut short."
+next match and gone once MAP-QUERY-MATCHES returns, so it must not be kept.
+Matches with more than +MOST-CAPTURES+ captures are cut short. Nothing
+when the helper holding TREE has ended. The matches asked for ahead
+\(CALL-WITH-PREFETCHED-MATCHES) are taken from those."
   (declare (type function function))
-  (call-with-query-run
-   (lambda (run)
-     (let ((cursor (query-run-cursor run))
-           (foreign (query-run-captures run))
-           (pattern-cell (query-run-pattern run))
-           (captures (make-array (* 4 +most-captures+) :element-type 'fixnum))
-           (predicates (query-predicates query)))
-       (ts-call "tuatara_query" :void :pointer cursor :pointer (query-pointer query) :pointer tree
-                :u32 (max 0 start) :u32 (max 0 end))
-       (loop
-         (let ((count (ts-call "tuatara_next_match" :i32 :pointer cursor :pointer pattern-cell
-                               :pointer foreign :u32 +most-captures+)))
-           (when (minusp count) (return))
-           (let ((count (min count +most-captures+))
-                 (pattern (sb-sys:sap-ref-32 pattern-cell 0)))
-             (dotimes (i (* 4 count))
-               (setf (aref captures i) (sb-sys:sap-ref-32 foreign (* 4 i))))
-             (when (loop for test in (aref predicates pattern)
-                         always (test-passes-p test rope captures count))
-               (funcall function pattern captures count)))))))))
+  (let ((helper (tree-helper tree))
+        (start (max 0 start)) (end (max 0 end)))
+    (multiple-value-bind (call at size) (prefetched-matches query tree start end)
+      (if call
+          (unless (= size #xffffffff)
+            (decode-matches function query rope helper (call-in call) at size start end))
+          (when (ensure-query helper query)
+            (with-call (call helper +op-matches+)
+              (call-u32 call (query-number query)) (call-u32 call (tree-number tree))
+              (call-u32 call start) (call-u32 call end)
+              ;; a whole text's matches may take a while: a second a megabyte more,
+              ;; and past it given up as slow, not the helper's fault
+              (when (eql 0 (call-send call :most (matches-reply-most start end)
+                                           :seconds (+ *syntax-helper-wait* (/ (max 0 (- end start)) (* 1024 1024)))
+                                           :late :slow))
+                (decode-matches function query rope helper (call-in call) 0 (call-in-size call) start end))))))))
+
+(defun prefetch-entries (call specs tree at)
+  "The entries of *PREFETCHED* for SPECS, each (QUERY TREE START END), or
+\(QUERY START END) with TREE given for all, whose matches follow one another
+in CALL's reply from octet AT, each after its octets; NIL when the reply
+cannot hold them."
+  (let ((size (call-in-size call))
+        (entries (make-array (* 6 (length specs)))))
+    (loop for spec in specs
+          for i from 0 by 6
+          for length = (and (<= (+ at 4) size) (sb-sys:sap-ref-32 (call-in call) at))
+          unless (and length (or (= length #xffffffff) (<= (+ at 4 length) size)))
+            return nil
+          do (let ((rest (if tree (cdr spec) (cddr spec))))
+               (setf (svref entries i) (first spec) (svref entries (+ i 1)) (or tree (second spec))
+                     (svref entries (+ i 2)) (max 0 (first rest)) (svref entries (+ i 3)) (max 0 (second rest))
+                     (svref entries (+ i 4)) (+ at 4) (svref entries (+ i 5)) length))
+             (incf at (+ 4 (if (= length #xffffffff) 0 length)))
+          finally (return entries))))
+
+(defun call-with-prefetched-matches (helper specs function)
+  "Call FUNCTION with the matches of each of SPECS, (QUERY TREE START END),
+those of TREEs HELPER holds, asked for ahead in one request, so that
+MAP-QUERY-MATCHES takes them from there; FUNCTION's values."
+  (let ((specs (flet ((usable (spec) (and (first spec) (second spec) (ensure-query helper (first spec)))))
+                 (if (every #'usable specs) specs (remove-if-not #'usable specs)))))
+    (if (or (null specs) (> (length specs) 64))
+        (funcall function)
+        (let ((result
+                (with-call (call helper +op-matches-many+)
+                  (call-u32 call (length specs))
+                  (loop for (query tree start end) in specs
+                        do (call-u32 call (query-number query)) (call-u32 call (tree-number tree))
+                           (call-u32 call (max 0 start)) (call-u32 call (max 0 end)))
+                  (let ((entries (and (eql 0 (call-send call :most (loop for (nil nil start end) in specs
+                                                                         sum (+ 4 (matches-reply-most (max 0 start) (max 0 end))))))
+                                      (prefetch-entries call specs nil 0))))
+                    (multiple-value-list
+                     (if entries
+                         (let ((*prefetched* (cons call entries))) (funcall function))
+                         (funcall function)))))))
+          (if result (values-list result) (funcall function))))))
+
+;;; Parsing text in another language
+
+(defparameter *given-text-most* (* 256 1024)
+  "The most octets of text in another language sent with the request to parse
+it; a longer one is asked for as a parse asks for its text.")
+
+(defstruct (text-parse (:constructor make-text-parse (grammar ranges tree queries limit budget)) (:copier nil))
+  "Text in another language to parse with others in one request
+\(PARSE-TEXTS): RANGES of the text, each (START . END), in order and apart,
+in GRAMMAR, with LIMIT seconds and BUDGET octets as PARSE-ROPE takes them;
+or TREE, one made already, in place of all those. QUERIES are run on the
+tree, each (QUERY START END)."
+  (grammar nil :read-only t)
+  (ranges '() :read-only t)
+  (tree nil :read-only t)
+  (queries '() :read-only t)
+  (limit nil :read-only t)
+  (budget nil :read-only t))
+
+(setf (documentation 'text-parse-grammar 'function) "The grammar to parse the text in."
+      (documentation 'text-parse-ranges 'function) "The ranges of the text to parse."
+      (documentation 'text-parse-tree 'function) "The tree made already, in place of parsing."
+      (documentation 'text-parse-queries 'function) "The queries to run on the tree, each (QUERY START END)."
+      (documentation 'text-parse-limit 'function) "The seconds the parse may take."
+      (documentation 'text-parse-budget 'function) "The octets of memory the parse may take."
+      (documentation 'text-parse-p 'function) "True when OBJECT is a TEXT-PARSE.")
+
+(defun write-text-parses (call helper rope parses)
+  "Write the request of CALL to HELPER parsing PARSES, TEXT-PARSEs of ROPE's
+text, the queries of each those HELPER knows; the seconds they may take in
+all."
+  (let ((low (tuatara.text:rope-bytes rope)) (high 0) (seconds 0))
+    (call-u32 call (length parses))
+    (dolist (parse parses)
+      (let ((tree (text-parse-tree parse)))
+        (if tree
+            (call-u32 call (tree-number tree))
+            (let ((name (tuatara.text:string-octets (grammar-name (text-parse-grammar parse))))
+                  (ranges (text-parse-ranges parse))
+                  (limit (text-parse-limit parse))
+                  (budget (text-parse-budget parse)))
+              (call-u32 call 0)
+              (call-u32 call (length name))
+              (call-octets call name :pad t)
+              (call-u32 call (length ranges))
+              (loop for (start . end) in ranges
+                    do (let ((from (tuatara.text:byte->line rope start))
+                             (to (tuatara.text:byte->line rope end)))
+                         (setf low (min low start) high (max high end))
+                         (call-u32 call start) (call-u32 call end)
+                         (call-u32 call from) (call-u32 call (- start (tuatara.text:line->byte rope from)))
+                         (call-u32 call to) (call-u32 call (- end (tuatara.text:line->byte rope to)))))
+              (call-u32 call (if limit (max 1 (min #xffffffff (round (* limit 1000)))) 0))
+              (call-u64 call (if budget (max 1 (min (1- (expt 2 63)) (round budget))) 0))
+              (incf seconds (or limit 86400)))))
+      (let ((queries (text-parse-queries parse)))
+        (call-u32 call (count-if (lambda (spec) (ensure-query helper (first spec))) queries))
+        (loop for (query start end) in queries
+              when (ensure-query helper query)
+                do (call-u32 call (query-number query)) (call-u32 call (max 0 start)) (call-u32 call (max 0 end)))))
+    ;; the text itself, when it is not long, so that the parses need not ask for it
+    (let ((length (if (< low high (+ low *given-text-most*)) (- high low) 0)))
+      (call-u32 call low)
+      (call-u32 call length)
+      (when (plusp length)
+        (call-room call length)
+        (tuatara.text:rope-copy-to-sap rope low high (sb-sys:sap+ (call-out call) (call-out-size call)))
+        (incf (call-out-size call) length)))
+    (values seconds high)))
+
+(defun read-text-parses (call helper parses input)
+  "The trees and why of each of PARSES from the reply of CALL from HELPER, as
+a list of (TREE WHY) as PARSE-ROPE gives them, and the entries of
+*PREFETCHED* for the matches of their queries, as two values; NIL when the
+reply cannot be right, which ends HELPER."
+  (let* ((sap (call-in call)) (size (call-in-size call)) (at 0)
+         (entries (make-array (* 6 (loop for parse in parses
+                                         sum (count-if (lambda (spec) (ensure-query helper (first spec)))
+                                                       (text-parse-queries parse))))))
+         (e 0) (made '()))
+    (flet ((malformed ()
+             (dolist (tree made) (delete-tree tree))
+             (return-from read-text-parses (reply-malformed helper))))
+      (values
+       (loop for parse in parses
+             collect (progn
+                       (when (> (+ at 8) size) (malformed))
+                       (let* ((number (sb-sys:sap-ref-32 sap at))
+                              (code (sb-sys:sap-ref-32 sap (+ at 4)))
+                              (given (text-parse-tree parse))
+                              (tree (cond ((zerop number) nil)
+                                          (given (if (= number (tree-number given)) given (malformed)))
+                                          ((or (parse-input-failed input) (parse-input-over input))
+                                           (delete-tree (%make-tree helper number)) nil)
+                                          (t (first (push (%make-tree helper number) made))))))
+                         (incf at 8)
+                         (loop for (query start end) in (text-parse-queries parse)
+                               when (ensure-query helper query)
+                                 do (let ((length (if (<= (+ at 4) size) (sb-sys:sap-ref-32 sap at) (malformed))))
+                                      (unless (or (= length #xffffffff) (<= (+ at 4 length) size)) (malformed))
+                                      (setf (svref entries e) query (svref entries (+ e 1)) tree
+                                            (svref entries (+ e 2)) (max 0 start) (svref entries (+ e 3)) (max 0 end)
+                                            (svref entries (+ e 4)) (+ at 4) (svref entries (+ e 5)) length)
+                                      (incf e 6)
+                                      (incf at (+ 4 (if (= length #xffffffff) 0 length)))))
+                         (list tree (and (null tree) (not given)
+                                         (if (parse-input-over input)
+                                             :slow
+                                             (case code (2 :slow) (3 :memory) (4 :failed) ((6 7) :short))))))))
+       entries))))
+
+(defun parse-texts (rope parses function &key (helper (current-helper)))
+  "Parse PARSES, TEXT-PARSEs of ROPE's text, in HELPER (the one parsing the
+text worked on now unless given), each with a parser HELPER keeps for its
+grammar, and run their queries on their trees, all in one request. Calls
+FUNCTION with a list of (TREE WHY) for each as PARSE-ROPE gives them, while
+MAP-QUERY-MATCHES takes the matches of their queries from those found;
+FUNCTION's values. Each is (NIL :CRASHED) when HELPER ended first."
+  (let* ((input nil)
+         (ran nil)
+         (result
+           (with-call (call helper +op-parse-ranges+)
+             (multiple-value-bind (seconds high) (write-text-parses call helper rope parses)
+               (setf input (make-parse-input rope high 0
+                                             (loop for parse in parses
+                                                   sum (loop for (start . end) in (text-parse-ranges parse)
+                                                             sum (- end start)))))
+               (let ((status (while-parsing (helper)
+                               (call-send call :input input :seconds (+ seconds *syntax-helper-wait*)
+                                               :most (loop for parse in parses
+                                                           sum (+ 8 (loop for (nil start end) in (text-parse-queries parse)
+                                                                          sum (+ 4 (matches-reply-most (max 0 start)
+                                                                                                       (max 0 end))))))))))
+                 (multiple-value-bind (trees entries)
+                     (cond ((eq status :dead) nil)
+                           ((/= 0 status) (values (mapcar (lambda (parse) (declare (ignore parse)) (list nil nil)) parses)
+                                                  #()))
+                           (t (read-text-parses call helper parses input)))
+                   (when trees
+                     (setf ran t)
+                     (multiple-value-list
+                      (let ((*prefetched* (cons call entries)))
+                        (funcall function trees))))))))))
+    (if ran
+        (values-list result)
+        (let ((why (helper-gone-why helper)))
+          (funcall function (mapcar (lambda (parse) (declare (ignore parse)) (list nil why)) parses))))))
+
+(defun parse-rope-ranges (grammar rope ranges &key limit budget (helper (current-helper)))
+  "Parse RANGES of ROPE's text, each (START . END) in octets, in order and
+apart, in GRAMMAR, in HELPER (the one parsing the text worked on now unless
+given), as one text in another language, with a parser HELPER keeps for
+GRAMMAR. The tree, or NIL with why as PARSE-ROPE says; LIMIT and BUDGET as
+for PARSE-ROPE."
+  (parse-texts rope (list (make-text-parse grammar ranges nil '() limit budget))
+               (lambda (trees) (values-list (first trees)))
+               :helper helper))
