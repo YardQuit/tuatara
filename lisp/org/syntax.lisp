@@ -451,8 +451,10 @@ already uses one by that name, else NIL."
 
 ;;; Parsing a document
 
-(defvar *org-list-structures* '()
-  "The list structures of the plain lists being parsed, for their items.")
+(defvar *org-list-items* nil
+  "While a text is parsed, a table from where each item of its plain lists
+begins to what its list's structure says of it (ORG-LIST-STRUCTURE), the
+list read last for an item in more than one; NIL before the first list.")
 
 (defun org-todo-keywords-of (text)
   "The TODO keywords TEXT's #+TODO:, #+SEQ_TODO: and #+TYP_TODO: lines set, as
@@ -523,7 +525,7 @@ elsewhere; those TEXT's own lines set when not given (ORG-TODO-KEYWORDS-OF)."
   (let* ((text (coerce text 'simple-string))
          (*org-text* text)
          (*org-todo-keywords* (or todo-keywords (org-todo-keywords-of text)))
-         (*org-list-structures* '())
+         (*org-list-items* nil)
          (*org-line-misses* (cons text (make-hash-table :test 'equal)))
          (*org-parse-scanners* (make-hash-table :test 'eq))
          (root (make-org-node 'org-data :begin 0 :end (length text) :contents-begin 0 :contents-end (length text)
@@ -542,7 +544,7 @@ words: its objects alone, in a paragraph node, never a list, heading or table
 whatever it begins with (A. Writer stays A. Writer)."
   (let* ((text (coerce text 'simple-string))
          (*org-text* text)
-         (*org-list-structures* '())
+         (*org-list-items* nil)
          (*org-parse-scanners* (make-hash-table :test 'eq))
          (paragraph (make-org-node 'paragraph :begin 0 :end (length text) :contents-begin 0 :contents-end (length text)
                                               :post-affiliated 0)))
@@ -1094,13 +1096,13 @@ are never closed."
                      (t 'unordered)))
          (node (make-org-node 'plain-list :contents-begin start :contents-end contents-end
                                           :properties (list :type type))))
-    (push structure *org-list-structures*)
+    (let ((items (or *org-list-items* (setf *org-list-items* (make-hash-table)))))
+      (dolist (item structure) (setf (gethash (first item) items) item)))
     (org-finish (org-element-with-affiliated node position start affiliated) contents-end limit)))
 
 (defun org-item-parser (position limit)
   "The item at POSITION, in the list structure of its plain list."
-  (let* ((list (org-node-of-structure position))
-         (item (find position list :key #'first))
+  (let* ((item (gethash position *org-list-items*))
          (end (or (seventh item) limit)))
     (destructuring-bind (begin indent bullet counter checkbox tag item-end) item
       (declare (ignore indent item-end))
@@ -1124,10 +1126,6 @@ are never closed."
                                                             (and tag (list :tag tag))))))
         (setf (org-node-post-blank node) (org-count-lines (or contents-end begin) end))
         node))))
-
-(defun org-node-of-structure (position)
-  "The structure of the plain list an item at POSITION belongs to."
-  (find-if (lambda (structure) (find position structure :key #'first)) *org-list-structures*))
 
 ;;; Tables
 

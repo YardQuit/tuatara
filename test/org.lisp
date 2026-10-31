@@ -118,6 +118,19 @@ file of test/org/, the same nodes, positions and properties as tools/org-oracle.
     (tuatara.defaults::org-parse text)
     (true (< (- (get-internal-real-time) start) internal-time-units-per-second))))
 
+(define-test (org list-items-parsed-in-time-with-their-number)
+  ;; a long plain list is parsed in time growing with its items alone: each item was looked for through
+  ;; all of them, 45 s for a list of 10 MB
+  (flet ((seconds (items)
+           (let ((text (with-output-to-string (out)
+                         (dotimes (i items) (format out "- item ~d with *bold* text~%" i)))))
+             (loop repeat 2
+                   minimize (let ((start (get-internal-real-time)))
+                              (tuatara.defaults::org-parse text)
+                              (/ (- (get-internal-real-time) start) internal-time-units-per-second))))))
+    (let ((per-thousand (/ (- (seconds 16000) (seconds 4000)) 12)))
+      (true (< per-thousand 6/100) "~,1f ms for each thousand items more" (* 1000 per-thousand)))))
+
 (defun org-row-faces (f row)
   "The faces of ROW of the frontend F's last frame, as (TEXT FACE) for each span."
   (let ((line (tuatara.frontend.fake:fake-screen-line f row)))
