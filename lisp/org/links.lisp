@@ -60,49 +60,53 @@ own (START . END)."
   "The parts of BUFFER from octet START below END hidden while links are
 shown as their labels (ORG-HIDDEN-CHARS), as LAYOUT's HIDDEN takes them,
 (START END \"\" NIL) octets, and as a second value the calls of macros
-there, (START . END) octets. While a large buffer's parse in
-the background is not yet of its text as it is now, those found last, carried
-through the edits since, and no calls. With CACHE, the answer is kept, and
-given again while nothing it depends on changed, and a part of it given for
-a part of what it covers; what is found for a row's start alone, as soft
-wrap finds where its rows begin (*LAYOUT-PROBE*), never put in place of the
-window's own."
+there, (START . END) octets, read from the parses of the parts of BUFFER
+there (ORG-VIEWS). Where a large part's parse in the background is not yet
+of its text as it is now, those found last, carried through the edits since,
+and no calls. With CACHE, the answer is kept, and given again while nothing
+it depends on changed, and a part of it given for a part of what it covers;
+what is found for a row's start alone, as soft wrap finds where its rows
+begin (*LAYOUT-PROBE*), never put in place of the window's own."
   (let ((rope (tuatara.buffer:buffer-text buffer))
         (version (tuatara.buffer:buffer-version buffer)))
     (when (tuatara.text:rope-indexed-p rope)
-      ;; brought up to date at once when small, else asked for in the background
-      (org-buffer-tree buffer)
-      (if (not (org-parse-current-p buffer))
-          (org-hidden-carried buffer start end)
-          (let ((key (list version start end))
-                (kept (and cache (tuatara.buffer:buffer-local buffer 'org-hidden))))
-            (cond
-              ((and kept (equal key (first kept)))
-               (values (second kept) (third kept)))
-              ;; within what is kept: those of it there
-              ((and kept (eql version (first (first kept)))
-                    (<= (second (first kept)) start) (<= end (third (first kept))))
-               (values (remove-if-not (lambda (r) (and (> (second r) start) (< (first r) end))) (second kept))
-                       (remove-if-not (lambda (c) (and (> (cdr c) start) (< (car c) end))) (third kept))))
-              (t
-                (let ((tree (org-buffer-tree buffer))
-                      (end (min end (tuatara.text:rope-bytes rope))))
-                  (multiple-value-bind (pieces calls) (org-hidden-chars tree (org-byte->char buffer start) (org-byte->char buffer end))
-                    (let ((ranges (loop for (s . e) in pieces
-                                        collect (if (consp e)
-                                                    (list (org-char->byte buffer s) (org-char->byte buffer (first e)) (second e) nil)
-                                                    (list (org-char->byte buffer s) (org-char->byte buffer e) "" nil))))
-                          (calls (loop for (s . e) in calls
-                                       collect (cons (org-char->byte buffer s) (org-char->byte buffer e)))))
-                      ;; what a row's start is found with stays aside, the window's own kept
-                      (when (and cache (not tuatara.display:*layout-probe*))
-                        (setf (tuatara.buffer:buffer-local buffer 'org-hidden) (list key ranges calls)
-                              (tuatara.buffer:buffer-local buffer 'org-hidden-anchors)
-                              (loop for (s e text) in ranges
-                                    collect (list (tuatara.text:make-anchor version s :bias :after)
-                                                  (tuatara.text:make-anchor version e :bias :before)
-                                                  text))))
-                      (values ranges calls)))))))))))
+      (let ((key (list version start end))
+            (kept (and cache (tuatara.buffer:buffer-local buffer 'org-hidden))))
+        (cond
+          ((and kept (equal key (first kept)))
+           (values (second kept) (third kept)))
+          ;; within what is kept: those of it there
+          ((and kept (eql version (first (first kept)))
+                (<= (second (first kept)) start) (<= end (third (first kept))))
+           (values (remove-if-not (lambda (r) (and (> (second r) start) (< (first r) end))) (second kept))
+                   (remove-if-not (lambda (c) (and (> (cdr c) start) (< (car c) end))) (third kept))))
+          (t
+           (let ((end (min end (tuatara.text:rope-bytes rope)))
+                 (ranges '()) (calls '()) (current t))
+             (dolist (view (org-views buffer start end))
+               (let ((from (max start (org-view-from view)))
+                     (to (min end (org-view-to view))))
+                 (if (org-view-current view)
+                     (multiple-value-bind (pieces view-calls)
+                         (org-hidden-chars (org-view-tree view) (org-view-char buffer view from) (org-view-char buffer view to))
+                       (flet ((octet-of (char) (org-view-byte buffer view char)))
+                         (setf ranges (nconc ranges (loop for (s . e) in pieces
+                                                          collect (if (consp e)
+                                                                      (list (octet-of s) (octet-of (first e)) (second e) nil)
+                                                                      (list (octet-of s) (octet-of e) "" nil))))
+                               calls (nconc calls (loop for (s . e) in view-calls
+                                                        collect (cons (octet-of s) (octet-of e)))))))
+                     (setf current nil
+                           ranges (nconc ranges (org-hidden-carried buffer from to))))))
+             ;; what a row's start is found with stays aside, the window's own kept
+             (when (and cache current (not tuatara.display:*layout-probe*))
+               (setf (tuatara.buffer:buffer-local buffer 'org-hidden) (list key ranges calls)
+                     (tuatara.buffer:buffer-local buffer 'org-hidden-anchors)
+                     (loop for (s e text) in ranges
+                           collect (list (tuatara.text:make-anchor version s :bias :after)
+                                         (tuatara.text:make-anchor version e :bias :before)
+                                         text))))
+             (values ranges calls))))))))
 
 (defun org-hidden-ranges-shown (buffer start end &key (cache t))
   "The parts of BUFFER from octet START below END hidden as it is shown now

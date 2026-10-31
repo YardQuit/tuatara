@@ -380,18 +380,23 @@ out), a CLOCK: line, where a logged line goes, and clocking in from any key.")
     (is equalp (nth-value 1 (tuatara.defaults::org-strip-returns text))
         (tuatara.defaults::org-returns-in-rope (tuatara.text:string->rope text)))))
 
+(defun org-internals-headline-count (buffer)
+  "How many headlines BUFFER's parts begin with."
+  (let ((parts (tuatara.defaults::org-buffer-parts buffer)))
+    (loop for i below (tuatara.defaults::org-parts-count parts)
+          count (plusp (tuatara.defaults::org-part-level (tuatara.defaults::org-part-at parts i))))))
+
 (define-test (org-internals headline-index-costs-no-copy)
-  ;; where the headlines begin, found through the text's index: no copy of the text for each parse, however long it is
+  ;; where the headlines begin, found by reading the text a window at a time: no copy of it, however long it is
   (flet ((consed (octets)
            (let ((buffer (org-internals-buffer (concatenate 'string (format nil "* A~%") (org-internals-filler octets) (format nil "* B~%")))))
              (unwind-protect
                   (progn
-                    (tuatara.defaults::org-tree-now buffer)
-                    (is = 2 (length (tuatara.defaults::org-headline-index buffer)))
+                    (is = 2 (org-internals-headline-count buffer))
                     (loop repeat 3
                           minimize (let ((before (sb-ext:get-bytes-consed)))
-                                     (setf (tuatara.defaults::org-state-headlines-tree (tuatara.defaults::org-buffer-state buffer)) nil)
-                                     (tuatara.defaults::org-headline-index buffer)
+                                     (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::org-parts) nil)
+                                     (tuatara.defaults::org-buffer-parts buffer)
                                      (- (sb-ext:get-bytes-consed) before))))
                (tuatara.buffer:kill-buffer buffer)))))
     ;; for each megabyte more of text: a copy was a megabyte, none now
@@ -403,8 +408,7 @@ out), a CLOCK: line, where a logged line goes, and clocking in from any key.")
   (flet ((seconds (headlines)
            (let ((buffer (org-internals-buffer (with-output-to-string (s) (dotimes (i headlines) (format s "* h~d~%" i))))))
              (unwind-protect
-                  (progn (tuatara.defaults::org-tree-now buffer)
-                         (is = headlines (length (tuatara.defaults::org-headline-index buffer)))
+                  (progn (is = headlines (org-internals-headline-count buffer))
                          (is = 4 (length (tuatara.defaults::org-headline-signs buffer 0 20)))
                          (loop repeat 3
                                minimize (let ((start (get-internal-real-time)))

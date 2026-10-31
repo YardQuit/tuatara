@@ -376,13 +376,15 @@ signs, not indented, drawers open."
       (tuatara.buffer:kill-buffer b))))
 
 (define-test (org one-parse-at-a-time)
-  ;; a large Org buffer is parsed in the background by one thread at a time, whatever is typed, the
-  ;; latest text parsed last; the buffer's text is not copied on every key
+  ;; a large part of an Org buffer (a headline with a long text under it) is parsed in the background by
+  ;; one thread at a time, whatever is typed, the latest text parsed last; the buffer's text is not
+  ;; copied on every key
   (let ((tuatara.defaults::*org-parse-at-once* 1000)
         (f (tuatara.frontend.fake:make-fake-frontend :width 80 :height 12))
         (most 0)
         (text (with-output-to-string (out)
-                (dotimes (i 20000) (format out "* Heading ~d with [[https://x.org][a link]]~%Some body text ~d.~%" i i)))))
+                (format out "* Heading~%")
+                (dotimes (i 20000) (format out "Some body text ~d with [[https://x.org][a link]].~%" i)))))
     (flet ((parsers () (count "tuatara org parse" (sb-thread:list-all-threads) :key #'sb-thread:thread-name :test #'equal)))
       (dotimes (i 12)
         (tuatara.frontend.fake:fake-queue-keys f (if (zerop i) "i x" "x"))
@@ -394,8 +396,7 @@ signs, not indented, drawers open."
         (is >= 1 most)
         ;; the last text typed is parsed in the end
         (loop repeat 300 until (zerop (parsers)) do (sleep 0.05))
-        (tuatara.defaults::org-buffer-tree buffer)
-        (is eql (tuatara.buffer:buffer-version buffer) (tuatara.defaults::org-state-version (tuatara.defaults::org-buffer-state buffer)))
+        (true (tuatara.defaults::org-view-current (tuatara.defaults::org-view-at buffer 0)))
         (tuatara.buffer:buffer-mark-saved buffer)
         (tuatara.buffer:kill-buffer buffer)))))
 

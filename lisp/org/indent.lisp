@@ -10,50 +10,18 @@
 
 (in-package #:tuatara.defaults)
 
-(defun org-headline-index (buffer)
-  "Where BUFFER's headlines begin, in octets, with their levels: a vector of
-(BEGIN . LEVEL) in order, made of its parse once, again when the parse is
-another (not at each change of the text: the parse is behind the text until
-the next one, and its headlines stand where it had them)."
-  (let ((state (org-buffer-state buffer)))
-    (multiple-value-bind (tree) (org-buffer-tree buffer)
-      (if (and tree (eq (org-state-headlines-tree state) tree))
-          (org-state-headlines state)
-          (let ((rope (tuatara.buffer:buffer-text buffer)))
-            (when (and tree (tuatara.text:rope-indexed-p rope))
-              (let* ((chars (tuatara.text:rope-chars rope))
-                     (returns (org-state-returns state))
-                     (headlines (remove-if (lambda (headline) (> (org-node-begin headline) chars)) (org-headlines tree)))
-                     ;; the parse's characters leave out the carriage returns the text has
-                     (index (coerce (loop for headline in headlines
-                                          for p = (org-node-begin headline)
-                                          collect (cons (tuatara.text:char->byte rope (min chars (if returns (+ p (org-returns-before returns p)) p)))
-                                                        (org-property headline :level)))
-                                    'simple-vector)))
-                (setf (org-state-headlines state) index
-                      (org-state-headlines-tree state) tree)
-                index)))))))
-
-(defun org-headline-before (index position)
-  "The entry of INDEX (ORG-HEADLINE-INDEX) of the last headline beginning at or before POSITION, or NIL."
-  (let ((low 0) (high (length index)))
-    (setf low (tuatara.runtime:bisect (middle low high) (<= (car (svref index middle)) position)) high low)
-    (and (plusp low) (svref index (1- low)))))
-
 (defun org-line-prefix (buffer line-start continuation)
   "What the indented view shows before the line of BUFFER beginning at
 LINE-START (a row CONTINUATION of it when true): before a headline of level N,
 N - 1 columns, its hidden stars making the rest; before the text under it,
 2N columns; before what is above the first headline, nothing."
   (when (org-indented-p buffer)
-    (let* ((index (org-headline-index buffer))
-           (headline (and index (org-headline-before index line-start))))
-      (when headline
-        (let ((level (cdr headline)))
-          (make-string (if (and (= (car headline) line-start) (not continuation))
-                           (1- level)
-                           (* 2 level))
-                       :initial-element #\Space))))))
+    (multiple-value-bind (begin level) (org-headline-at-or-before buffer line-start)
+      (when begin
+        (make-string (if (and (= begin line-start) (not continuation))
+                         (1- level)
+                         (* 2 level))
+                     :initial-element #\Space)))))
 
 (defvar *org-level-heights* (cons -1 nil)
   "Whether any headline level's face has a :height, as of the faces'
@@ -75,33 +43,22 @@ where the window can draw rows large: a headline as tall as its level's face's
 the eighth, whose colours go round to the first's again; any other
 line one. Nothing is looked up while no level's face has a :height."
   (unless (org-level-heights-p) (return-from org-line-scale 1))
-  (let* ((index (org-headline-index buffer))
-         (headline (and index (org-headline-before index line-start)))
-         (rope (tuatara.buffer:buffer-text buffer)))
-    (or (and headline (= (car headline) line-start)
-             ;; a parse a moment behind the text: only where a star still stands
-             (< line-start (tuatara.text:rope-bytes rope)) (= 42 (tuatara.text:rope-octet rope line-start))
-             (tuatara.display:face-attribute (org-level-face (min 8 (cdr headline))) :height))
+  (multiple-value-bind (begin level) (org-headline-at-or-before buffer line-start)
+    (or (and begin (= begin line-start)
+             (tuatara.display:face-attribute (org-level-face (min 8 level)) :height))
         1)))
 
 (defun org-headline-signs (buffer start end)
   "The signs headlines from octet START below END show in place of their last
 star (*ORG-BULLETS*), as ORG-DISPLAY-REPLACEMENTS has them."
-  (let ((index (org-headline-index buffer))
-        (rope (tuatara.buffer:buffer-text buffer))
-        (found '()))
-    (when index
-      (loop for i from (tuatara.runtime:bisect (middle 0 (length index)) (< (car (svref index middle)) start))
-              below (length index)
-            for (begin . level) = (svref index i)
-            while (< begin end)
-            do (let ((star (+ begin level -1)))
-                 ;; a parse a moment behind the text: only where a star still stands
-                 (when (and (< star (tuatara.text:rope-bytes rope)) (= 42 (tuatara.text:rope-octet rope star)))
-                   (push (list star (1+ star) (let ((bullets (setting-list '*org-bullets* *org-bullets*)))
-                                                 (and bullets (nth (mod (1- level) (length bullets)) bullets)))
-                               (org-level-face level))
-                         found)))))
+  (let ((found '()))
+    (map-org-headlines buffer start end
+                       (lambda (begin level)
+                         (let ((star (+ begin level -1)))
+                           (push (list star (1+ star) (let ((bullets (setting-list '*org-bullets* *org-bullets*)))
+                                                        (and bullets (nth (mod (1- level) (length bullets)) bullets)))
+                                       (org-level-face level))
+                                 found))))
     (nreverse found)))
 
 (defun org-item-signs (buffer start end)
@@ -109,18 +66,15 @@ star (*ORG-BULLETS*), as ORG-DISPLAY-REPLACEMENTS has them."
 \(*ORG-LIST-BULLETS*) and checkboxes (*ORG-CHECKBOX-SIGNS*), as
 ORG-DISPLAY-REPLACEMENTS has them: only items the parse found, each sign put
 only where the text still holds what it stands for."
-  (let* ((tree (org-buffer-tree buffer))
-         (rope (tuatara.buffer:buffer-text buffer))
+  (let* ((rope (tuatara.buffer:buffer-text buffer))
          (size (tuatara.text:rope-bytes rope))
-         (returns (org-state-returns (org-buffer-state buffer)))
-         (from (org-byte->char buffer start returns))
-         (to (org-byte->char buffer (min end size) returns))
-         (found '()))
+         (found '())
+         view from to)
     (labels ((octets-at (at n) (and (<= (+ at n) size) (tuatara.text:rope-string rope :start at :end (+ at n))))
              (walk (node)
                (when (and (< (org-node-begin node) to) (> (org-node-end node) from))
                  (when (and (eq (org-node-type node) 'item) (<= from (org-node-begin node)))
-                   (let* ((line (org-char->byte buffer (org-node-begin node) returns))
+                   (let* ((line (org-view-byte buffer view (org-node-begin node)))
                           (bullet (string-trim " " (org-property node :bullet)))
                           (head (octets-at line (min 200 (- size line))))
                           (at (and head (position-if-not (lambda (c) (member c '(#\Space #\Tab))) head)))
@@ -139,8 +93,14 @@ only where the text still holds what it stands for."
                            (push (list (+ line box-at) (+ line box-at 3) (concatenate 'string box-sign " ") :org-checkbox)
                                  found))))))
                  (org-children-in-range node from to #'walk))))
-      (when (and tree (or *org-list-bullets* *org-checkbox-signs*))
-        (walk tree)))
+      (when (or *org-list-bullets* *org-checkbox-signs*)
+        (dolist (part (org-views buffer start (min end size)))
+          (let ((length (length (org-view-text part))))
+            ;; a parse of the part before a change, kept while the new one is made, is not past its end
+            (setf view part
+                  from (min length (org-view-char buffer part (max start (org-view-from part))))
+                  to (min length (org-view-char buffer part (min end size (org-view-to part)))))
+            (walk (org-view-tree part))))))
     (sort found #'< :key #'first)))
 
 (defun org-display-replacements (buffer start end)

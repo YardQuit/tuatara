@@ -515,11 +515,14 @@ parent. NIL when there is none."
   "True when the character POSITION is before the blank lines or spaces after NODE."
   (< position (- (org-node-end node) (org-node-post-blank node))))
 
-(defun org-parse (text)
-  "TEXT, an Org document, parsed: its tree, an ORG-NODE of type ORG-DATA."
+(defun org-parse (text &key todo-keywords)
+  "TEXT, an Org document, parsed: its tree, an ORG-NODE of type ORG-DATA.
+TODO-KEYWORDS, (NOT-DONE . DONE), are the keywords that make a headline a
+task, given for TEXT that is a part of a document whose #+TODO: lines may be
+elsewhere; those TEXT's own lines set when not given (ORG-TODO-KEYWORDS-OF)."
   (let* ((text (coerce text 'simple-string))
          (*org-text* text)
-         (*org-todo-keywords* (org-todo-keywords-of text))
+         (*org-todo-keywords* (or todo-keywords (org-todo-keywords-of text)))
          (*org-list-structures* '())
          (*org-line-misses* (cons text (make-hash-table :test 'equal)))
          (*org-parse-scanners* (make-hash-table :test 'eq))

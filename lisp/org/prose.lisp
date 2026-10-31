@@ -98,8 +98,8 @@ line before it leaving nothing open (HALF-TYPED-P)."
            (half-typed-p (subseq text (tuatara.text:string-line-start text index) index)))))
 
 (defun org-buffer-laid-out-ranges (buffer tree text)
-  "ORG-LAID-OUT-RANGES of TREE, BUFFER's parse of TEXT, worked out once for
-each parse of BUFFER."
+  "ORG-LAID-OUT-RANGES of TREE, the parse of TEXT, BUFFER's text or a part of
+it, worked out once for each parse, the last asked for kept."
   (let ((kept (tuatara.buffer:buffer-local buffer 'org-laid-out-ranges)))
     (if (eq (car kept) tree)
         (cdr kept)
@@ -108,12 +108,14 @@ each parse of BUFFER."
           ranges))))
 
 (defun org-prose-p (buffer position)
-  "True when POSITION of BUFFER, an Org buffer, is in prose, as the buffer's
-parse tells when it is of the text as it is now, else the parse of the
-section around POSITION (ORG-SECTION-AROUND)."
-  (multiple-value-bind (tree text) (org-buffer-tree buffer)
-    (if (and tree (org-parse-current-p buffer))
-        (org-text-prose-p (org-buffer-laid-out-ranges buffer tree text) text (org-byte->char buffer position))
+  "True when POSITION of BUFFER, an Org buffer, is in prose, as the parse of
+the part of it POSITION is in tells (ORG-VIEW-AT) when it is of the text as
+it is now, else the parse of the section around POSITION (ORG-SECTION-AROUND)."
+  (let ((view (org-view-at buffer position)))
+    (if (and view (org-view-current view))
+        (let ((text (org-view-text view)))
+          (org-text-prose-p (org-buffer-laid-out-ranges buffer (org-view-tree view) text) text
+                            (min (length text) (org-view-char buffer view position))))
         (multiple-value-bind (text index) (org-section-around buffer position)
           (org-text-prose-p (org-laid-out-ranges (org-parse text) text) text index)))))
 
