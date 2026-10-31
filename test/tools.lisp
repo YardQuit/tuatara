@@ -314,6 +314,7 @@ and the Quicklisp folder."
                    ;; copies of a grammar kept on elsewhere: taken from where it is kept
                    "ikatyang/tree-sitter-yaml" "Giorbo/tree-sitter-sml"
                    "mtoohey31/tree-sitter-gitattributes" "numtide/tree-sitter-nix"
+                   "RenjiSann/tree-sitter-xml" "KMikeeU/tree-sitter-dtd"
                    ;; its pin on a tag alone, the history rewritten: the grammar Helix takes in its place
                    "rhizoome/tree-sitter-ink2"))
       (false (find (format nil "https://github.com/~a" old) rows :key #'second :test #'string-equal)

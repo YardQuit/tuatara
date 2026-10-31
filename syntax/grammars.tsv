@@ -21,7 +21,7 @@ commonlisp/node_modules/tree-sitter-clojure	https://github.com/theHamsta/tree-si
 toml	https://github.com/tree-sitter-grammars/tree-sitter-toml	64b56832c2cffe41758f28e05c756a3a98d16f41	MIT
 json	https://github.com/tree-sitter/tree-sitter-json	001c28d7a29832b06b0e831ec77845553c89b56d	MIT
 json5	https://github.com/Joakker/tree-sitter-json5	248b8564567087d7866be76569b182f6dd7e14e9	MIT
-xml	https://github.com/RenjiSann/tree-sitter-xml	48a7c2b6fb9d515577e115e6788937e837815651	MIT
+xml	https://github.com/tree-sitter-grammars/tree-sitter-xml	5000ae8f22d11fbe93939b05c1e37cf21117162d	MIT	xml
 ini	https://github.com/justinmk/tree-sitter-ini	e4018b5176132b4f3c5d6e61cea383f42288d0f5	Apache-2.0
 markdown	https://github.com/tree-sitter-grammars/tree-sitter-markdown	f969cd3ae3f9fbd4e43205431d0ae286014c05b5	MIT	tree-sitter-markdown
 markdown_inline	https://github.com/tree-sitter-grammars/tree-sitter-markdown	f969cd3ae3f9fbd4e43205431d0ae286014c05b5	MIT	tree-sitter-markdown-inline
@@ -196,7 +196,7 @@ concerto	https://github.com/accordproject/concerto-tree-sitter	920ba23ea93af56b1
 cylc	https://github.com/elliotfontaine/tree-sitter-cylc	6d1d81137112299324b526477ce1db989ab58fb8	MIT
 dbml	https://github.com/dynamotn/tree-sitter-dbml	2e2fa5640268c33c3d3f27f7e676f631a9c68fd9	MIT
 doxyfile	https://tangled.org/did:plc:i7tqil44pba6cqddxqijtyhb/tree-sitter-doxyfile	c529224ecc5cc9a76b26fd0f613dd75ef52169d9	MIT
-dtd	https://github.com/KMikeeU/tree-sitter-dtd	6116becb02a6b8e9588ef73d300a9ba4622e156f	MIT
+dtd	https://github.com/tree-sitter-grammars/tree-sitter-xml	5000ae8f22d11fbe93939b05c1e37cf21117162d	MIT	dtd
 dunstrc	https://github.com/rotmh/tree-sitter-dunstrc	9cb9d5cc51cf5e2a47bb2a0e2f2e519ff11c1431	MIT
 earthfile	https://github.com/glehmann/tree-sitter-earthfile	dbfb970a59cd87b628d087eb8e3fbe19c8e20601	MIT
 ebnf	https://github.com/RubixDev/ebnf/	8e635b0b723c620774dfb8abf382a7f531894b40	MIT	crates/tree-sitter-ebnf

@@ -433,6 +433,13 @@ QUERY_FIXES = {
         ('(doc_comment) @comment.documentation', '',
          'the grammar of nix-community, kept up, has no node of its own for a comment of documentation: such a comment is a comment'),
     ],
+    ('xml', 'indents'): [('(end_tag) @outdent', '(ETag) @outdent', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
+    ('xml', 'textobjects'): [
+        ('(element (start_tag) (_)* @xml-element.inside (end_tag))', '(element (STag) (_)* @xml-element.inside (ETag))', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does'),
+        ('(comment) @comment.around', '(Comment) @comment.around', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does'),
+    ],
+    ('xml', 'injections'): [('((comment) @injection.content', '((Comment) @injection.content', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
+    ('dtd', 'injections'): [('((comment) @injection.content', '((Comment) @injection.content', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
     ('sway', 'textobjects'): [RUST_TEST],
     ('cairo', 'textobjects'): [RUST_TEST],
 }
@@ -450,6 +457,8 @@ OWN_QUERIES = {
     'lean': {'highlights', 'injections'},
     'git-attributes': {'highlights'},
     'ink': {'highlights', 'indents', 'locals', 'textobjects'},
+    'xml': {'highlights'},
+    'dtd': {'highlights'},
 }
 
 def copy_queries(name, done):
