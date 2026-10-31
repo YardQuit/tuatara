@@ -123,6 +123,10 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
   `(handler-case (progn ,form nil)
      (tuatara.io:writing-refused (e) (and (search "is an evidence folder (*evidence-folders*: " (princ-to-string e)) t))))
 
+(defmacro refused-any (form)
+  "True when FORM signals WRITING-REFUSED."
+  `(handler-case (progn ,form nil) (tuatara.io:writing-refused () t)))
+
 (define-test (evidence every-write-refused)
   (with-case-folder (root evidence work)
     (let* ((a (concatenate 'string evidence "a.txt"))
@@ -386,3 +390,42 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
           (let ((f (run-keys (format nil "C-x C-f C-a C-k ~a RET C-x C-f" (key-string a)) :width 700 :height 12)))
             (true (find-if (lambda (row) (and (search "Find file: " row) (search "/evidence/" row)))
                            (tuatara.frontend.fake:fake-frame-with f "Find file: ")))))))))
+
+(define-test (evidence refused-by-the-folder-held-open)
+  ;; each write asks again by the folder it holds open, so that a folder swapped for a link meanwhile leads nowhere
+  (with-test-directory (dir)
+    (let* ((root (namestring dir))
+           (kept (namestring (put-file (merge-pathnames "kept.txt" dir) "kept")))
+           (tuatara.io:*writing-refusal-function*
+             (lambda (path &key dirfd fd)
+               (cond ((null path) t)
+                     ((or dirfd fd) "refused by the folder held open")))))
+      (true (handler-case (progn (tuatara.io:write-new-file (concatenate 'string root "n.txt") "x") nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:replace-file kept "x") nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:remove-file kept) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:touch-path kept) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:make-directory (concatenate 'string root "d/")) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:make-symbolic-link kept (concatenate 'string root "l")) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:rename-path kept (concatenate 'string root "r.txt")) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:create-free-file root (lambda (n) (format nil "f~d" n))) nil) (tuatara.io:writing-refused () t)))
+      (true (handler-case (progn (tuatara.io:open-scratch-file root) nil) (tuatara.io:writing-refused () t)))
+      (false (tuatara.io:call-with-state-lock (concatenate 'string root "state") (lambda () t)))
+      (is string= "kept" (file-text kept))
+      (is equal '("kept.txt") (mapcar #'file-namestring (uiop:directory-files dir))))))
+
+(define-test (evidence other-names-never-written-in-place)
+  ;; a file with another name in evidence, made before, is saved as a file of its own, never through the shared file
+  (with-case-folder (root evidence work)
+    (let ((a (concatenate 'string evidence "a.txt"))
+          (other (concatenate 'string work "a-hard.txt"))
+          (third (concatenate 'string work "a-third.txt")))
+      (sb-posix:link a other)
+      (sb-posix:link a third)
+      (with-evidence-folders (`(,(concatenate 'string root "cases/*/evidence/")))
+        (tuatara.io:write-text-file (tuatara.text:string->rope "changed through another name") other)
+        (is string= "kept as found" (file-text a))
+        (is string= "changed through another name" (file-text other))
+        (is = 2 (tuatara.io:stamp-nlink (tuatara.io:path-stamp a)))
+        (true (refused-any (tuatara.io:touch-path third)))
+        (is string= "kept as found" (file-text third))))))
+

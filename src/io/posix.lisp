@@ -1112,20 +1112,44 @@ TAG, the process and a counter."
   (format nil "~a/.tuatara-~a-~d-~d" (string-right-trim "/" (native directory)) tag
           (sb-posix:getpid) (sb-ext:atomic-incf (car **scratch-counter**))))
 
+(defun call-with-folder (directory function operation)
+  "Call FUNCTION with a descriptor of the folder DIRECTORY, open for making
+entries in it and closed after; refused (WRITING-REFUSED, OPERATION said)
+when nothing may be written there, told by where the folder opened really
+is, so that nothing swapped for it meanwhile is written in."
+  (let ((fd (handler-case (sb-posix:open (string-right-trim "/" (native directory))
+                                         (logior sb-posix:o-rdonly +o-directory+ +o-cloexec+))
+              (sb-posix:syscall-error (e) (fail "open" directory (sb-posix:syscall-errno e))))))
+    (unwind-protect (progn (check-writing (string-right-trim "/" (native directory)) operation :fd fd)
+                           (funcall function fd))
+      (sb-posix:close fd))))
+
+(defun unlink-entry-at (dirfd name)
+  "Take away the entry NAME (a string) of the folder open as DIRFD; true when it went."
+  (with-octets-sap (sap (terminated-octets (tuatara.text:string-octets name)))
+    (zerop (sb-alien:alien-funcall
+            (sb-alien:extern-alien "unlinkat" (function sb-alien:int sb-alien:int sb-sys:system-area-pointer sb-alien:int))
+            dirfd sap 0))))
+
 (defun open-scratch-file (directory)
   "A descriptor for a new file with no name in DIRECTORY, open for reading and
 writing. Where the file system has no unnamed files (NFS, FUSE, SMB and others),
-a named one removed at once, which comes to the same."
+a named one removed at once, which comes to the same. Refused
+\(WRITING-REFUSED) where nothing may be written, told by the folder opened."
   (unless directory
     (error "This text is not written to a scratch file on disk (the text of an encrypted file): too large to work on in memory"))
-  (check-writing directory "make a scratch file in")
-  (let ((dir (string-right-trim "/" (native directory))))
-    (handler-case (sb-posix:open dir (logior +o-tmpfile+ sb-posix:o-rdwr) #o600)
-      (sb-posix:syscall-error ()
-        (let ((path (scratch-name directory "scratch")))
-          (prog1 (handler-case (sb-posix:open path (logior sb-posix:o-creat sb-posix:o-excl sb-posix:o-rdwr) #o600)
-                   (sb-posix:syscall-error (e) (fail "create a file in" directory (sb-posix:syscall-errno e))))
-            (ignore-errors (sb-posix:unlink path))))))))
+  (call-with-folder
+   directory
+   (lambda (dirfd)
+     (or (openat-octets dirfd (tuatara.text:string-octets ".") (logior +o-tmpfile+ sb-posix:o-rdwr +o-cloexec+) #o600)
+         (let ((name (native-file-name (scratch-name directory "scratch"))))
+           (multiple-value-bind (fd errno)
+               (openat-octets dirfd (tuatara.text:string-octets name)
+                              (logior sb-posix:o-creat sb-posix:o-excl sb-posix:o-rdwr +o-nofollow+ +o-cloexec+) #o600)
+             (unless fd (fail "create a file in" directory errno))
+             (unlink-entry-at dirfd name)
+             fd))))
+   "make a scratch file in"))
 
 (defvar *proc-fd-available* :unknown
   "Whether /proc/self/fd is there to give unnamed files a name; looked at once.")
@@ -1142,22 +1166,29 @@ again and an unnamed file named: looked at the first time it is asked."
 with permissions MODE (less the umask), which NAME-UNNAMED-FILE can name once
 it is complete; NIL where the file system or the system cannot, for the caller
 to use a named file. A crash before it is named leaves nothing behind.
-Refused (WRITING-REFUSED) where nothing may be written."
-  (check-writing directory "create a file in")
+Refused (WRITING-REFUSED) where nothing may be written, told by the folder
+opened."
   (when (proc-fd-available-p)
-    (handler-case (sb-posix:open (string-right-trim "/" (native directory)) (logior +o-tmpfile+ sb-posix:o-wronly) mode)
-      (sb-posix:syscall-error () nil))))
+    (call-with-folder directory
+                      (lambda (dirfd)
+                        (values (openat-octets dirfd (tuatara.text:string-octets ".")
+                                               (logior +o-tmpfile+ sb-posix:o-wronly +o-cloexec+) mode)))
+                      "create a file in")))
 
 (defun name-unnamed-file (fd directory tag)
   "Give FD, from OPEN-UNNAMED-FILE, a hidden name with TAG in DIRECTORY (the
 same directory it was made in) and return the name; NIL when the system will
-not."
+not. Refused (WRITING-REFUSED) where nothing may be written, told by the
+folder opened."
   (let ((name (scratch-name directory tag)))
-    (and (zerop (sb-alien:alien-funcall
-                 (sb-alien:extern-alien "linkat" (function sb-alien:int sb-alien:int sb-alien:c-string
-                                                           sb-alien:int sb-alien:c-string sb-alien:int))
-                 -100 (format nil "/proc/self/fd/~d" fd) -100 name #x400)) ; AT_FDCWD, AT_SYMLINK_FOLLOW
-         name)))
+    (call-with-folder directory
+                      (lambda (dirfd)
+                        (and (zerop (sb-alien:alien-funcall
+                                     (sb-alien:extern-alien "linkat" (function sb-alien:int sb-alien:int sb-alien:c-string
+                                                                               sb-alien:int sb-alien:c-string sb-alien:int))
+                                     -100 (format nil "/proc/self/fd/~d" fd) dirfd (native-file-name name) #x400)) ; AT_SYMLINK_FOLLOW
+                             name))
+                      "name a file in")))
 
 ;;; The names of accounts and groups
 
@@ -1252,6 +1283,16 @@ nothing may be written there (WRITING-REFUSAL, DIRFD and FD as it has them)."
   (let ((why (writing-refusal path :dirfd dirfd :fd fd)))
     (when why
       (error 'writing-refused :operation operation :path (native path) :reason why))))
+
+(defvar *writing-told-function* nil
+  "A function of words saying something done in writing a file that you
+should know of (a file's other names left as they were), or NIL to say
+nothing; TELL-WRITING calls it, from any thread.")
+
+(defun tell-writing (words)
+  "Say WORDS of a file written, through *WRITING-TOLD-FUNCTION*."
+  (let ((function *writing-told-function*))
+    (when function (ignore-errors (funcall function words)))))
 
 (defun fd-real-path (fd)
   "Where the file or folder open as FD really is, as a native name with every
@@ -1414,18 +1455,32 @@ less the umask when it is new: into a new file beside it, renamed over it
 once written and put on disk, so that the file is always whole, the old
 contents or the new, after a power cut too; the new file taken away when it
 cannot be written whole (a full disk). Refused (WRITING-REFUSED) where
-nothing may be written."
-  (check-writing path "write")
-  (let* ((name (native path))
-         (temporary (format nil "~a.~d.~a.new" name (sb-posix:getpid) (random-name)))
-         (octets (if (stringp contents) (tuatara.text:string-octets contents) contents))
-         (fd (sb-posix:open temporary (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl) mode)))
-    (handler-bind ((error (lambda (e) (declare (ignore e)) (ignore-errors (sb-posix:unlink temporary)))))
-      (unwind-protect (progn (write-octets fd octets :path name)
-                             (flush-fd fd name))
-        (sb-posix:close fd))
-      (sb-posix:rename temporary name)
-      (sync-directory (parent-path name)))
+nothing may be written, told by the folder opened, in which the new file is
+made and renamed."
+  (let ((name (native path))
+        (octets (if (stringp contents) (tuatara.text:string-octets contents) contents)))
+    (call-with-parent
+     name
+     (lambda (dirfd own)
+       (let ((temporary (format nil "~a.~d.~a.new" (native-file-name name) (sb-posix:getpid) (random-name))))
+         (multiple-value-bind (fd errno)
+             (openat-octets dirfd (tuatara.text:string-octets temporary)
+                            (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl +o-nofollow+ +o-cloexec+) mode)
+           (unless fd (fail "write" name errno))
+           (handler-bind ((error (lambda (e) (declare (ignore e)) (ignore-errors (unlink-entry-at dirfd temporary)))))
+             (unwind-protect (progn (write-octets fd octets :path name)
+                                    (flush-fd fd name))
+               (sb-posix:close fd))
+             (let ((old (terminated-octets (tuatara.text:string-octets temporary))) (new (terminated-octets own)))
+               (with-octets-sap (old-sap old)
+                 (with-octets-sap (new-sap new)
+                   (unless (zerop (sb-alien:alien-funcall
+                                   (sb-alien:extern-alien "renameat" (function sb-alien:int sb-alien:int sb-sys:system-area-pointer
+                                                                              sb-alien:int sb-sys:system-area-pointer))
+                                   dirfd old-sap dirfd new-sap))
+                     (fail "write" name)))))
+             (sync-directory (parent-path name))))))
+     :writing "write")
     path))
 
 (defun write-private-file (path text)
@@ -1440,15 +1495,21 @@ by you alone and written by nothing again (0400) as standard. An error, and
 nothing written, when something is at PATH already, a link too; the new file
 taken away when it cannot be written whole (a full disk). With SYNC, it is
 on the disk before this returns (fsync). Returns PATH. Refused
-\(WRITING-REFUSED) where nothing may be written."
-  (check-writing path "write")
-  (let* ((name (native path))
-         (octets (if (stringp contents) (tuatara.text:string-octets contents) (coerce contents 'tuatara.text:octets)))
-         (fd (sb-posix:open name (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl) mode)))
-    (handler-bind ((error (lambda (e) (declare (ignore e)) (ignore-errors (sb-posix:unlink name)))))
-      (unwind-protect (progn (write-octets fd octets :end (or end (length octets)) :path name)
-                             (when sync (sb-posix:fsync fd)))
-        (sb-posix:close fd)))
+\(WRITING-REFUSED) where nothing may be written, told by the folder opened,
+in which the file is made."
+  (let ((name (native path))
+        (octets (if (stringp contents) (tuatara.text:string-octets contents) (coerce contents 'tuatara.text:octets))))
+    (call-with-parent
+     name
+     (lambda (dirfd own)
+       (multiple-value-bind (fd errno)
+           (openat-octets dirfd own (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl +o-nofollow+ +o-cloexec+) mode)
+         (unless fd (fail "write" name errno))
+         (handler-bind ((error (lambda (e) (declare (ignore e)) (ignore-errors (unlink-entry-at dirfd (native-file-name name))))))
+           (unwind-protect (progn (write-octets fd octets :end (or end (length octets)) :path name)
+                                  (when sync (sb-posix:fsync fd)))
+             (sb-posix:close fd)))))
+     :writing "write")
     path))
 
 (defun call-with-state-lock (path function &key (wait 0.1))
@@ -1459,10 +1520,13 @@ that one session at a time reads it, changes it and writes it back, and
 none loses what another wrote meanwhile. Returns what FUNCTION returns; NIL,
 FUNCTION not called, when another holds the lock for more than WAIT seconds
 or the lock file cannot be made, so that the editor is never held up; nor
-in a place nothing may be written in (WRITING-REFUSAL)."
-  (let ((fd (and (not (writing-refusal path))
-                 (ignore-errors (sb-posix:open (concatenate 'string (native path) ".lock")
-                                          (logior sb-posix:o-rdwr sb-posix:o-creat) #o600)))))
+in a place nothing may be written in (WRITING-REFUSAL), told by the folder
+opened."
+  (let ((fd (ignore-errors
+             (call-with-parent (concatenate 'string (native path) ".lock")
+                               (lambda (dirfd own)
+                                 (values (openat-octets dirfd own (logior sb-posix:o-rdwr sb-posix:o-creat +o-nofollow+ +o-cloexec+) #o600)))
+                               :writing "lock"))))
     (when fd
       (unwind-protect
            (when (tuatara.runtime:lock-fd fd :wait wait)

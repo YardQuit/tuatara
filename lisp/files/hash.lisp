@@ -188,6 +188,18 @@ said instead, except for the files the kernel makes up as they are read."
       (unless started (sb-posix:close fd)))
     started))
 
+(defun fd-sha256 (fd path &key (cancel (list nil)) (done (list 0)) buffer)
+  "The SHA-256 sum, in hex, of the file open as FD (PATH, for messages), read
+from its start at explicit offsets on the thread that asks, as FILE-SHA256
+sums; NIL when it cannot be read or CANCEL's car turns true first."
+  (let* ((carrier (%make-hash-job :what path :cancel cancel :done done))
+         (buffer (or buffer (make-array *hash-piece* :element-type '(unsigned-byte 8))))
+         (source (file-source fd path)))
+    (ignore-errors
+     (if (hash-library-p)
+         (library-sum carrier source buffer)
+         (program-sum carrier source buffer *hash-program*)))))
+
 (defun file-sha256 (path &key (cancel (list nil)) (done (list 0)) buffer)
   "The SHA-256 sum, in hex, of the file at PATH as it is on disk, summed on the
 thread that asks (as \\[sha256-sum] sums, read without changing its access time
@@ -196,45 +208,48 @@ it cannot be read or CANCEL's car turns true first. BUFFER, octets to read
 into, is made when not given."
   (let ((fd (ignore-errors (tuatara.io:open-for-reading path t))))
     (when fd
-      (unwind-protect
-           (let* ((carrier (%make-hash-job :what path :cancel cancel :done done))
-                  (buffer (or buffer (make-array *hash-piece* :element-type '(unsigned-byte 8))))
-                  (source (file-source fd path)))
-             (ignore-errors
-              (if (hash-library-p)
-                  (library-sum carrier source buffer)
-                  (program-sum carrier source buffer *hash-program*))))
+      (unwind-protect (fd-sha256 fd path :cancel cancel :done done :buffer buffer)
         (ignore-errors (sb-posix:close fd))))))
 
 (defun copy-file-checked (source target &key sum (cancel (list nil)))
   "Copy the file SOURCE (where it leads, when it is a link) to TARGET, a new
 file, as TUATARA.IO:COPY-REGULAR-FILE copies (never over anything there,
 never in a place nothing may be written in, its mode and times kept), then
-check the copy's SHA-256 against SUM, the original's, summed from SOURCE
-first when not given. Returns the copy's sum and, as a second value, the
-original's; an error naming TARGET when the two differ (the copy taken
-away), or SOURCE when it cannot be summed. Stopped when CANCEL's car turns
-true: what was copied taken away, a job's work ended there
-\(TUATARA.RUNTIME:JOB-CHECK-STOP), else NIL returned. Both are summed in one
-piece of memory, the file's size or *HASH-PIECE* octets when that is less."
-  (let* ((size (let ((stamp (ignore-errors (tuatara.io:path-stamp source)))) (if stamp (tuatara.io:stamp-size stamp) *hash-piece*)))
-         (buffer (make-array (max 4096 (min *hash-piece* size)) :element-type '(unsigned-byte 8))))
-    (flet ((stopped ()
-             (tuatara.runtime:job-check-stop)
-             (return-from copy-file-checked nil)))
-      (let ((original (or sum (file-sha256 source :cancel cancel :buffer buffer))))
-        (unless original
-          (when (car cancel) (stopped))
-          (error "~a could not be summed: nothing copied" source))
-        (unless (tuatara.io:copy-regular-file source target :cancel cancel)
-          (ignore-errors (tuatara.io:remove-file target))
-          (stopped))
-        (let ((copy (file-sha256 target :cancel cancel :buffer buffer)))
-          (unless (equal original copy)
-            (ignore-errors (tuatara.io:remove-file target))
-            (when (car cancel) (stopped))
-            (error "the copy at ~a does not have its original's SHA-256: taken away" target))
-          (values copy original))))))
+check the copy's SHA-256 against the original's. The original is summed,
+when SUM is not given, and copied through the one descriptor opened on it,
+and found the same afterwards (its size and time of change), so that its
+sum is that of the octets copied. Returns the copy's sum and, as a second
+value, the original's; an error naming TARGET when the two differ (the copy
+taken away), or SOURCE when it cannot be summed or changed meanwhile. Stopped
+when CANCEL's car turns true: what was copied taken away, a job's work ended
+there (TUATARA.RUNTIME:JOB-CHECK-STOP), else NIL returned. Both are summed
+in one piece of memory, the file's size or *HASH-PIECE* octets when that is
+less."
+  (let ((in (tuatara.io:open-for-reading source t :accept '(:regular) :operation "copy")))
+    (unwind-protect
+         (let* ((before (tuatara.io:fd-stamp in source))
+                (buffer (make-array (max 4096 (min *hash-piece* (tuatara.io:stamp-size before))) :element-type '(unsigned-byte 8))))
+           (flet ((stopped ()
+                    (tuatara.runtime:job-check-stop)
+                    (return-from copy-file-checked nil))
+                  (wrong (words)
+                    (ignore-errors (tuatara.io:remove-file target))
+                    (error words)))
+             (let ((original (or sum (fd-sha256 in source :cancel cancel :buffer buffer))))
+               (unless original
+                 (when (car cancel) (stopped))
+                 (error "~a could not be summed: nothing copied" source))
+               (unless (tuatara.io:copy-open-file-to in source target :cancel cancel)
+                 (ignore-errors (tuatara.io:remove-file target))
+                 (stopped))
+               (unless (tuatara.io:same-content-p before (tuatara.io:fd-stamp in source))
+                 (wrong (format nil "~a changed while it was copied: the copy at ~a taken away" source target)))
+               (let ((copy (file-sha256 target :cancel cancel :buffer buffer)))
+                 (unless (equal original copy)
+                   (when (car cancel) (ignore-errors (tuatara.io:remove-file target)) (stopped))
+                   (wrong (format nil "the copy at ~a does not have its original's SHA-256: taken away" target)))
+                 (values copy original)))))
+      (sb-posix:close in))))
 
 (defun octets-sha256 (octets)
   "The SHA-256 sum, in hex, of OCTETS, summed as \\[sha256-sum] sums."

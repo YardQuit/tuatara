@@ -1576,8 +1576,14 @@ refuses the rename or the naming, for the caller to write in place."
          (temp nil))
     (unless fd
       (setf temp (scratch-name directory "save")
-            fd (handler-case (sb-posix:open temp (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl) made-mode)
-                 (sb-posix:syscall-error (e) (fail "create a file in" directory (sb-posix:syscall-errno e))))))
+            fd (call-with-folder directory
+                                 (lambda (dirfd)
+                                   (multiple-value-bind (fd errno)
+                                       (openat-octets dirfd (tuatara.text:string-octets (native-file-name temp))
+                                                      (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl +o-nofollow+ +o-cloexec+)
+                                                      made-mode)
+                                     (or fd (fail "create a file in" directory errno))))
+                                 "save in")))
     (flet ((abandon ()
              (when fd (ignore-errors (sb-posix:close fd)) (setf fd nil))
              (when temp (ignore-errors (sb-posix:unlink temp)))))
@@ -1610,13 +1616,19 @@ refuses the rename or the naming, for the caller to write in place."
             (when (and now (not (eq (stamp-kind now) :regular)))
               (error 'file-system-error :operation "save to" :path target
                                         :reason (format nil "it is ~a now" (kind-words (stamp-kind now)))))))
-        (handler-case (sb-posix:rename temp (native target))
-          (sb-posix:syscall-error (e)
-            (if (member (sb-posix:syscall-errno e)
-                        (list sb-posix:exdev sb-posix:eperm sb-posix:eacces sb-posix:ebusy sb-posix:eopnotsupp
-                              sb-posix:etxtbsy))
-                (progn (abandon) (return-from write-by-rename :refused))
-                (fail "rename a new copy over" target (sb-posix:syscall-errno e)))))
+        ;; renamed within the folder held open, looked at again where it really is
+        (call-with-parent
+         target
+         (lambda (dirfd own)
+           (with-octets-sap (old (terminated-octets (tuatara.text:string-octets (native-file-name temp))))
+             (with-octets-sap (new (terminated-octets own))
+               (multiple-value-bind (result errno) (rename-entry dirfd old dirfd new 0)
+                 (unless (zerop result)
+                   (if (member errno (list sb-posix:exdev sb-posix:eperm sb-posix:eacces sb-posix:ebusy sb-posix:eopnotsupp
+                                           sb-posix:etxtbsy))
+                       (progn (abandon) (return-from write-by-rename :refused))
+                       (fail "rename a new copy over" target errno)))))))
+         :writing "save")
         (sync-directory directory)
         :done))))
 
@@ -1715,6 +1727,8 @@ the file itself is touched. Returns :DONE, or :STOPPED."
               (sb-posix:close fd))
           (writing-refused (e)
             (drop-backup)
+            ;; a file made here for this write, empty, is not left behind
+            (unless existing (ignore-errors (sb-posix:unlink (native target))))
             (error e))
           (error (e)
             (when backup-fd (ignore-errors (sb-posix:close backup-fd)))
@@ -1737,7 +1751,10 @@ file would have (a number, as #o644), gives those it gets instead. Returns the
 new stamp and the file written (a symlink's target), or :STOPPED when CANCEL
 stopped it with the file untouched. Refused (WRITING-REFUSED) where nothing
 may be written, looked at again on the file opened when it is written in
-place."
+place. While some place is refused (WRITING-REFUSED-ANYWHERE-P), a file with
+other names is never written in place, for one of them may be in such a
+place: it is saved as a file of its own, its other names keeping what they
+held, and that is told (TELL-WRITING)."
   (let* ((target (if follow-links (resolve-links path) (expand-path path)))
          (existing (progn (check-writing target "save")
                           (path-stamp target :follow follow-links)))
@@ -1752,21 +1769,31 @@ place."
                                 :reason (format nil "it is ~a" (kind-words (stamp-kind existing)))))
     (unless (path-stamp directory)
       (error 'file-system-error :operation "save" :path target :reason "its directory does not exist"))
-    (let ((result
-            (cond ((eq class :pseudo)
-                   (write-in-place rope target existing :backup nil :sync nil :whole t
-                                                        :nofollow (not follow-links) :mode mode))
-                  ((or (and existing (> (stamp-nlink existing) 1))
-                       (and existing (not (can-give-owner-p existing)))
-                       (not (writable-p directory)))
-                   (write-in-place rope target existing :mappings mappings :cancel cancel :progress progress
-                                                        :nofollow (not follow-links) :mode mode))
-                  (t (let ((r (write-by-rename rope target existing :cancel cancel :progress progress
-                                                                    :nofollow (not follow-links) :mode mode)))
-                       (if (eq r :refused)
-                           (write-in-place rope target existing :mappings mappings :cancel cancel :progress progress
-                                                                :nofollow (not follow-links) :mode mode)
-                           r))))))
+    (let* ((names (and existing (stamp-nlink existing)))
+           ;; another name of it may be evidence: written as a file of its own, never in place
+           (apart (and names (> names 1) (not (eq class :pseudo)) (writing-refused-anywhere-p)))
+           (result
+             (cond ((eq class :pseudo)
+                    (write-in-place rope target existing :backup nil :sync nil :whole t
+                                                         :nofollow (not follow-links) :mode mode))
+                   ((and (not apart)
+                         (or (and existing (> (stamp-nlink existing) 1))
+                             (and existing (not (can-give-owner-p existing)))
+                             (not (writable-p directory))))
+                    (write-in-place rope target existing :mappings mappings :cancel cancel :progress progress
+                                                         :nofollow (not follow-links) :mode mode))
+                   (t (let ((r (write-by-rename rope target existing :cancel cancel :progress progress
+                                                                     :nofollow (not follow-links) :mode mode)))
+                        (cond ((and (eq r :refused) apart)
+                               (error 'writing-refused :operation "save" :path target
+                                                       :reason (format nil "it has ~d names, one may be in an evidence folder, and it cannot be saved as a file of its own here" names)))
+                              ((eq r :refused)
+                               (write-in-place rope target existing :mappings mappings :cancel cancel :progress progress
+                                                                    :nofollow (not follow-links) :mode mode))
+                              (t (when (and apart (eq r :done))
+                                   (tell-writing (format nil "~a had ~d names: saved as a file of its own, the others keep what they held, as one of them may be evidence"
+                                                         target names)))
+                                 r)))))))
       (if (eq result :stopped)
           :stopped
           (values (path-stamp target :follow follow-links) target)))))
