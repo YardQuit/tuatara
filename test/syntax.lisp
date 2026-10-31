@@ -3147,3 +3147,23 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
              (tuatara.defaults::report-no-sandbox-for-grammars trusted))))
     (true (search "Files outside the projects you trust are not coloured or parsed" (said nil)))
     (true (search "No text is coloured or parsed" (said t)))))
+
+(define-test (syntax deeply-nested-text-parsed)
+  ;; text nested hundreds of levels deep, a string open across lines in it:
+  ;; the scanner keeps the indents it saves within the room the parser gives
+  ;; it, and the text is parsed, not the program parsing it ended
+  (flet ((deep-yaml (n)
+           (with-output-to-string (o)
+             (dotimes (i n) (format o "~va:~%" i ""))
+             (format o "~vax: 1~%" n "")))
+         (deep-python (n)
+           (with-output-to-string (o)
+             (dotimes (i n) (format o "~vaif x:~%" i ""))
+             (format o "~vax = f\"\"\"a~%b~%\"\"\"~%" n ""))))
+    (loop for (grammar text) in (list (list "yaml" (deep-yaml 300)) (list "python" (deep-python 600))
+                                      (list "mojo" (deep-python 600)))
+          do (let* ((parser (tuatara.syntax:make-parser (tuatara.syntax:find-grammar grammar) (tuatara.syntax::shared-helper))))
+               (multiple-value-bind (tree why) (tuatara.syntax:parse-rope parser (tuatara.text:string->rope text))
+                 (true tree "~a nested deeply is parsed (~s)" grammar why)
+                 (when tree (tuatara.syntax:delete-tree tree)))
+               (ignore-errors (tuatara.syntax:delete-parser parser))))))
