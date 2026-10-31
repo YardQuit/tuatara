@@ -397,6 +397,7 @@ grammar_checked g \"$PWD/g\" \"$PWD/recorded\" y || echo refused-hash"
           (tools (merge-pathnames "tools/" directory)))
       (ensure-directories-exist tools)
       (uiop:copy-file (tools-script "check-grammar-sources.sh") (merge-pathnames "check-grammar-sources.sh" tools))
+      (uiop:copy-file (tools-script "grammar-build.sh") (merge-pathnames "grammar-build.sh" tools))
       (let ((commits (uiop:split-string
                       (string-trim '(#\Newline)
                                    (bash-output (format nil "set -e
@@ -404,7 +405,8 @@ git init -q '~a'; cd '~:*~a'
 c() { git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m \"$1\"; }
 c one; git rev-parse HEAD
 git checkout -q -b gone; c lost; git rev-parse HEAD
-git checkout -q -; git branch -q -D gone" repo)))
+git checkout -q main; git checkout -q -b tagged; c kept; git rev-parse HEAD; git tag kept
+git checkout -q main; git branch -q -D gone tagged" repo)))
                       :separator '(#\Newline))))
         (flet ((check (commit)
                  (write-test-file directory "syntax/grammars.tsv" (format nil "g	file://~a	~a	MIT~%" repo commit))
@@ -417,7 +419,16 @@ git checkout -q -; git branch -q -D gone" repo)))
             (is = 0 status "~a" out))
           (multiple-value-bind (status out) (check (second commits))
             (is = 1 status)
-            (true (search "on no branch or tag" out))))))))
+            (true (search "on no branch or tag" out)))
+          ;; on a tag alone: watched, not stopped on
+          (multiple-value-bind (status out) (check (third commits))
+            (is = 0 status "~a" out)
+            (true (search "only on a tag" out)))
+          ;; a history that cannot be fetched stops it, whatever was fetched before
+          (setf repo (uiop:native-namestring (merge-pathnames "moved-away/" directory)))
+          (multiple-value-bind (status out) (check (first commits))
+            (is = 1 status)
+            (true (search "could not be fetched" out))))))))
 
 (define-test (tools archived-grammars-left-out)
   ;; a grammar whose repository is archived, with no source kept up in its

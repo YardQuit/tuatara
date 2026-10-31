@@ -13,7 +13,8 @@
 #     A pin on neither STOPS it: such a commit may be one pushed to someone
 #     else's copy of the repository, which the host serves all the same;
 #   - whether the repository is archived, or has had no commit for two years
-#     (reported, not stopped on);
+#     (reported, not stopped on), and whether the pin is on a tag alone, its
+#     branch rewritten since (WATCH);
 #   - for each pin that differs from the one committed (git HEAD's manifest),
 #     how far it moved, and the difference in what is compiled (src/, the
 #     scanner and its headers, and grammar.js, which a patched grammar is
@@ -24,16 +25,18 @@
 # history of each repository is fetched (no files), into
 # build/grammar-check/, and for a moved pin the files of the old and the new
 # commit. GitHub is asked through gh when it is installed, else with
-# $GITHUB_TOKEN; without either, GitHub's repositories are not asked about.
+# $GITHUB_TOKEN; without either, a repository on GitHub STOPS it, not asked
+# about. A history that cannot be fetched STOPS it too.
 # Usage: tools/check-grammar-sources.sh [NAME...]   (every repository when no NAME)
 # Exit status: 0 nothing stops a bump, 1 something does (listed under STOP).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$root/build/grammar-check"
+. "$root/tools/grammar-build.sh"
 mkdir -p "$work"
 stale_days=730
 now=$(date +%s)
-stops=() reports=() diffs=()
+stops=() reports=() watches=() diffs=()
 
 # the manifest's rows NAME URL COMMIT, those named on the command line or all
 rows() {
@@ -78,7 +81,7 @@ where_now() {
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
   case "$url" in
     https://github.com/*)
-      if ! command -v gh >/dev/null && [ -z "${GITHUB_TOKEN:-}" ]; then echo "? ?"; return; fi
+      if ! command -v gh >/dev/null && [ -z "${GITHUB_TOKEN:-}" ]; then echo "! ?"; return; fi
       answer=$(github "repos/$path")
       echo "$(field "$answer" full_name) $(field "$answer" archived)" ;;
     https://codeberg.org/*)
@@ -103,23 +106,25 @@ where_now() {
 # fetch the history (commits only, no files) of every branch and tag of URL into $work/NAME.git
 fetch_history() {
   local name="$1" url="$2" dir="$work/${1//\//_}.git"
-  [ -d "$dir" ] || git init -q --bare "$dir"
-  git -C "$dir" fetch -q --filter=tree:0 --prune --force "$url" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' 2>/dev/null
+  [ -d "$dir" ] || grammar_git init -q --bare "$dir" || return 1
+  grammar_git -C "$dir" fetch -q --filter=tree:0 --prune --force "$url" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' 2>/dev/null || return 1
   echo "$dir"
 }
 
 # the files compiled from, at COMMIT of the repository fetched into DIR, fetched when missing
 fetch_files() {
   local dir="$1" url="$2" commit="$3"
-  git -C "$dir" cat-file -e "$commit^{tree}" 2>/dev/null || git -C "$dir" fetch -q --depth 1 "$url" "$commit" 2>/dev/null
+  grammar_git -C "$dir" cat-file -e "$commit^{tree}" 2>/dev/null || grammar_git -C "$dir" fetch -q --depth 1 "$url" "$commit" 2>/dev/null
 }
 
 while IFS=$'\t' read -r name url commit; do
   printf '%s ' "$name" >&2
   read -r full archived < <(where_now "$url")
   path="${url#https://*/}"; path="${path%/}"; path="${path%.git}"
-  if [ "$full" = "?" ]; then
-    reports+=("$name: $url not asked about (no gh and no GITHUB_TOKEN for GitHub)")
+  if [ "$full" = "!" ]; then
+    stops+=("$name: $url not asked about: GitHub is asked through gh or with GITHUB_TOKEN, and there is neither")
+  elif [ "$full" = "?" ]; then
+    reports+=("$name: $url not asked about (a host this check does not know)")
   elif [ -z "$full" ]; then
     stops+=("$name: $url is gone (its host knows no such repository)")
     continue
@@ -131,14 +136,18 @@ while IFS=$'\t' read -r name url commit; do
     stops+=("$name: the history of $url could not be fetched")
     continue
   fi
-  if ! git -C "$dir" cat-file -e "$commit^{commit}" 2>/dev/null; then
+  if ! grammar_git -C "$dir" cat-file -e "$commit^{commit}" 2>/dev/null; then
     stops+=("$name: the pin ${commit:0:12} is on no branch or tag of $url")
   else
-    pin=$(git -C "$dir" rev-parse "$commit^{commit}")
-    on=$(git -C "$dir" for-each-ref --contains "$pin" --format='%(refname:short)' refs/heads refs/tags | head -3 | paste -sd' ')
-    [ -z "$on" ] && stops+=("$name: the pin ${commit:0:12} is on no branch or tag of $url")
+    pin=$(grammar_git -C "$dir" rev-parse "$commit^{commit}")
+    on=$(grammar_git -C "$dir" for-each-ref --contains "$pin" --format='%(refname:short)' refs/heads refs/tags | head -3 | paste -sd' ')
+    if [ -z "$on" ]; then
+      stops+=("$name: the pin ${commit:0:12} is on no branch or tag of $url")
+    elif [ -z "$(grammar_git -C "$dir" for-each-ref --contains "$pin" --count=1 refs/heads)" ]; then
+      watches+=("$name: the pin ${commit:0:12} is only on a tag ($on), not on a branch, of $url: its history was rewritten since")
+    fi
   fi
-  newest=$(git -C "$dir" for-each-ref --sort=-committerdate --count=1 --format='%(committerdate:unix)' refs/heads)
+  newest=$(grammar_git -C "$dir" for-each-ref --sort=-committerdate --count=1 --format='%(committerdate:unix)' refs/heads)
   if [ -n "$newest" ] && [ $(( (now - newest) / 86400 )) -gt "$stale_days" ]; then
     reports+=("$name: $url has had no commit since $(date -u -d "@$newest" +%Y-%m-%d)")
   fi
@@ -149,12 +158,12 @@ while IFS=$'\t' read -r name url commit; do
     if fetch_files "$dir" "$old_url" "$old" && fetch_files "$dir" "$url" "$commit"; then
       out="$work/${name//\//_}.diff"
       { echo "$name: ${old:0:12} -> ${commit:0:12} (${old_url}${old_url:+ -> }$url)"
-        git -C "$dir" log --oneline --no-decorate "$old..$commit" 2>/dev/null | head -50 || true
+        grammar_git -C "$dir" log --oneline --no-decorate "$old..$commit" 2>/dev/null | head -50 || true
         echo
-        git -C "$dir" diff --stat "$old" "$commit"
+        grammar_git -C "$dir" diff --stat "$old" "$commit"
         echo
         # the scanner and headers in full; the generated parser's size only
-        git -C "$dir" diff "$old" "$commit" -- grammar.js '*.h' '*scanner.c' '*scanner.cc' '*.c' ':!*parser.c'
+        grammar_git -C "$dir" diff "$old" "$commit" -- grammar.js '*.h' '*scanner.c' '*scanner.cc' '*.c' ':!*parser.c'
       } > "$out"
       diffs+=("$name: $out")
     else
@@ -166,6 +175,9 @@ echo >&2
 
 if [ ${#reports[@]} -gt 0 ]; then
   echo "Reported (not stopped on):"; printf '  %s\n' "${reports[@]}"
+fi
+if [ ${#watches[@]} -gt 0 ]; then
+  echo "WATCH:"; printf '  %s\n' "${watches[@]}"
 fi
 if [ ${#diffs[@]} -gt 0 ]; then
   echo "Pins moved since the last commit: read each difference before the bump goes in:"; printf '  %s\n' "${diffs[@]}"
