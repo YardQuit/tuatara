@@ -471,6 +471,16 @@ DISABLED (the numbers of those made to match nothing)."
              (format s "~a in the ~a rules at line ~a: ~a" (query-error-kind c)
                      (grammar-name (query-error-grammar c)) (query-error-line c) (query-error-text c)))))
 
+(define-condition query-not-answered (error)
+  ((grammar :initarg :grammar :reader query-not-answered-grammar))
+  (:documentation "Rules that could not be compiled this time: the program compiling
+them ended, or did not answer in time (a busy moment). Asked again later,
+they may compile.")
+  (:report (lambda (c s)
+             (format s "the program compiling the ~a rules did not answer" (grammar-name (query-not-answered-grammar c))))))
+
+(setf (documentation 'query-not-answered-grammar 'function) "The grammar whose rules were not compiled.")
+
 (setf (documentation 'query-error-grammar 'function) "The grammar the failed query was for."
       (documentation 'query-error-kind 'function) "What was wrong, in words."
       (documentation 'query-error-line 'function) "The line of the query source where it went wrong."
@@ -721,17 +731,34 @@ are for (colouring, indentation), for the reports of debug mode."
     (call-u32 call (length name))
     (call-octets call name :pad t)
     (call-octets call (sb-ext:string-to-octets source :external-format :utf-8)))
-  ;; all a query's reply says comes from its text: a few octets for each of it
-  (call-send call :most (+ 1024 (* 16 (length source)))))
+  ;; all a query's reply says comes from its text: a few octets for each of it;
+  ;; a large query takes a while on a busy machine, which is slowness, not a hang
+  (call-send call :most (+ 1024 (* 16 (length source))) :seconds (query-compile-wait source) :late :slow))
+
+(defparameter *query-compile-wait* 10
+  "The seconds compiling rules may take before the program compiling them is
+given up on, as slow, for rules of up to 10,000 characters; a second more
+for each 10,000 more.")
+
+(defun query-compile-wait (source)
+  "The seconds compiling SOURCE, the text of rules, may take: *QUERY-COMPILE-WAIT*
+and a second for each 10,000 characters past the first 10,000, and never
+less than *SYNTAX-HELPER-WAIT*."
+  (max *syntax-helper-wait* (+ *query-compile-wait* (floor (max 0 (- (length source) 10000)) 10000))))
 
 (defun compile-query-text (grammar source)
   "The work of COMPILE-QUERY: compile SOURCE, a tree-sitter query, for GRAMMAR,
-in the helper compiling rules, which is never given any text to parse."
+in the helper compiling rules, which is never given any text to parse.
+Signals QUERY-NOT-ANSWERED when that helper ended or did not answer in
+time (QUERY-COMPILE-WAIT): the rules may compile when asked again."
   (let ((number (1+ (sb-ext:atomic-incf (car **query-numbers**))))
         (helper (rules-helper)))
     (with-call (call helper +op-query+)
-      (unless (eql 0 (send-query call number grammar source))
-        (error 'query-error :grammar grammar :kind "Error" :line 0 :text "the program that parses did not answer"))
+      (let ((status (send-query call number grammar source)))
+        (unless (eql 0 status)
+          (if (eq status :dead)
+              (error 'query-not-answered :grammar grammar)
+              (error 'query-error :grammar grammar :kind "Error" :line 0 :text "the program that parses did not answer"))))
       (when (= 1 (reply-u32 call 0))
         (let* ((octets (sb-ext:string-to-octets source :external-format :utf-8))
                (offset (reply-u32 call 1)) (kind (reply-u32 call 2))

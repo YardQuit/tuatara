@@ -1715,6 +1715,7 @@ has, ended after."
     (unwind-protect
          (let ((tuatara.syntax::*syntax-helpers-most* 1)
                (tuatara.syntax:*must-not-wait-function* (lambda () t))
+               (tuatara.syntax::*at-once-wait* 0.05)
                (holding (sb-thread:make-semaphore)))
            (let ((first (tuatara.syntax:buffer-helper other))
                  (holder (sb-thread:make-thread
@@ -3170,3 +3171,46 @@ bound to the fake frontend and the editor; the file and its buffer go afterwards
                  (true tree "~a nested deeply is parsed (~s)" grammar why)
                  (when tree (tuatara.syntax:delete-tree tree)))
                (ignore-errors (tuatara.syntax:delete-parser parser))))))
+
+(define-test (syntax rules-not-answered-asked-again)
+  ;; rules the program compiling them did not answer for (a busy moment) are
+  ;; not taken for failed: asked for again after a wait, they compile
+  (let* ((language (tuatara.defaults::find-language 'toml))
+         (kept (tuatara.defaults::language-query language))
+         (tuatara.defaults::*rules-unanswered-wait* 0.2))
+    (tuatara.syntax:rules-helper)
+    (setf (tuatara.defaults::language-query language) nil)
+    (remhash language tuatara.defaults::*rules-unanswered*)
+    (unwind-protect
+         (progn
+           (sb-int:encapsulate 'tuatara.syntax::send-query 'dead
+                               (lambda (function call &rest arguments)
+                                 (declare (ignore function arguments))
+                                 (setf (tuatara.syntax::call-status call) :dead)))
+           (unwind-protect
+                (false (tuatara.defaults::language-compiled-query language :colouring))
+             (sb-int:unencapsulate 'tuatara.syntax::send-query 'dead))
+           (false (tuatara.defaults::language-query language) "not kept as failed")
+           (false (tuatara.defaults::language-compiled-query language :colouring) "not asked again at once")
+           (sleep 0.3)
+           (true (tuatara.syntax:query-p (tuatara.defaults::language-compiled-query language :colouring))
+                 "compiled when asked again"))
+      (remhash language tuatara.defaults::*rules-unanswered*)
+      (unless (tuatara.syntax:query-p (tuatara.defaults::language-query language))
+        (setf (tuatara.defaults::language-query language) kept)))))
+
+(define-test (syntax large-rules-given-time)
+  ;; compiling rules waits longer than other calls, the longer the rules, and
+  ;; lateness there is slowness, not a hang
+  (let ((asked '())
+        (grammar (tuatara.syntax:find-grammar "toml"))
+        (source (tuatara.defaults::language-rules (tuatara.defaults::find-language 'toml))))
+    (sb-int:encapsulate 'tuatara.syntax::call-send 'seen
+                        (lambda (function call &rest keys)
+                          (push keys asked)
+                          (apply function call keys)))
+    (unwind-protect (tuatara.syntax:compile-query grammar source)
+      (sb-int:unencapsulate 'tuatara.syntax::call-send 'seen))
+    (let ((keys (first asked)))
+      (is eq :slow (getf keys :late))
+      (true (and (getf keys :seconds) (> (getf keys :seconds) tuatara.syntax:*syntax-helper-wait*))))))

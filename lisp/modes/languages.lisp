@@ -271,28 +271,66 @@ with SETF, keeps them), SOURCE reads their text, LABEL names them to the
 compiler, FAILURE says they do not work given the language's name and the
 error, and AFTER, when given, is called with the rules once compiled.")
 
+(defvar *rules-unanswered* (make-hash-table :test 'eq :synchronized t)
+  "For each language whose rules the program compiling them did not answer
+for (a busy moment), (WHEN . WAIT): they are not asked for again before the
+internal real time WHEN, WAIT the seconds waited, doubled each time it does
+not answer again, up to *RULES-UNANSWERED-WAIT-MOST*.")
+
+(defparameter *rules-unanswered-wait* 0.5
+  "The seconds before rules the program compiling them did not answer for are
+asked for again, the first time.")
+
+(defparameter *rules-unanswered-wait-most* 30
+  "The most seconds before rules the program compiling them did not answer
+for are asked for again.")
+
+(defun rules-backing-off-p (language)
+  "True while LANGUAGE's rules are not to be asked for again yet, the program
+compiling them not having answered (*RULES-UNANSWERED*)."
+  (let ((entry (gethash language *rules-unanswered*)))
+    (and entry (< (get-internal-real-time) (car entry)))))
+
+(defun note-rules-unanswered (language)
+  "Have LANGUAGE's rules asked for again later, the program compiling them not
+having answered: after *RULES-UNANSWERED-WAIT*, twice as long as before when
+it did not answer again."
+  (let* ((before (gethash language *rules-unanswered*))
+         (wait (if before (min *rules-unanswered-wait-most* (* 2 (cdr before))) *rules-unanswered-wait*)))
+    (setf (gethash language *rules-unanswered*)
+          (cons (+ (get-internal-real-time) (round (* wait internal-time-units-per-second))) wait))))
+
 (defun language-compiled-query (language kind)
   "The compiled rules of LANGUAGE of KIND, one of *LANGUAGE-QUERIES* (such as
 :COLOURING, :INDENT or :TEXT-OBJECTS), compiled when first needed; NIL when
 it has none, its grammar is missing, or they do not compile, which is said
-once in *Messages* (RULES-FAILED)."
+once in *Messages* (RULES-FAILED). Rules the program compiling them did not
+answer for, at a busy moment, are not taken for failed: NIL now, and asked
+for again a little later (NOTE-RULES-UNANSWERED)."
   (destructuring-bind (kept source label failure &optional after) (rest (assoc kind *language-queries*))
     (let ((known (funcall kept language)))
       (if known
           (and (tuatara.syntax:query-p known) known)
           (let* ((failed nil)
-                 (grammar (tuatara.syntax:find-grammar (language-grammar language)))
+                 (grammar (and (not (rules-backing-off-p language))
+                               (tuatara.syntax:find-grammar (language-grammar language))))
                  (source (funcall source language))
                  (query (when (and grammar source)
-                          (handler-case (tuatara.syntax:compile-query grammar source label)
+                          (handler-case (prog1 (tuatara.syntax:compile-query grammar source label)
+                                          (remhash language *rules-unanswered*))
+                            (tuatara.syntax:query-not-answered ()
+                              (note-rules-unanswered language)
+                              nil)
                             (error (e)
                               (rules-failed failure (language-name language) e)
                               (setf failed t)
                               nil)))))
             (when (and query after) (funcall after query))
-            ;; not kept while the program compiling rules is still starting
-            (unless (and (null query) (not failed)
-                         (or (tuatara.syntax:grammar-pending-p (language-grammar language)) (and grammar source)))
+            ;; not kept while the program compiling rules is still starting, nor
+            ;; while it does not answer
+            (unless (or (and (null query) (not failed)
+                             (or (tuatara.syntax:grammar-pending-p (language-grammar language)) (and grammar source)))
+                        (rules-backing-off-p language))
               (funcall (fdefinition (list 'setf kept)) (or query :failed) language))
             query)))))
 
@@ -514,7 +552,7 @@ languages, its local names) are compiled, or found not to compile."
   "Compile LANGUAGE's rules for colouring in a thread of its own, unless they
 are compiled or being compiled, and have the editor redraw when they are.
 Returns the thread, or NIL."
-  (unless (rules-ready-p language)
+  (unless (or (rules-ready-p language) (rules-backing-off-p language))
     (or (gethash language *warming*)
         (setf (gethash language *warming*)
               (tuatara.runtime:make-guarded-thread
@@ -662,7 +700,8 @@ a text left alone be parsed afresh (SYNTAX-REFRESH-TICK)."
 (defun syntax-refresh-tick (editor)
   "Tick function: parse afresh, in the background, the text of each buffer
 left alone long enough since parses after its edits
-(TUATARA.SYNTAX:REFRESH-SYNTAX). Asks to be called when the next one is due."
+(TUATARA.SYNTAX:REFRESH-SYNTAX). Asks to be called when the next one is due,
+or when rules not answered for may be asked for again (*RULES-UNANSWERED*)."
   (declare (ignore editor))
   (let ((soonest nil))
     ;; a buffer whose grammar was not to be had yet, its loader starting
@@ -682,6 +721,14 @@ left alone long enough since parses after its edits
                     (setf (tuatara.buffer:buffer-local buffer :syntax-pending-next)
                           (+ now (round (* wait internal-time-units-per-second)))
                           soonest (min (or soonest wait) wait)))))))))
+    ;; rules the program compiling them did not answer for: the screen drawn
+    ;; again, and they asked for again, once their wait is over
+    (maphash (lambda (language entry)
+               (declare (ignore language))
+               (let ((wait (/ (- (car entry) (get-internal-real-time)) internal-time-units-per-second)))
+                 (when (plusp wait)
+                   (setf soonest (if soonest (min soonest wait) wait)))))
+             *rules-unanswered*)
     (dolist (buffer tuatara.buffer:*buffers* soonest)
       (let* ((syntax (tuatara.syntax:buffer-syntax buffer))
              (wait (and syntax (tuatara.syntax:refresh-syntax syntax))))

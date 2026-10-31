@@ -16,7 +16,7 @@
            #:*grammar-directories* #:grammar-directories #:forget-grammars
            #:make-parser #:delete-parser #:parse-rope #:delete-tree #:edit-tree #:tree-has-error-p
            #:compile-query #:query #:query-p #:query-grammar #:query-captures #:query-properties
-           #:query-error #:query-error-kind #:query-error-line #:query-error-text #:query-error-grammar
+           #:query-not-answered #:query-error #:query-error-kind #:query-error-line #:query-error-text #:query-error-grammar
            #:map-query-matches #:query-non-local-patterns #:disable-query-pattern #:query-starts #:query-source
            ;; syntax trees of buffers, and their colours
            #:syntax #:syntax-p #:syntax-buffer #:buffer-syntax #:attach-syntax #:detach-syntax #:syntax-tree #:syntax-grammar
