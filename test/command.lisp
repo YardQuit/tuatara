@@ -987,6 +987,23 @@ the terminal's reads and waits stood in for, with kitty's keyboard off."
       (true (tuatara.frontend.fake:fake-frame-showing f "(y or n)"))
       (is string= "y" answer))))
 
+(define-test (command long-key-question-read-whole)
+  ;; a question of one key wider than its row shows its start on rows above while it
+  ;; waits, as the minibuffer's does, the cursor after its end
+  (let ((answer nil) (screen nil))
+    (run-keys (list (lambda ()
+                      (setf answer (tuatara.command:read-key
+                                    "Compile and load the package pkg from /tmp/a-long-folder-name/that-matters/? (y, n, or v to view its source) ")))
+                    (lambda ()
+                      (let ((f (tuatara.command::frame-frontend (tuatara.command::editor-frame tuatara.command:*editor*))))
+                        (setf screen (loop for row below 12 collect (tuatara.frontend.fake:fake-screen-line f row)))))
+                    "y")
+              :text "" :width 60 :height 12)
+    ;; the rows it is broken into, between words, read as one
+    (true (search "Compile and load the package pkg from /tmp/a-long-folder-name/that-matters/? (y, n, or v to view its source)"
+                  (format nil "~{~a~^ ~}" (mapcar (lambda (line) (string-trim " " line)) screen))))
+    (is equal '(#\y) (tuatara.frontend:key-spec answer))))
+
 (define-test (command moving-by-clusters)
   ;; a letter with its accent and an emoji with its skin tone are one character to move
   ;; over, to type beside and to delete; backspace takes off the last mark alone

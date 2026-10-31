@@ -484,18 +484,35 @@ holding its start over the minibuffer's row, when it is too wide to leave a
 third of the row for the answer, broken between words; and what of it stays
 on the minibuffer's row (all of it when it fits). A long question is so read
 whole, its start never scrolled off the left."
-  (let* ((prompt (editor-minibuffer-prompt editor))
-         (width (max 10 (1- (editor-width editor))))
-         (room (- width (length (completion-count-prefix editor)) (floor width 3))))
-    (if (<= (panel-columns prompt) room)
-        (values '() prompt)
-        (let ((rows '()) (start 0))
-          (loop while (> (panel-columns prompt :start start) room)
-                do (let* ((limit (+ start (max 1 (columns-end (subseq prompt start) width))))
-                          (break (or (position #\Space prompt :start (1+ start) :end limit :from-end t) limit)))
-                     (push (subseq prompt start break) rows)
-                     (setf start (min (length prompt) (if (and (< break (length prompt)) (char= (char prompt break) #\Space)) (1+ break) break)))))
-          (values (nreverse rows) (subseq prompt start))))))
+  (let ((width (max 10 (1- (editor-width editor)))))
+    (prompt-broken (editor-minibuffer-prompt editor) width
+                   (- width (length (completion-count-prefix editor)) (floor width 3)))))
+
+(defun prompt-broken (prompt width room)
+  "PROMPT, a question, as two values: the rows of WIDTH columns holding its
+start, broken between words, when it takes more than ROOM columns; and what
+of it is left for the last row, no more than ROOM (all of it when it fits)."
+  (if (<= (panel-columns prompt) room)
+      (values '() prompt)
+      (let ((rows '()) (start 0))
+        (loop while (> (panel-columns prompt :start start) room)
+              do (let* ((limit (+ start (max 1 (columns-end (subseq prompt start) width))))
+                        (break (or (position #\Space prompt :start (1+ start) :end limit :from-end t) limit)))
+                   (push (subseq prompt start break) rows)
+                   (setf start (min (length prompt) (if (and (< break (length prompt)) (char= (char prompt break) #\Space)) (1+ break) break)))))
+        (values (nreverse rows) (subseq prompt start)))))
+
+(defun key-question-pieces (editor)
+  "While a question of one key waits in the echo area (READ-KEY), its prompt
+as PROMPT-BROKEN gives it: the rows over the echo row holding its start, when
+it is wider than the row, and what of it stays on the echo row, the cursor
+after it; else NIL and the message shown. A long question is so read whole,
+as the minibuffer's are."
+  (let ((text (or (editor-message editor) "")))
+    (if (and *key-question* (echo-question-p editor))
+        (let ((width (max 10 (1- (editor-width editor)))))
+          (prompt-broken text width width))
+        (values '() text))))
 
 (defun panel-rows (editor)
   "The rows of the bottom panel as a list of (STRING FACE SPANS), and the
@@ -568,7 +585,8 @@ pending prefix key; else the echo row."
                               (key-hint-rows entries width (1- (key-hint-room editor)))))))
              (values (append rows (list (echo-row editor)))
                      (length rows))))
-          (t (values (list (echo-row editor)) 0)))))
+          (t (let ((head (mapcar (lambda (text) (list text nil nil)) (key-question-pieces editor))))
+               (values (append head (list (echo-row editor))) (length head)))))))
 
 (defvar *show-completion-count* t
   "True to show before the prompt of a completing read the place of the
@@ -637,15 +655,13 @@ standing after its text rather than in the window: a question of one key
 (defun echo-row (editor)
   "The echo row of the panel, as (STRING FACE SPANS): the message shown,
 with the keys in it coloured; while a question of one key waits there
-\(READ-KEY), its prompt with as much of its start scrolled off the left as
-leaves room for the cursor after it, as the minibuffer's row scrolls. A
-message shown while a menu is open or a key sequence half typed is shown
-from its start, whole, as any message."
+\(READ-KEY), what of its prompt stays on that row, its start on the rows
+over it when it is wider than the row (KEY-QUESTION-PIECES). A message shown
+while a menu is open or a key sequence half typed is shown from its start,
+whole, as any message."
   (let* ((text (or (editor-message editor) ""))
          (spans (text-spans (editor-message editor)))
-         (hidden (if (and *key-question* (echo-question-p editor))
-                     (scrolled-off text (length text) (1- (editor-width editor)))
-                     0)))
+         (hidden (- (length text) (length (nth-value 1 (key-question-pieces editor))))))
     (if (zerop hidden)
         (list text nil spans)
         (list (subseq text hidden) nil
