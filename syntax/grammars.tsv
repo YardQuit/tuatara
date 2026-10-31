@@ -288,7 +288,7 @@ xit	https://github.com/synaptiko/tree-sitter-xit	7d7902456061bc2ad21c64c44054f67
 xtc	https://github.com/Alexis-Lapierre/tree-sitter-xtc	7bc11b736250c45e25cfb0215db2f8393779957e	MIT
 yuck	https://github.com/tree-sitter-grammars/tree-sitter-yuck	6c60112b3b3e739fb1ca4a8ea4bea2b6ffe11318	MIT
 yaml	https://github.com/tree-sitter-grammars/tree-sitter-yaml	a1c4812a73ec5e089de8e441fdea3a921e8d5079	MIT
-vue	https://github.com/ikatyang/tree-sitter-vue	91fe2754796cd8fba5f229505a23fa08f3546c06	MIT
+vue	https://github.com/tree-sitter-grammars/tree-sitter-vue	ce8011a414fdf8091f4e4071752efc376f4afb08	MIT
 lean	https://github.com/Julian/tree-sitter-lean	916c44f4d89c970f66dd34a49e7ce848f4d29e72	MIT
 beancount	https://github.com/polarmutex/tree-sitter-beancount	f3741a3a68ade59ec894ed84a64673494d2ba8f3	MIT
 astro	https://github.com/virchau13/tree-sitter-astro	947e93089e60c66e681eba22283f4037841451e7	MIT

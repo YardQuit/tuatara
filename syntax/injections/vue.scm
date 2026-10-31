@@ -4,10 +4,13 @@
 ;
 ; The rules for text in other languages in vue: runtime/queries/vue/injections.scm of
 ; Helix (https://github.com/helix-editor/helix) at commit 9bcdf4d79d14,
-; unchanged below this notice.
+; unchanged below this notice but where a comment says what was changed.
 
+; changed: the grammar of tree-sitter-grammars, kept up, names the argument of a directive (:class, @click) its value, after a mark of its own: the value of every directive is JavaScript, written with its name or with a mark alone; it read
+;   (directive_attribute
+;     (directive_name) @keyword
+;     (quoted_attribute_value
 (directive_attribute
-  (directive_name) @keyword
   (quoted_attribute_value
     (attribute_value) @injection.content)
  (#set! injection.language "javascript"))

@@ -433,6 +433,24 @@ QUERY_FIXES = {
         ('(doc_comment) @comment.documentation', '',
          'the grammar of nix-community, kept up, has no node of its own for a comment of documentation: such a comment is a comment'),
     ],
+    ('vue', 'highlights'): [
+        ('(directive_argument) @constant', '(directive_value) @constant', 'the grammar of tree-sitter-grammars, kept up, names the argument of a directive (:class, @click) its value, after a mark of its own'),
+        ("""(directive_attribute
+  (directive_name) @attribute
+  (directive_argument)? @attribute
+  (directive_modifiers)? @attribute
+  [(attribute_value) (quoted_attribute_value)]? @string) """, """(directive_attribute
+  [(directive_name) (directive_value) (dynamic_directive_value) (directive_modifiers) ":" "." "@" "#"] @attribute)
+
+(directive_attribute
+  [(attribute_value) (quoted_attribute_value)] @string)""", 'the grammar of tree-sitter-grammars, kept up, names the argument of a directive (:class, @click) its value, after a mark of its own'),
+    ],
+    ('vue', 'injections'): [
+        ("""(directive_attribute
+  (directive_name) @keyword
+  (quoted_attribute_value""", """(directive_attribute
+  (quoted_attribute_value""", 'the grammar of tree-sitter-grammars, kept up, names the argument of a directive (:class, @click) its value, after a mark of its own: the value of every directive is JavaScript, written with its name or with a mark alone'),
+    ],
     ('xml', 'indents'): [('(end_tag) @outdent', '(ETag) @outdent', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does')],
     ('xml', 'textobjects'): [
         ('(element (start_tag) (_)* @xml-element.inside (end_tag))', '(element (STag) (_)* @xml-element.inside (ETag))', 'the grammar of tree-sitter-grammars, kept up, names the parts of a document as the XML standard does'),
