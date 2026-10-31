@@ -37,7 +37,7 @@ DRAWING, for each way the window can be drawn, (RENDERER . FIGURES) as
 TUATARA.FRONTEND:FRONTEND-MEASURE-DRAWING gives them, and RENDERER the
 way the settings ask for (*GUI-RENDERER*)."
   (languages '() :read-only t)
-  (grammars '() :read-only t)
+  (grammars '())
   (results '())
   (sandbox '())
   (decoders '())
@@ -93,18 +93,19 @@ away: what the editor uses stays as it is."
                                  (error (e) (cons :bad (substitute #\Space #\Newline (princ-to-string e))))))))))
 
 (defun start-health-check ()
-  "Start checking every language's rules in the background, a job, their
-grammars found first here, on the editor's thread, which keeps the table of
-them, and in a window, how it draws each way it can (DRAWING-WORDS). Returns
-the check."
+  "Start checking every language's grammar and rules in the background, a
+job, the grammars found there too, which may wait for the program loading
+them to start, and in a window, how it draws each way it can
+\(DRAWING-WORDS). Returns the check."
   (let* ((languages (sort (copy-list *languages*) #'string< :key (lambda (l) (symbol-name (language-name l)))))
-         (grammars (mapcar (lambda (l) (tuatara.syntax:find-grammar (language-grammar l))) languages))
          (frontend (and *editor* (editor-frontend *editor*))))
     (multiple-value-bind (renderers in-use) (and frontend (tuatara.frontend:frontend-renderers frontend))
     (tuatara.runtime:start-job-thread
-     (make-health-check languages grammars)
+     (make-health-check languages '())
      (lambda (check)
-       (setf (health-check-sandbox check)
+       (setf (health-check-grammars check)
+             (mapcar (lambda (l) (tuatara.syntax:find-grammar (language-grammar l))) languages)
+             (health-check-sandbox check)
              (multiple-value-list (tuatara.io:sandbox-status :again t))
              (health-check-decoders check)
              (append (list (pdf-decoder-words) (office-page-words) (image-decoder-words) (external-program-words) (notify-health-words) (encrypted-health-words) (git-health-words))
@@ -114,7 +115,7 @@ the check."
              (health-check-tools check)
              (mapcar (lambda (language) (multiple-value-list (language-tools-words language))) languages)
              (health-check-results check)
-             (mapcar #'check-language-rules languages grammars)
+             (mapcar #'check-language-rules languages (health-check-grammars check))
              (health-check-drawing check)
              (loop for renderer in renderers
                    collect (cons renderer (ignore-errors (tuatara.frontend:frontend-measure-drawing frontend renderer))))
@@ -218,16 +219,16 @@ editor's own buffers, never a file's."
     (destructuring-bind (&optional status detail &rest rest) sandbox
       (declare (ignore rest))
       (case status
-        (:missing (push (format nil "No sandbox: ~a. Install bubblewrap for images and PDFs to be decoded safely." detail) problems))
+        (:missing (push (format nil "No sandbox: ~a. Install bubblewrap for images and PDFs to be decoded safely, and for text to be coloured and parsed." detail) problems))
         (:broken (push (format nil "No sandbox: ~a." detail) problems))))
-    (unless (tuatara.syntax:syntax-library-p)
-      (push (format nil "The tree-sitter library, libtuatara-syntax.so, is in none of ~a: no language has a grammar."
+    (unless (tuatara.syntax:syntax-helper-program)
+      (push (format nil "The program that runs the grammars, tuatara-syntax-helper, is in none of ~a: no language has a grammar."
                     (directory-words (tuatara.syntax:grammar-directories)))
             problems))
     (loop for language in languages
           for grammar in grammars
           for statuses in results
-          do (when (and (null grammar) (tuatara.syntax:syntax-library-p))
+          do (when (and (null grammar) (tuatara.syntax:syntax-helper-program))
                (push (format nil "~(~a~): no grammar ~a.so in ~a, so no colours or structure." (language-name language)
                              (language-grammar language) (directory-words (tuatara.syntax:grammar-directories)))
                      problems))
@@ -261,9 +262,15 @@ editor's own buffers, never a file's."
                                         ((eq outcome :none) "none there")
                                         ((consp outcome) (format nil "stopped at an error: ~a" (cdr outcome)))
                                         (t "not read")))))
-      (fact "Grammars" (format nil "~a: ~:[no tree-sitter library~;the tree-sitter library and ~d of ~d grammars~]"
+      (fact "Grammars" (format nil "~a: ~:[no program to run them~;the program that runs them and ~d of ~d grammars~]"
                                (directory-words (tuatara.syntax:grammar-directories))
-                               (tuatara.syntax:syntax-library-p) (count-if-not #'null grammars) (length grammars)))
+                               (tuatara.syntax:syntax-helper-program) (count-if-not #'null grammars) (length grammars)))
+      (fact "Parsing" (cond ((eq :ready (first (health-check-sandbox check)))
+                             (format nil "grammars run shut in, in a program for the projects you trust and one for each other file or buffer, ~:[each held to its memory in its own address space only (no systemd-run scope here)~;each held to its memory with all it starts (a systemd-run scope)~]"
+                                     (tuatara.io:sandbox-memory-scope-p)))
+                            (*syntax-helper-unconfined*
+                             "no sandbox (see above): grammars run, not shut in, for the projects you trust only; nothing else is parsed")
+                            (t "no sandbox (see above): no text is parsed or coloured")))
       (loop for (label . text) in (and frontend (tuatara.frontend:frontend-health frontend))
             do (fact label text))
       (loop for words in (drawing-words (health-check-drawing check) (health-check-renderer check))

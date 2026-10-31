@@ -32,7 +32,7 @@ a moment.")
         (true (search "(seccomp)" (health-line text "Sandbox")))
         ;; and what decodes PDFs: poppler, installed in the test toolbox
         (true (search "PDF text by pdftotext and pdfinfo (poppler)" (health-line text "Decoders")))
-        (true (search "the tree-sitter library and" text))
+        (true (search "the program that runs them and" text))
         ;; every language's grammar found and its rules working
         (dolist (language '("bash" "c" "containerfile" "lisp" "rust"))
           (let ((line (health-line text (format nil "~a " language))))
