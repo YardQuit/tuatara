@@ -2114,4 +2114,24 @@ Shut in.
       ;; code blocks keep their straight quotes; so does the compatible export
       (true (search "echo \"x\" 'y'" english))
       (true (search "echo \"x\" 'y'" swedish))
-      (true (search "He said \"hello there\" and 'quoted'" plain)))))
+      (true (search "He said \"hello there\" and 'quoted'" plain))
+      ;; an apostrophe before a digit or a common elision is not an opening mark
+      (let ((latex (latex-in "en" "In '90s and 'tis, 'twas 'em, rock 'n' roll, said 'yes' to 'tisane'." :enhanced t)))
+        (true (search "In ’90s and ’tis, ’twas ’em, rock ’n’ roll, said ‘yes’ to ‘tisane’." latex))))))
+
+(define-test (latex-export docx-quotes)
+  (flet ((xml-in (language text)
+           (docx-text (tuatara.defaults::org-docx-document
+                       (format nil "#+language: ~a~%* One~%~a~%" language text)))))
+    (let* ((text (format nil "He said \"hello there\" and 'quoted' it's (\"paren\") \"*bold*\" =\"c\"= ok in '90s.~%#+begin_example~%echo \"x\" 'y'~%#+end_example"))
+           (english (xml-in "en" text))
+           (swedish (xml-in "sv" text)))
+      (true (search "He said “hello there” and ‘quoted’ it’s (“paren”) “" english))
+      (true (search "He said ”hello there” and ’quoted’ it’s (”paren”) ”" swedish))
+      (true (search "“</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">bold</w:t></w:r><w:r><w:t xml:space=\"preserve\">” </w:t>" english))
+      (true (search "ok in ’90s." english))
+      ;; code and examples keep their straight quotes
+      (true (search ">&quot;c&quot;<" english))
+      (true (search ">&quot;c&quot;<" swedish))
+      (true (search "echo &quot;x&quot; 'y'" english))
+      (true (search "echo &quot;x&quot; 'y'" swedish)))))

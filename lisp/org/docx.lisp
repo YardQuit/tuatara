@@ -201,8 +201,9 @@ long dash, -- a short one, ... an ellipsis, \\- a place to break a word."
 (defun docx-plain-text (text)
   "TEXT, Org text between objects, as runs: each line end, with the spaces
 around it, one space, as a paragraph's lines are joined, or kept with
-*DOCX-KEEP-LINES*."
-  (docx-run (docx-special-strings (if *docx-keep-lines* text (cl-ppcre:regex-replace-all "[ \\t]*\\n[ \\t]*" text " ")))))
+*DOCX-KEEP-LINES*; each straight quote as the mark for it
+\(EXPORT-SMART-QUOTES)."
+  (docx-run (docx-special-strings (export-smart-quotes (if *docx-keep-lines* text (cl-ppcre:regex-replace-all "[ \\t]*\\n[ \\t]*" text " "))))))
 
 ;;; Objects: the text of a paragraph, a cell, a headline
 

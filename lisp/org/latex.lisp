@@ -485,18 +485,43 @@ begins or ends: nothing, a space, a bracket or a dash, or another quote mark."
            (or (member c '(#\Space #\Tab #\Newline #\No-break_space))
                (find c "([{<)]}>-–—/*_+\"'“‘”’")))))
 
-(defun latex-smart-quote (c before after)
-  "The typographic mark for the straight quote C (\" or ') between the
-characters BEFORE and AFTER (:OBJECT where an object stands), in the style of
-the note's language (*EXPORT-QUOTE-MARKS*): opening where a word begins,
-closing everywhere else, and an apostrophe inside a word."
+(defparameter *quote-elisions* '("tis" "twas" "twere" "em" "n")
+  "The words a single quote may begin as an apostrophe, as in 'tis, 'twas and
+rock 'n' roll, not as an opening mark.")
+
+(defun latex-smart-quote (string i)
+  "The typographic mark for the straight quote at I in STRING (\" or ') in the
+style of the note's language (*EXPORT-QUOTE-MARKS*): opening where a word
+begins, closing everywhere else, and an apostrophe inside a word. A single
+quote before a digit ('90s) or before one of *QUOTE-ELISIONS* is an
+apostrophe too, so a quoted word that begins like one of them, 'em or 'tis
+meant as a quotation, is misread. The characters beside STRING are
+*LATEX-TEXT-BEFORE* and *LATEX-TEXT-AFTER* (:OBJECT where an object stands)."
   (destructuring-bind (open-double close-double open-single close-single) (export-quote-marks)
-    (let ((opening (and (latex-quote-boundary-p before)
-                        (not (and (characterp before) (find before ")]}>")))
-                        (not (latex-quote-boundary-p after)))))
+    (let* ((n (length string))
+           (c (char string i))
+           (before (if (plusp i) (char string (1- i)) *latex-text-before*))
+           (after (if (< (1+ i) n) (char string (1+ i)) *latex-text-after*))
+           (opening (and (latex-quote-boundary-p before)
+                         (not (and (characterp before) (find before ")]}>")))
+                         (not (latex-quote-boundary-p after))
+                         (not (and (char= c #\')
+                                   (characterp after)
+                                   (or (digit-char-p after)
+                                       (let ((end (or (position-if-not #'alpha-char-p string :start (1+ i)) n)))
+                                         (member (subseq string (1+ i) end) *quote-elisions* :test #'string-equal))))))))
       (string (if (char= c #\")
                   (if opening open-double close-double)
                   (if opening open-single close-single))))))
+
+(defun export-smart-quotes (string)
+  "STRING with each straight quote written as the mark for it (LATEX-SMART-QUOTE)."
+  (if (find-if (lambda (c) (find c "\"'")) string)
+      (with-output-to-string (out)
+        (dotimes (i (length string))
+          (let ((c (char string i)))
+            (if (find c "\"'") (write-string (latex-smart-quote string i) out) (write-char c out)))))
+      string))
 
 (defun latex-escape (string &key (special-strings t) (newlines nil) (quotes nil))
   "STRING with the characters LaTeX gives meanings to written so they print
@@ -511,9 +536,7 @@ left out."
           for i from 0 below n
           for c = (char string i)
           do (cond ((and quotes (find c "\"'"))
-                    (write-string (latex-smart-quote c (if (plusp i) (char string (1- i)) *latex-text-before*)
-                                                     (if (< (1+ i) n) (char string (1+ i)) *latex-text-after*))
-                                  out))
+                    (write-string (latex-smart-quote string i) out))
                    ((and special-strings (char= c #\\) (< (1+ i) n) (char= (char string (1+ i)) #\-))
                     (write-string "\\-" out) (incf i))
                    ((and special-strings (char= c #\L) (<= (+ i 5) n) (string= "LaTeX" string :start2 i :end2 (+ i 5)))
