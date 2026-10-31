@@ -889,13 +889,15 @@ it, it waits for ever, and the kernel lets no signal but SIGKILL end it."
                    (signal-process-if pid (lambda () (sandbox-left-p pid)) sb-unix:sigkill))))
 
 (defun start-sandbox (bwrap program arguments stdin seconds memory
-                      &rest keys &key files (total *sandbox-total-memory*) (outputs :stream) &allow-other-keys)
+                      &rest keys &key files (total *sandbox-total-memory*) (outputs :stream) started &allow-other-keys)
   "Start bwrap at the path BWRAP on PROGRAM with ARGUMENTS, STDIN its input,
 shown FILES, each (PATH . TEXT), as SANDBOX-RUN has them, KEYS the rest of
 SANDBOX-ARGUMENTS's; the process, among the sandboxes running until it is
 ended (END-SANDBOX). In a scope whose memory is held to TOTAL
 \(*SANDBOX-TOTAL-MEMORY* unless given) when systemd-run can make one. Its
-outputs are streams to read, or let go when OUTPUTS is NIL."
+outputs are streams to read, or let go when OUTPUTS is NIL. STARTED, when
+given, is called with the process as soon as it is counted, before anything
+can stop this thread, to keep it where the caller ends it."
   (let ((seccomp nil) (data '()))
     (unwind-protect
          (let* ((program-octets (and *sandbox-seccomp* (seccomp-program)))
@@ -907,7 +909,7 @@ outputs are streams to read, or let go when OUTPUTS is NIL."
                                             data))
                              (apply #'sandbox-arguments program arguments seconds memory
                                     :seccomp seccomp :files (reverse data)
-                                    (alexandria:remove-from-plist keys :files :total :outputs))))
+                                    (alexandria:remove-from-plist keys :files :total :outputs :started))))
                 (keep (remove nil (cons seccomp (mapcar #'cdr data))))
                 (scope (and total **sandbox-scope**)))
            ;; counted among those running before this thread can be ended
@@ -924,6 +926,7 @@ outputs are streams to read, or let go when OUTPUTS is NIL."
                                              :output outputs :error outputs :environment (list (sandbox-mark))))))
                (sb-thread:with-mutex (**sandboxes-lock**)
                  (push (cons process sb-thread:*current-thread*) **sandboxes**))
+               (when started (funcall started process))
                (when **sandboxes-closed**
                  (end-sandbox process))
                process)))
@@ -972,8 +975,8 @@ ends well with an exit code among ENDED-WELL. See SANDBOX-RUN."
                (when (plusp n)
                  (add-octet-piece into (subseq octets 0 n))))))
       (unwind-protect
-           (let* ((started (sb-sys:without-interrupts
-                             (setf process (apply #'start-sandbox bwrap program arguments stdin seconds memory keys))))
+           (let* ((started (apply #'start-sandbox bwrap program arguments stdin seconds memory
+                                  :started (lambda (started) (setf process started)) keys))
                   (out (sb-sys:fd-stream-fd (sb-ext:process-output started)))
                   (err (sb-sys:fd-stream-fd (sb-ext:process-error started)))
                   (open (list out err)))
