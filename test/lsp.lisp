@@ -1658,7 +1658,13 @@ as ranges and how many whole."
                  (let ((expected (expected)))
                    (unless (string= expected model)
                      (is string= expected model "after step ~a, the server counting ~a" step encoding)
-                     (return))))))
+                     (return)))
+                 ;; where the note's code lines are, kept as a fresh look at the note finds them
+                 (when shadow-language
+                   (let ((fresh (nth-value 1 (tuatara.defaults::org-blocks-shadow buffer shadow-language))))
+                     (unless (equalp fresh (tuatara.defaults::lsp-doc-skipped doc))
+                       (is equalp fresh (tuatara.defaults::lsp-doc-skipped doc) "after step ~a" step)
+                       (return)))))))
         (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
         (tuatara.buffer:kill-buffer buffer)))
     (values ranges whole)))
@@ -1750,3 +1756,92 @@ as ranges and how many whole."
                (is equal '() (languages file))
                (true (search "larger than *lsp-largest-document*" (tuatara.defaults::lsp-unserved-words file '(t)))))
           (mapc #'tuatara.buffer:kill-buffer buffers))))))
+
+(defun one-doc-session (text &optional shadow-language)
+  "A buffer holding TEXT, made for the tests below, with its document open in
+a stand-in server with no program, and that server: three values. With
+SHADOW-LANGUAGE, the document is that language's blocks of the note."
+  (let* ((buffer (tuatara.buffer:make-buffer (format nil "one-~a" (random 1000000)) :text text))
+         (server (server-taking-changes :utf-16))
+         (doc (tuatara.defaults::make-lsp-doc buffer (or shadow-language 'python) "file:///tmp/one.py"
+                                              (and shadow-language
+                                                   (lambda (b &optional doc stretches)
+                                                     (tuatara.defaults::org-blocks-shadow b shadow-language doc stretches))))))
+    (setf (tuatara.defaults::lsp-doc-servers doc) (list server)
+          (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) (list doc))
+    (push doc (tuatara.defaults::lsp-server-documents server))
+    (tuatara.defaults::lsp-open-document server doc)
+    (values buffer doc server)))
+
+(defun server-text (server text)
+  "TEXT, what SERVER had, as the messages written to it since make it."
+  (dolist (m (messages-written server) text)
+    (let ((params (tuatara.text:json-get m "params")))
+      (cond ((equal (tuatara.text:json-get m "method") "textDocument/didOpen")
+             (setf text (tuatara.text:json-get params "textDocument" "text")))
+            ((equal (tuatara.text:json-get m "method") "textDocument/didChange")
+             (setf text (lsp-applied text (tuatara.text:json-get params "contentChanges") :utf-16)))))))
+
+(define-test (lsp changes-reach-servers-when-another-attaches)
+  ;; a change not yet sent when a second server is given the document at the pause, its entry
+  ;; already taken off the waiting changes: the first server is sent it all the same
+  (let ((tuatara.defaults::*lsp-doc-spec-functions* '()))
+    (multiple-value-bind (buffer doc first) (one-doc-session (format nil "x = 1~%y = 2~%"))
+      (unwind-protect
+           (let ((second (server-taking-changes :utf-16))
+                 (had (server-text first nil)))
+             (tuatara.buffer:buffer-insert buffer 0 (format nil "z = 0~%"))
+             (tuatara.defaults::lsp-attach second doc)
+             (tuatara.defaults::lsp-send-text buffer)
+             (is string= (tuatara.buffer:buffer-string buffer) (server-text first had))
+             (is string= (tuatara.buffer:buffer-string buffer) (server-text second nil)))
+        (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+        (tuatara.buffer:kill-buffer buffer)))))
+
+(define-test (lsp documents-grown-too-large-closed)
+  ;; a file, and a note's blocks, grown past *lsp-largest-document* as typing goes on: closed at
+  ;; the next pause, not sent, whether or not notes' blocks are looked for
+  (dolist (functions (list '() (list 'tuatara.defaults::org-block-doc-specs)))
+    (let ((tuatara.defaults::*lsp-doc-spec-functions* functions)
+          (tuatara.defaults::*lsp-largest-document* 1000)
+          (python (tuatara.defaults::org-src-language "python"))
+          (paste (make-string 2000 :initial-element #\a)))
+      (multiple-value-bind (buffer doc server) (one-doc-session (format nil "x = 1~%"))
+        (declare (ignore doc))
+        (unwind-protect
+             (progn (server-text server nil)
+                    (tuatara.buffer:buffer-insert buffer 0 paste)
+                    (tuatara.defaults::lsp-send-text buffer)
+                    (false (tuatara.defaults::buffer-docs buffer))
+                    (false (find "textDocument/didChange" (messages-written server)
+                                 :key (lambda (m) (tuatara.text:json-get m "method")) :test #'equal)))
+          (tuatara.buffer:kill-buffer buffer)))
+      (multiple-value-bind (buffer doc server) (one-doc-session (format nil "* Note~%#+begin_src python~%x = 1~%#+end_src~%") python)
+        (declare (ignore doc))
+        (unwind-protect
+             (progn (server-text server nil)
+                    (tuatara.buffer:buffer-insert buffer (+ 2 (search "x =" (tuatara.buffer:buffer-string buffer))) paste)
+                    (tuatara.defaults::lsp-send-text buffer)
+                    (false (tuatara.defaults::buffer-docs buffer))
+                    (false (find "textDocument/didChange" (messages-written server)
+                                 :key (lambda (m) (tuatara.text:json-get m "method")) :test #'equal)))
+          (tuatara.buffer:kill-buffer buffer))))))
+
+(define-test (lsp change-within-a-character-sent)
+  ;; octets changed within a letter (as a package may, by octet positions): the server is still
+  ;; sent the text, and changes go on being sent after it
+  (let ((tuatara.defaults::*lsp-doc-spec-functions* '()))
+    (multiple-value-bind (buffer doc server) (one-doc-session (format nil "é = 1~%"))
+      (declare (ignore doc))
+      (unwind-protect
+           (let ((had (server-text server nil)))
+             ;; é's second octet made è's
+             (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit 1 2 (coerce #(#xA8) 'tuatara.text:octets))))
+             (tuatara.defaults::lsp-send-text buffer)
+             (setf had (server-text server had))
+             (is string= (format nil "è = 1~%") had)
+             (tuatara.buffer:buffer-insert buffer 0 "a")
+             (tuatara.defaults::lsp-send-text buffer)
+             (is string= (format nil "aè = 1~%") (server-text server had)))
+        (setf (tuatara.buffer:buffer-local buffer 'tuatara.defaults::lsp-docs) nil)
+        (tuatara.buffer:kill-buffer buffer)))))

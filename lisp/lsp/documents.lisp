@@ -423,12 +423,15 @@ VERSION, the number of the text sent: an answer asked of it then still holds."
 
 (defun lsp-open-document (server doc)
   "Tell SERVER that DOC is open, with its whole text; the changes not yet
-sent to DOC's other servers sent to them first, as what is sent from then
-on counts from the text as it is now."
-  (let ((servers (lsp-doc-servers doc)))
-    (setf (lsp-doc-servers doc) (remove server servers))
-    (unwind-protect (lsp-in-step (lsp-doc-buffer doc))
-      (setf (lsp-doc-servers doc) servers)))
+sent to DOC's other servers sent to them first, whenever DOC was last sent
+of another text than its buffer's, as what is sent from then on counts from
+the text as it is now."
+  (let ((servers (lsp-doc-servers doc))
+        (sent (lsp-doc-sent doc)))
+    (when (and sent (not (eq sent (tuatara.buffer:buffer-version (lsp-doc-buffer doc)))))
+      (setf (lsp-doc-servers doc) (remove server servers))
+      (unwind-protect (lsp-send-doc doc)
+        (setf (lsp-doc-servers doc) servers))))
   (lsp-notify server "textDocument/didOpen"
               (tuatara.text:json-object "textDocument"
                                         (tuatara.text:json-object "uri" (lsp-doc-uri doc)
@@ -531,8 +534,8 @@ line end and this editor does not."
 order of (START END TEXT), the octets START below END of the text as last
 sent (LSP-DOC-SHOWN-ROPE) replaced by the string TEXT; for a note's source
 blocks, what SKIPPED is now as a second value. NIL when the text is to be sent
-whole: never sent, replaced whole since, not all UTF-8 or with a carriage
-return not before a line feed, more than *LSP-MOST-CHANGES* changes, or
+whole: never sent, replaced whole since, changed within a character, not
+all UTF-8 or with a carriage return not before a line feed, more than *LSP-MOST-CHANGES* changes, or
 changes taking more octets than the whole text would, by more than one range
 \(+LSP-CHANGE-OCTETS+ for each beside its text). Complexity: O(the edits
 since and the text they changed), and for a note's blocks O(blocks) and the
@@ -546,9 +549,14 @@ lines of the blocks changed."
                         :whole)))
     (when (and (listp stretches) (<= (length stretches) *lsp-most-changes*))
       (multiple-value-bind (changes skipped)
-          (if (lsp-doc-shadow doc)
-              (funcall (lsp-doc-shadow doc) buffer doc stretches)
-              (whole-text-changes stretches rope))
+          (cond ((lsp-doc-shadow doc) (funcall (lsp-doc-shadow doc) buffer doc stretches))
+                ;; an edit made within a character, at octets of the text: sent whole
+                ((loop for (old-start old-end new-start new-end) in stretches
+                       always (and (tuatara.text:char-boundary-p (tuatara.text:version-rope sent) old-start)
+                                   (tuatara.text:char-boundary-p (tuatara.text:version-rope sent) old-end)
+                                   (tuatara.text:char-boundary-p rope new-start)
+                                   (tuatara.text:char-boundary-p rope new-end)))
+                 (whole-text-changes stretches rope)))
         (let* ((shown (lsp-doc-shown-rope doc))
                (changes (and changes (changes-off-line-ends shown changes))))
           (when (and changes
@@ -618,24 +626,54 @@ sent (*LSP-SYNC-DELAY* after it was made), or NIL when none waits."
 
 (defun lsp-send-text (buffer)
   "Send what each of BUFFER's documents shows now to its servers that are
-ready and want changes: only what changed to those that take changes so,
-when that can be told (DOC-CHANGES), else the whole text; a note's source
-blocks looked at again first, a language's blocks added or gone opened or
-closed (LSP-CONNECT)."
+ready and want changes (LSP-SEND-DOC); a note's source blocks looked at
+again first, a language's blocks added or gone opened or closed
+\(LSP-CONNECT)."
   (when (lsp-doc-specs-change-p buffer)
     (lsp-connect buffer :start :trusted))
-  (dolist (doc (buffer-docs buffer))
-    (let ((servers (remove-if-not (lambda (s) (and (eq (lsp-server-status s) :ready) (plusp (lsp-sync-kind s))))
-                                  (lsp-doc-servers doc))))
-      (when servers
-        (let* ((version (incf (lsp-doc-version doc)))
-               (shown (lsp-doc-shown-rope doc))
-               (changes '()) (skipped nil))
-          (when (some (lambda (s) (= 2 (lsp-sync-kind s))) servers)
-            (setf (values changes skipped) (doc-changes doc)))
+  (mapc #'lsp-send-doc (copy-list (buffer-docs buffer))))
+
+(defun changes-growth (changes)
+  "How many octets CHANGES (DOC-CHANGES) add to the text they are made in,
+fewer when they take more away."
+  (loop for (start end text) across changes
+        sum (- (tuatara.text:string-octet-length text) (- end start))))
+
+(defun lsp-close-too-large (doc)
+  "Have DOC's servers forget it, its text now larger than
+*LSP-LARGEST-DOCUMENT*, and say so."
+  (dolist (server (copy-list (lsp-doc-servers doc)))
+    (lsp-forget-document server doc))
+  (message "~a is larger than *lsp-largest-document* now: its language servers see it no more"
+           (if (lsp-doc-shadow doc)
+               (format nil "The ~(~a~) code of ~a" (language-name (lsp-doc-language doc)) (tuatara.buffer:buffer-name (lsp-doc-buffer doc)))
+               (tuatara.buffer:buffer-name (lsp-doc-buffer doc)))))
+
+(defun lsp-send-doc (doc)
+  "Send what DOC shows now to its servers that are ready and want changes:
+only what changed to those that take changes so, when that can be told
+\(DOC-CHANGES), else the whole text; nothing, DOC closed instead
+\(LSP-CLOSE-TOO-LARGE), once it is larger than *LSP-LARGEST-DOCUMENT*;
+nothing either when its text is as last sent."
+  (let ((servers (remove-if-not (lambda (s) (and (eq (lsp-server-status s) :ready) (plusp (lsp-sync-kind s))))
+                                (lsp-doc-servers doc))))
+    (when (and servers (not (eq (lsp-doc-sent doc) (tuatara.buffer:buffer-version (lsp-doc-buffer doc)))))
+      (let* ((shown (lsp-doc-shown-rope doc))
+             (changes '()) (skipped nil))
+        (when (some (lambda (s) (= 2 (lsp-sync-kind s))) servers)
+          (setf (values changes skipped) (doc-changes doc)))
+        (flet ((too-large-p (size) (> size *lsp-largest-document*)))
+          (when (too-large-p (cond ((null (lsp-doc-shadow doc)) (tuatara.buffer:buffer-size (lsp-doc-buffer doc)))
+                                   (changes (+ (tuatara.text:rope-bytes shown) (changes-growth changes)))
+                                   (t 0)))
+            (return-from lsp-send-doc (lsp-close-too-large doc)))
           ;; only what changed, to each server that takes it so; else the whole text, made once
           (let ((text (and (or (null changes) (some (lambda (s) (/= 2 (lsp-sync-kind s))) servers))
-                           (lsp-doc-text doc))))
+                           (lsp-doc-text doc)))
+                (version (1+ (lsp-doc-version doc))))
+            (when (and text (lsp-doc-shadow doc) (too-large-p (tuatara.text:rope-bytes (lsp-doc-rope doc))))
+              (return-from lsp-send-doc (lsp-close-too-large doc)))
+            (setf (lsp-doc-version doc) version)
             (loop for server in servers
                   do (lsp-notify server "textDocument/didChange"
                                  (tuatara.text:json-object "textDocument" (tuatara.text:json-object "uri" (lsp-doc-uri doc) "version" version)
@@ -643,9 +681,9 @@ closed (LSP-CONNECT)."
                                                                                 (changes-json server shown changes)
                                                                                 (vector (tuatara.text:json-object "text" text))))))
             (unless text
-              (take-changes doc changes skipped)))
-          (note-sent doc)
-          (lsp-ask-all doc))))))
+              (take-changes doc changes skipped))))
+        (note-sent doc)
+        (lsp-ask-all doc)))))
 
 (defun lsp-in-step (buffer)
   "Send BUFFER's text now when it changed since it was last sent, so that a
