@@ -308,7 +308,7 @@ read again."
                      (if (= first last)
                          (let ((base (now first)))
                            ;; a part parsed in the background keeps its last parse while it is parsed again
-                           (setf (org-part-state part) (org-part-state old)
+                           (setf (org-part-state part) (shiftf (org-part-state old) nil)
                                  ;; its place in the whole parse, shown until it is parsed again
                                  (org-part-whole part) (let ((whole (org-part-whole old))) (and whole (append (butlast whole) (list nil))))
                                  (org-part-touched part) (org-part-touched-by old (- start base) (- end base) inserted)))
@@ -339,7 +339,7 @@ read again."
                                         (org-split-range rope (aref starts r) (end-of r) (org-part-touched (svref all r)) changed)
                                       (when (or held (org-part-todo-lines (svref all r))) (setf todo t))
                                       ;; the background parse of the part typed in goes on with the part that begins where it did
-                                      (setf (org-part-state (cdr (first new))) (org-part-state (svref all r))
+                                      (setf (org-part-state (cdr (first new))) (shiftf (org-part-state (svref all r)) nil)
                                             (org-part-whole (cdr (first new))) (org-part-whole (svref all r)))
                                       (cons r new)))))
           (if (and (null owner) (every (lambda (entry) (null (cddr entry))) split))
@@ -644,15 +644,16 @@ NIL when there are none."
                    do (setf (aref within j) (- (aref returns i) from)))
              within)))))
 
-(defstruct (org-snapshot (:constructor make-org-snapshot (parts keywords entries crlf whole)) (:copier nil))
+(defstruct (org-snapshot (:constructor make-org-snapshot (parts keywords entries crlf whole version)) (:copier nil))
   "What the parse of a whole Org buffer is made from, taken from its PARTS
 \(ORG-PARTS) at one version: ENTRIES, a vector of (PART LEVEL SOURCE) in
 order, SOURCE the part's own parse (TREE TEXT RETURNS), or (:WHOLE NODE
 START LENGTH TEXT RETURNS) where the whole parse made before holds it as it
 is, or the part's text, a string or (ROPE START END); or, for a whole parse
 made afresh, WHOLE, the whole text, a string or a rope. The TODO KEYWORDS
-the parts are parsed with; CRLF, true when its lines end with CR LF."
-  parts keywords entries crlf whole)
+the parts are parsed with; CRLF, true when its lines end with CR LF;
+VERSION, the number of the buffer's version it was taken at."
+  parts keywords entries crlf whole version)
 
 (setf (documentation 'org-snapshot-p 'function) "True when OBJECT is an ORG-SNAPSHOT.")
 
@@ -689,33 +690,41 @@ octets copied of a mapped file."
                           (mapped (tuatara.buffer:buffer-string buffer :start from :end to))
                           (t (list rope from to)))))))
     (make-org-snapshot parts (org-parts-todo-keywords parts) entries (buffer-crlf-p buffer)
-                       (and (not kept) (if mapped (tuatara.buffer:buffer-string buffer) rope)))))
+                       (and (not kept) (if mapped (tuatara.buffer:buffer-string buffer) rope))
+                       (tuatara.text:version-number (tuatara.buffer:buffer-version buffer)))))
 
 (defun org-copy-node (node offset parent &key headline-end)
   "A copy of NODE and of what is in it, every position OFFSET characters on,
-its parent PARENT. With HEADLINE-END, NODE is a headline of a whole parse
-copied as the parse of its part alone would have it, the part ending at the
+its parent PARENT; as a second value, how many nodes deep it goes, NODE
+itself one. With HEADLINE-END, NODE is a headline of a whole parse copied
+as the parse of its part alone would have it, the part ending at the
 character HEADLINE-END of that parse's text (*ORG-TEXT*): without the
 headlines under it, its contents and blank lines counted to there."
-  (flet ((moved (position) (and position (+ position offset))))
-    (let ((copy (make-org-node (org-node-type node)
+  (let ((deepest 0)
+        (copy (flet ((moved (position) (and position (+ position offset))))
+                (make-org-node (org-node-type node)
                                :begin (moved (org-node-begin node)) :end (moved (org-node-end node))
                                :contents-begin (moved (org-node-contents-begin node))
                                :contents-end (moved (org-node-contents-end node))
                                :post-blank (org-node-post-blank node)
-                               :post-affiliated (moved (org-node-post-affiliated node)))))
+                               :post-affiliated (moved (org-node-post-affiliated node))))))
+    (flet ((moved (position) (and position (+ position offset)))
+           (copied (child)
+             (multiple-value-bind (child-copy depth) (org-copy-node child offset copy)
+               (setf deepest (max deepest depth))
+               child-copy)))
       (setf (org-node-parent copy) parent
             (org-node-properties copy)
             (loop for (key value) on (org-node-properties node) by #'cddr
                   unless (eq key :children-vector)
                     nconc (list key (case key
                                       ((:title-begin :title-end) (moved value))
-                                      (:title (mapcar (lambda (object) (org-copy-node object offset copy)) value))
+                                      (:title (mapcar #'copied value))
                                       (t value))))
             (org-node-children copy)
             (loop for child in (org-node-children node)
                   unless (and headline-end (eq (org-node-type child) 'headline))
-                    collect (org-copy-node child offset copy)))
+                    collect (copied child)))
       (when headline-end
         (let ((contents (let ((begin (org-node-contents-begin node))) (and begin (< begin headline-end) begin))))
           (setf (org-node-end copy) (moved headline-end)
@@ -723,8 +732,8 @@ headlines under it, its contents and blank lines counted to there."
                 (org-node-contents-end copy) (and contents (moved headline-end))
                 (org-node-post-blank copy) (if contents
                                                0
-                                               (org-count-blank-lines (min headline-end (org-next-line (org-node-begin node))) headline-end)))))
-      copy)))
+                                               (org-count-blank-lines (min headline-end (org-next-line (org-node-begin node))) headline-end))))))
+    (values copy (1+ deepest))))
 
 (defun org-whole-places (tree text returns entries)
   "Where the parts of ENTRIES (as an ORG-SNAPSHOT has them) are in TREE, the
@@ -761,7 +770,7 @@ parse and the characters of the text), and the parts parsed here."
           (let ((tree (org-parse text :todo-keywords keywords)))
             (return-from org-assemble
               (values tree text returns (org-whole-places tree text returns (org-snapshot-entries snapshot))))))))
-    (let ((pieces '()) (returns '()) (places '()) (offset 0))
+    (let ((pieces '()) (returns '()) (places '()) (offset 0) (too-deep nil))
       ;; each part's tree, made or copied, where its text begins in the whole and the headlines it closes
       (let ((placed
               (loop for (part level source) across (org-snapshot-entries snapshot)
@@ -821,43 +830,53 @@ parse and the characters of the text), and the parts parsed here."
                                 (parent (progn (when outermost
                                                  (loop repeat (1+ outermost) do (close-subtree (pop open) start)))
                                                (if open (car (first open)) root)))
-                                (copy (if (consp source)
-                                          (let ((*org-text* text))
-                                            (org-copy-node (first source) (- start from) parent :headline-end (third source)))
-                                          (org-copy-node (first (org-node-children source)) start parent))))
+                                (copy (multiple-value-bind (copy depth)
+                                          (if (consp source)
+                                              (let ((*org-text* text))
+                                                (org-copy-node (first source) (- start from) parent :headline-end (third source)))
+                                              (org-copy-node (first (org-node-children source)) start parent))
+                                        ;; parsed alone it went deeper than the parse of the whole text may, under its headlines
+                                        (when (> (+ depth (length open)) *org-deepest*)
+                                          (setf too-deep t))
+                                        copy)))
                            (adopt copy)
                            (push (list* copy level part-end '()) open)
                            (push (list part start length copy) places))))
             (loop while open do (close-subtree (pop open) total))
             (setf (org-node-children root) (nreverse root-children))
-            (let ((returns (and returns (coerce (nreverse returns) '(simple-array fixnum (*))))))
-              (values root
-                      (let ((whole (make-string total)) (at 0))
-                        (loop for (text from to) in (nreverse pieces)
-                              do (replace whole text :start1 at :start2 from :end2 to)
-                                 (incf at (- to from)))
-                        whole)
-                      returns
-                      (loop for (part start length node) in (nreverse places)
-                            collect (list part start length (if returns (org-returns-before returns start) 0)
-                                          (if (eq node root) root node)))))))))))
+            (let ((returns (and returns (coerce (nreverse returns) '(simple-array fixnum (*)))))
+                  (text (let ((whole (make-string total)) (at 0))
+                          (loop for (text from to) in (nreverse pieces)
+                                do (replace whole text :start1 at :start2 from :end2 to)
+                                   (incf at (- to from)))
+                          whole)))
+              (if too-deep
+                  ;; headlines nested past what a parse reads: the whole text parsed, as deep as that goes
+                  (let ((tree (org-parse text :todo-keywords keywords)))
+                    (values tree text returns (org-whole-places tree text returns (org-snapshot-entries snapshot))))
+                  (values root text returns
+                          (loop for (part start length node) in (nreverse places)
+                                collect (list part start length (if returns (org-returns-before returns start) 0)
+                                              (if (eq node root) root node))))))))))))
 
 (defun org-keep-whole-places (snapshot tree places)
   "Note in each part of SNAPSHOT where it is in TREE, the whole parse made of
 it (ORG-ASSEMBLE's PLACES), and let go of the parses it holds of its own,
 the whole one now holding them: only while the TODO keywords the parse was
-made with are those of the parts still. A part changed since is no longer
-among them."
+made with are those of the parts still, and only for a part not changed
+since SNAPSHOT was taken, a parse of it in the background newer than that
+kept."
   (when (eq (org-parts-todo-keywords (org-snapshot-parts snapshot)) (org-snapshot-keywords snapshot))
-    (loop for (part start length returns-before node) in places
-          when (org-part-level part)
-            do (setf (org-part-whole part) (list tree node start length returns-before t)
-                     (org-part-parse part) nil)
-               (let ((state (org-part-state part)))
-                 (when state
-                   ;; how long it took is kept, for the next parse of it
-                   (setf (org-state-tree state) nil (org-state-text state) nil (org-state-returns state) nil
-                         (org-state-version state) -1))))))
+    (let ((version (org-snapshot-version snapshot)))
+      (loop for (part start length returns-before node) in places
+            when (and (org-part-level part) (<= (org-part-changed part) version))
+              do (setf (org-part-whole part) (list tree node start length returns-before t)
+                       (org-part-parse part) nil)
+                 (let ((state (org-part-state part)))
+                   ;; a parse in the background of the text as it is in TREE, let go; how long it took kept
+                   (when (and state (<= (org-version-number (org-state-version state)) version))
+                     (setf (org-state-tree state) nil (org-state-text state) nil (org-state-returns state) nil
+                           (org-state-version state) -1)))))))
 
 ;;; What says which source blocks a buffer has
 

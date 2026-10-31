@@ -413,3 +413,60 @@ headline's title objects too), to tell two parses apart."
                (tuatara.buffer:kill-buffer buffer)))))
     (let ((per-thousand (/ (- (seconds 32000) (seconds 8000)) 24)))
       (true (< per-thousand 5/1000) "~,2f ms for each thousand parts more" (* 1000 per-thousand)))))
+
+(define-test (org-internals older-whole-parse-keeps-newer-part-parse)
+  ;; a whole parse asked for before a change in a large part, taken in after that part's own newer parse:
+  ;; the newer parse stays, the part coloured from it, not let go until it is parsed again
+  (let* ((tuatara.defaults::*org-parse-at-once* 500)
+         (body (with-output-to-string (o) (dotimes (i 100) (format o "line ~d with *bold*~%" i))))
+         (text (format nil "* Q~%q~%* P~%~a* R~%r~%" body))
+         (buffer (org-parts-buffer text nil))
+         (at (+ (search "* P" text) 10)))
+    (unwind-protect
+         (flet ((edit (start string)
+                  (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit start start (tuatara.text:string-octets string)))))
+                (view () (tuatara.defaults::org-view-at buffer at)))
+           (loop repeat 500
+                 until (every #'tuatara.defaults::org-view-current (tuatara.defaults::org-views buffer 0 (tuatara.buffer:buffer-size buffer)))
+                 do (sleep 0.005))
+           (loop repeat 500
+                 do (tuatara.defaults::org-buffer-tree buffer)
+                 until (tuatara.defaults::org-parse-current-p buffer)
+                 do (sleep 0.005))
+           ;; a change elsewhere, its whole parse asked for in the background
+           (edit 3 "x")
+           (let ((tuatara.defaults::*org-parse-wait* 0)) (tuatara.defaults::org-buffer-tree buffer))
+           ;; then a change in the large part, its own parse made and taken
+           (edit (1+ at) "y")
+           (loop repeat 500 until (let ((v (view))) (and v (tuatara.defaults::org-view-current v))) do (sleep 0.005))
+           (true (tuatara.defaults::org-view-current (view)))
+           ;; the older whole parse taken in
+           (let* ((state (tuatara.defaults::org-buffer-state buffer))
+                  (parts (tuatara.defaults::org-buffer-parts buffer))
+                  (part-state (tuatara.defaults::org-part-state
+                               (tuatara.defaults::org-part-at parts (tuatara.defaults::org-part-index parts at)))))
+             (loop repeat 500 until (let ((r (tuatara.defaults::org-state-result state))) (and r (sixth r))) do (sleep 0.005))
+             (tuatara.defaults::org-take-parse state)
+             (true (tuatara.defaults::org-state-tree part-state)))
+           ;; coloured at once, as for a part whose parse takes longer than colouring waits
+           (let* ((tuatara.defaults::*org-parse-wait* 0)
+                  (v (view)))
+             (true v)
+             (true (and v (tuatara.defaults::org-view-current v)))))
+      (tuatara.buffer:kill-buffer buffer))))
+
+(define-test (org-internals deep-headlines-parsed-as-the-whole)
+  ;; headlines nested deeper than a parse reads, pasted into a note: the whole parse made of the parts is the
+  ;; parse of the whole text, cut where that is cut, never deeper
+  (let* ((tuatara.defaults::*org-parse-at-once* most-positive-fixnum)
+         (chain (with-output-to-string (o) (loop for i from 1 to 400 do (format o "~a h~d~%" (make-string i :initial-element #\*) i))))
+         (buffer (org-parts-buffer (format nil "* top~%x~%* end~%") nil)))
+    (unwind-protect
+         (flet ((depth (tree) (labels ((d (n) (1+ (reduce #'max (mapcar #'d (tuatara.defaults::org-node-children n)) :initial-value 0)))) (d tree))))
+           (tuatara.defaults::org-buffer-tree buffer)
+           (tuatara.buffer:buffer-edit buffer (vector (tuatara.text:make-edit 6 6 (tuatara.text:string-octets chain))))
+           (let ((made (tuatara.defaults::org-buffer-tree buffer))
+                 (whole (tuatara.defaults::org-parse (tuatara.buffer:buffer-string buffer))))
+             (is = (depth whole) (depth made))
+             (is equal (org-node-full-data whole) (org-node-full-data made))))
+      (tuatara.buffer:kill-buffer buffer))))
