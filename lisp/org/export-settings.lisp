@@ -27,24 +27,23 @@
     ("contents" (:heading) "no leaves the heading out of the table of contents; yes, as standard, in it")
     ("new page"
      (:heading :paragraph :list :block :table :picture)
-     "before, after or both: a new page begins there (for a heading, after all under it); no, as standard")
+     "before, after or both: a new page begins there; no, as standard")
     ("space before"
      (:heading :paragraph :list :block :table :picture)
      "a length (6pt, 1em, 1cm): that much space above it")
     ("space after"
      (:heading :paragraph :list :block :table :picture)
-     "a length (6pt, 1em, 1cm): that much space under it (for a heading, after all under it)")
+     "a length (6pt, 1em, 1cm): that much space under it")
     ("spacing"
      (:heading :paragraph :list :block :table)
      "single, 1.5, double or a number (1.15): the space between the lines, as a word processor counts it")
     ("columns"
      (:heading :paragraph :list :block :table)
-     "a number: the text set in that many columns (for a heading, all under it, the heading across them)")
+     "a number: the text set in that many columns")
     ("page" (:heading :paragraph :list :block :table :picture) #.(concatenate 'string "landscape: on pages turned "
                                                                   "sideways, from a page of "
-                                                                  "their own (for a heading, it "
-                                                                  "and all under it; side by "
-                                                                  "side, they share the pages); "
+                                                                  "their own (side by side, they "
+                                                                  "share the pages); "
                                                                   "portrait, as standard"))
     ("font"
      (:heading :paragraph :list :block :table)
@@ -576,36 +575,54 @@ filled to *HELP-COLUMN*. \\[org-insert-export-drawer] writes a drawer with those
 that fit what point is on."
   (show-help
    (with-output-to-string (s)
-     (format s "Settings of an :EXPORT: drawer~%~%")
-     (write-filled s "" "A drawer right under a heading sets the heading; one just before a table, a list,
+     (write-help-section s "Settings of an :EXPORT: drawer"
+                         :intro "A drawer right under a heading sets the heading; one just before a table, a list,
                          a block or a picture sets that, above its #+caption: and #+name: lines. Each line is
                          NAME: VALUE; auto leaves it as the export would have it. \\[org-insert-export-drawer]
-                         writes one for what point is on.")
-     (format s "~%:EXPORT:~%widths: 30% * *~%align: left right centre~%font: small~%:END:~%~%")
-     (dolist (kind '(:heading :table :list :block :paragraph :picture))
-       (format s "~@(~a~)~%" (case kind (:heading "A heading") (:table "A table") (:list "A list")
+                         writes one for what point is on."
+                         :example ":EXPORT:
+widths: 30% * *
+align: left right centre
+font: small
+:END:")
+     (let* ((kinds '(:heading :paragraph :list :block :table :picture))
+            (everywhere (loop for entry in *org-export-settings*
+                              when (subsetp kinds (second entry)) collect entry))
+            (most (loop for entry in *org-export-settings*
+                        when (and (not (member entry everywhere)) (subsetp (butlast kinds) (second entry)))
+                          collect entry)))
+       (flet ((rows (entries)
+                (loop for (name nil words) in entries append (list (format nil "~a:" name) words))))
+         (write-help-section s "Any of them takes" :rows (rows everywhere) :width 16)
+         (write-help-section s "A heading, paragraph, list, block or table also takes" :rows (rows most) :width 16)
+         (dolist (kind '(:heading :table :list :block :paragraph :picture))
+           (write-help-section s (case kind (:heading "A heading") (:table "A table") (:list "A list")
                                    (:block "A block (code, example, quote)") (:paragraph "A paragraph")
-                                   (:picture "A picture")))
-       (loop for (name kinds words) in *org-export-settings*
-             when (member kind kinds)
-             do (write-filled s (format nil "  ~a:" name) words :indent 6))
-       (terpri s))
-     (format s "A table's lines~%")
-     (loop for (example words) on '("lines: none" "no line at all"
-                                    "lines: top header bottom" "above it, under the header, under it"
-                                    "lines: box header" "a frame, and a line under the header"
-                                    "lines: all" "every line, a grid")
-           by #'cddr
-           do (write-filled s (format nil "  ~26a " example) words))
-     (terpri s)
-     (write-filled s "" "Other programs exporting Org notes print a drawer's lines unless the note says
+                                   (:picture "A picture"))
+                               :width 16
+                               :rows (append
+                                      (and (eq kind :heading)
+                                           (list "(all of them)"
+                                                 "for a heading they cover all that is under it: a new page comes
+                                                 after all of it, the space after it, columns hold all of it with the
+                                                 heading across them, and landscape holds it all"))
+                                      (rows (loop for entry in *org-export-settings*
+                                                  when (and (member kind (second entry))
+                                                            (not (member entry everywhere))
+                                                            (not (member entry most)))
+                                                    collect entry)))))))
+     (write-help-section s "A table's lines"
+                         :rows '("lines: none" "no line at all"
+                                 "lines: top header bottom" "above it, under the header, under it"
+                                 "lines: box header" "a frame, and a line under the header"
+                                 "lines: all" "every line, a grid"))
+     (write-help-section s nil
+                         :intro "Other programs exporting Org notes print a drawer's lines unless the note says
                          #+options: d:(not \"EXPORT\" \"LOGBOOK\"), which \\[org-insert-export-drawer] adds.")
-     (format s "~%Tips and tricks~%~%In the PDF and the Word document alike~%")
-     (loop for (written words) on *export-tips-both* by #'cddr
-           do (write-filled s (format nil "  ~26a " written) words))
-     (format s "~%In the PDF only (the Word document prints them as written, or leaves~%them out)~%")
-     (loop for (written words) on *export-tips-latex* by #'cddr
-           do (write-filled s (format nil "  ~26a " written) words)))))
+     (write-help-section s "In the PDF and the Word document alike" :rows *export-tips-both*)
+     (write-help-section s "In the PDF only"
+                         :intro "The Word document prints these as written, or leaves them out."
+                         :rows *export-tips-latex*))))
 
 (defun org-export-settings-target (tree position)
   "What an :EXPORT: drawer written for the character POSITION of TREE would

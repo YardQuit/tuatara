@@ -240,8 +240,9 @@ reports not yet shown."
                             (loop while (< (get-internal-real-time) until)))
                           (tuatara.runtime:note-editor-busy nil)))
                       :name "busy test")))
-           (tuatara.runtime:start-hang-watch busy)
-           (sb-thread:join-thread busy)
+           (let ((end-watch (tuatara.runtime:start-hang-watch busy)))
+             (sb-thread:join-thread busy)
+             (funcall end-watch))
            (let ((said (get-output-stream-string out)))
              (true (search "the editor has been busy for" said))
              (is = 1 (count-matches "the editor has been busy" said))))
@@ -254,7 +255,6 @@ reports not yet shown."
          (rest (sb-thread:make-thread (lambda () (loop while going do (sleep 0.05))) :name "resting test"))
          (watch nil))
     (tuatara.runtime:note-editor-busy nil)
-    (loop while (sb-thread:try-semaphore tuatara.runtime::*editor-busy-wake*))
     (setf watch (tuatara.runtime:start-hang-watch rest :while (lambda () (incf looks) going)))
     (unwind-protect
          (progn
@@ -265,10 +265,18 @@ reports not yet shown."
            (loop repeat 300 while (zerop looks) do (sleep 0.01))
            (true (plusp looks)))
       (setf going nil)
-      (tuatara.runtime:note-editor-busy t)
-      (tuatara.runtime:note-editor-busy nil)
-      (sb-thread:join-thread watch :default nil :timeout 5)
+      (funcall watch)
       (sb-thread:join-thread rest :default nil :timeout 5))))
+
+(define-test (debug-reports hang-watch-ends-with-its-session)
+  ;; a session's hang watch ends as the session does, not up to a minute later, so that sessions one
+  ;; after another leave no watches behind
+  (flet ((watches ()
+           (count "tuatara hang watch" (sb-thread:list-all-threads) :key #'sb-thread:thread-name :test #'equal)))
+    (let ((before (watches)))
+      (run-keys "a")
+      (run-keys "b")
+      (is = before (watches)))))
 
 (define-test (debug-reports failures-at-one-place-kept-few)
   ;; failures at one place: the calls under way the first time, one line after, a few a second,

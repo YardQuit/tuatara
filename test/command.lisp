@@ -1111,9 +1111,91 @@ TEXTS with the mode line's sign of work, P, lit in :mode-line-sign."
     (is equal '(:meta :up) (spec (tuatara.frontend.tui::key-name-key "kUP3")))
     (is equal '(:ctrl :shift :right) (spec (tuatara.frontend.tui::key-name-key "kRIT6")))
     (false (tuatara.frontend.tui::key-name-key "kfoo")))
+  ;; every key as a sequence (flag 8) with what it types (16): the text, a key let go nothing
+  (flet ((key (parameters)
+           (let ((k (tuatara.frontend.tui::kitty-key parameters))) (and k (tuatara.frontend:key-spec k)))))
+    (is equal '(#\x) (key "120;;120"))
+    (is equal '(#\A) (key "97:65;2;65"))
+    (is equal (list (code-char 229)) (key "229;;229"))
+    (false (key "120;1:3"))
+    (false (key "57441;2"))
+    (false (key "57441;1:3")))
+  ;; text of more than one character: all of it
+  (is string= "ab" (tuatara.frontend.tui::kitty-key "97;;97:98"))
+  ;; a special key let go is nothing either
+  (false (tuatara.frontend.tui::csi-key "1;1:3" #\A))
+  (false (tuatara.frontend.tui::csi-key "3;1:3" #\~))
   ;; the terminal's answer: with a CSI ? flags u before its device attributes, it speaks the protocol
   (true (tuatara.frontend.tui::kitty-keyboard-reply-p (format nil "~c[?0u~c[?62;c" #\Escape #\Escape)))
   (false (tuatara.frontend.tui::kitty-keyboard-reply-p (format nil "~c[?62;22c" #\Escape))))
+
+(define-test (command kitty-altgr-as-meta)
+  ;; AltGr held, as the terminal reports it pressed and let go: a letter key that types a sign
+  ;; is Meta with the letter, by the key's code or else its place on a US keyboard (kitty
+  ;; gives the sign as the code, », and x as that place); digits and signs type as they do
+  (flet ((key (parameters)
+           (let ((k (tuatara.frontend.tui::kitty-key parameters))) (and k (tuatara.frontend:key-spec k)))))
+    (let ((tuatara-user:*altgr-as-meta* t) (tuatara.frontend.tui::*altgr-held* nil))
+      (false (key "57453"))
+      (true tuatara.frontend.tui::*altgr-held*)
+      (is equal '(:meta #\x) (key "187::120;;187"))
+      (is equal '(:meta #\x) (key "120;;187"))
+      (is equal '(:meta #\X) (key "62::120;2;62"))
+      (is equal '(:meta #\e) (key "8364::101;;8364"))
+      ;; a Cyrillic key with AltGr held keeps its letter, as in the window: never M-a
+      (is equal (list (code-char #x444)) (key "1092::97;;1092"))
+      ;; with Control the terminal sends no text: C-M-x, as the window gives
+      (is equal '(:ctrl :meta #\x) (key "187::120;5"))
+      (false (key "187::120;1:3"))
+      (is equal '(#\{) (key "123::55;;123"))
+      (is equal '(#\@) (key "64::50;;64"))
+      (is equal '(#\\) (key "92::45;;92"))
+      (false (key "57453;1:3"))
+      (false tuatara.frontend.tui::*altgr-held*)
+      ;; AltGr not held: a letter composed after an accent's dead key types, as without a base
+      (is equal (list (code-char 233)) (key "233::101;;233"))
+      (is equal (list (code-char 187)) (key "187;;187"))
+      ;; the left Alt is Meta as always
+      (is equal '(:meta #\x) (key "120;3"))
+      ;; AltGr held on a letter key with no third sign: the letter, and AltGr still held for the next
+      (setf tuatara.frontend.tui::*altgr-held* t)
+      (is equal '(#\q) (key "113;;113"))
+      (true tuatara.frontend.tui::*altgr-held*)
+      (is equal '(:meta #\x) (key "187::120;;187")))
+    (let ((tuatara-user:*altgr-as-meta* nil) (tuatara.frontend.tui::*altgr-held* t))
+      (is equal (list (code-char 187)) (key "187::120;;187"))))
+  ;; AltGr let go unseen: not held once the terminal loses the focus, or the protocol is asked again
+  (let ((tuatara.frontend.tui::*altgr-held* t))
+    (false (tuatara.frontend.tui::csi-key "" #\O))
+    (false tuatara.frontend.tui::*altgr-held*))
+  (let ((tuatara.frontend.tui::*altgr-held* t) (tuatara.frontend.tui::*kitty-flags* nil))
+    (with-output-to-string (*standard-output*) (tuatara.frontend.tui::kitty-keyboard t))
+    (false tuatara.frontend.tui::*altgr-held*))
+  ;; the setting changed while the terminal runs: the flags asked again, on and off
+  (flet ((changed (on flags)
+           (let ((tuatara-user:*altgr-as-meta* on) (tuatara.frontend.tui::*kitty-flags* flags)
+                 (tuatara.frontend.tui::*kitty-keyboard-on* t))
+             (with-output-to-string (*standard-output*) (tuatara.frontend.tui::kitty-flags-follow-setting)))))
+    (let ((esc (string #\Escape)))
+      (is string= (concatenate 'string esc "[<u" esc "[>31u" esc "[?1004h") (changed t 5))
+      (is string= (concatenate 'string esc "[<u" esc "[?1004l" esc "[>5u") (changed nil 31))
+      (is string= "" (changed t 31))
+      (is string= "" (changed nil 5))))
+  ;; text of more than one character from one key: a key each, the first now
+  (let* ((f (tuatara.frontend.tui:make-tui-frontend))
+         (event (tuatara.frontend.tui::key-event f "ab")))
+    (is equal '(#\a) (tuatara.frontend:key-spec (tuatara.frontend:event-key event)))
+    (is equal '((#\b)) (mapcar (lambda (e) (tuatara.frontend:key-spec (tuatara.frontend:event-key e)))
+                               (tuatara.frontend.tui::tui-pending f))))
+  ;; the terminal asked for every key pressed and let go only under the setting
+  (flet ((asked (on)
+           (let ((tuatara-user:*altgr-as-meta* on) (tuatara.frontend.tui::*kitty-flags* nil)
+                 (tuatara.frontend.tui::*altgr-held* nil))
+             (with-output-to-string (*standard-output*) (tuatara.frontend.tui::kitty-keyboard t)))))
+    (true (search "[>31u" (asked t)))
+    (true (search "[?1004h" (asked t)))
+    (true (search "[>5u" (asked nil)))
+    (false (search "[?1004h" (asked nil)))))
 
 (define-test (command tui-mouse-reports)
   ;; the terminal's reports of the mouse (SGR's form) as the editor's mouse keys, at the
@@ -1199,6 +1281,47 @@ the terminal's reads and waits stood in for, with kitty's keyboard on when KITTY
       (dolist (name '(tuatara.frontend.tui::read-wide-char tuatara.io:wait-for-fds
                       tuatara.frontend.tui::%nodelay tuatara.frontend.tui::%keypad))
         (sb-int:unencapsulate name 'scripted)))))
+
+(defvar *read-script* ""
+  "What the stand-in terminal of OCTETS-PER-READ gives, after the ESC already read.")
+
+(defvar *read-at* 0
+  "How much of *READ-SCRIPT* the stand-in terminal has given.")
+
+(defun octets-per-read (sequence &optional (runs 200))
+  "The octets made in reading SEQUENCE, what a terminal sends after an ESC, as
+the terminal frontend's event, by kitty's keyboard protocol; with SEQUENCE NIL,
+in reading the plain character x. The least of five tries, as the count takes
+in every thread."
+  (let ((f (tuatara.frontend.tui:make-tui-frontend)) (tuatara.frontend.tui::*kitty-keyboard-on* t) (least nil))
+    (with-functions-replaced ((tuatara.frontend.tui::read-wide-char
+                               (lambda (window)
+                                 (declare (ignore window))
+                                 (if (< *read-at* (length *read-script*))
+                                     (values 0 (prog1 (char-code (char *read-script* *read-at*)) (incf *read-at*)))
+                                     (values -1 0))))
+                              (tuatara.frontend.tui::%nodelay (lambda (window on) (declare (ignore window on)) 0)))
+      (loop repeat 5
+            do (let ((before (tuatara.bench::bytes-consed)))
+                 (loop repeat runs
+                       do (setf *read-script* (or sequence "") *read-at* 0)
+                          (if sequence
+                              (tuatara.frontend.tui::wide-char-event f nil 0 27)
+                              (tuatara.frontend.tui::wide-char-event f nil 0 120)))
+                 (let ((made (floor (- (tuatara.bench::bytes-consed) before) runs)))
+                   (setf least (if least (min least made) made))))))
+    least))
+
+(define-test (command kitty-keys-made-without-garbage)
+  ;; every key comes as a CSI u sequence, pressed and let go, when AltGr is asked for: an
+  ;; ordinary key makes no more than its event, as a plain character does, and a key let go nothing
+  (let ((plain (octets-per-read nil))
+        (ordinary (octets-per-read "[120;;120u"))
+        (shifted (octets-per-read "[104:72;2;72u"))
+        (released (octets-per-read "[120;1:3u")))
+    (true (<= ordinary (+ plain 16)))
+    (true (<= shifted (+ plain 16)))
+    (true (<= released 16))))
 
 (define-test (command tui-sequences-in-parts)
   ;; a paste whose start comes in two parts (over a network) is still taken in as

@@ -883,9 +883,13 @@ file sets them."
          (let ((start (thread-cpu-time)))
            (tuatara.defaults::follow-directories nil)
            (is = 1 calls)
-           (let ((again (thread-cpu-time)))
-             (dotimes (i 1000) (tuatara.defaults::follow-directories nil))
+           (let* ((again (thread-cpu-time))
+                  (before (tuatara.bench::bytes-consed))
+                  (octets (progn (dotimes (i 1000) (tuatara.defaults::follow-directories nil))
+                                 (- (tuatara.bench::bytes-consed) before))))
              (is = 1 calls)
+             ;; and make nothing
+             (true (< octets 1000) "~d octets in a thousand ticks" octets)
              ;; a thousand ticks well within a frame, all together
              (true (< (- (thread-cpu-time) again) (* 0.016 internal-time-units-per-second))))
            ;; read again: a new list, told once more

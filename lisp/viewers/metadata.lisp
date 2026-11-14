@@ -36,6 +36,19 @@ is kept.")
   "The most fields read of one kind of metadata in a file: past them the
 rest is left out, and that is said.")
 
+(defparameter *metadata-text-most* 4096
+  "The most octets of one text a file keeps of itself (a comment, a PNG's
+text) read for the note, as EXIF's are: the rest is left out, so that a
+text claiming the whole file is not made into a string whole.")
+
+(defparameter *metadata-value-most* 500
+  "The most characters of one value the note shows (METADATA-VALUE); a PNG's
+text is cut to them as it is read.")
+
+(defparameter *metadata-xmp-most* (* 4 1024 1024)
+  "The most octets of one XMP packet read for the note: a larger one is
+named, its size given, and not read.")
+
 (defvar *file-metadata-functions* '()
   "Functions of a file's PATH and its kind (TUATARA.IO:OCTETS-KIND's keyword),
 given besides the keys :FD, the open file descriptor (FD), and :SIZE, its
@@ -256,7 +269,7 @@ when it has none."
                           (< (+ start 6) end))
                      (push (exif-section (subseq octets (+ start 6) end) 0 "in its APP1 segment") sections))
                     ((= marker #xFE)
-                     (push (octets-text octets start end) comments)))
+                     (push (octets-text octets start (min end (+ start *metadata-text-most*))) comments)))
               nil))
     (append (nreverse sections)
             (list (metadata-section "JPEG comments" (mapcar (lambda (c) (cons "Comment" c)) (nreverse comments)))))))
@@ -278,30 +291,41 @@ picture was last changed, in words."
         (utc-time-words (+ (* 86400 (day-number year month day)) (* 3600 hour) (* 60 minute) second))
         (format nil "no such time: year ~d, month ~d, day ~d, ~d:~d:~d" year month day hour minute second))))
 
-(defun png-text-value (octets type nul end inflated)
+(defun png-text-value (octets type nul end inflated most)
   "The text of the PNG text chunk of TYPE (tEXt, zTXt, iTXt) in OCTETS whose
 key ends at NUL and whose data ends at END, packed text inflated by
 INFLATED, a function of where the zlib data starts and ends; NIL when there
-is none."
-  (cond ((string= type "tEXt") (tuatara.text:octets-latin-1 octets :start (1+ nul) :end end))
-        ((string= type "zTXt")
-         (let ((text (funcall inflated (+ nul 2) end)))
-           (and text (tuatara.text:octets-latin-1 text))))
-        (t (let* ((compressed (and (< (1+ nul) end) (= 1 (aref octets (1+ nul)))))
-                  (language-end (and (< (+ nul 3) end) (position 0 octets :start (+ nul 3) :end end)))
-                  (translated-end (and language-end (position 0 octets :start (1+ language-end) :end end))))
-             (when translated-end
-               (let ((text (if compressed
-                               (funcall inflated (1+ translated-end) end)
-                               (subseq octets (1+ translated-end) end))))
-                 (and text (octets-text text 0 (length text)))))))))
+is none. At most MOST octets of plain text are read, and the text is cut to
+*METADATA-VALUE-MOST* characters before it is made a string."
+  (flet ((cut (text start end)
+           ;; a character of UTF-8 takes four octets at most
+           (octets-text text start (min end (+ start (* 4 *metadata-value-most*))))))
+    (let ((value (cond ((string= type "tEXt")
+                        (tuatara.text:octets-latin-1 octets :start (1+ nul)
+                                                            :end (min end (+ nul 1 (min most *metadata-value-most*)))))
+                       ((string= type "zTXt")
+                        (let ((text (funcall inflated (+ nul 2) end)))
+                          (and text (tuatara.text:octets-latin-1 text :end (min (length text)
+                                                                                *metadata-value-most*)))))
+                       (t (let* ((compressed (and (< (1+ nul) end) (= 1 (aref octets (1+ nul)))))
+                                 (language-end (and (< (+ nul 3) end) (position 0 octets :start (+ nul 3) :end end)))
+                                 (translated-end (and language-end
+                                                      (position 0 octets :start (1+ language-end) :end end))))
+                            (when translated-end
+                              (if compressed
+                                  (let ((text (funcall inflated (1+ translated-end) end)))
+                                    (and text (cut text 0 (length text))))
+                                  (cut octets (1+ translated-end) (min end (+ translated-end 1 most))))))))))
+      (and value (subseq value 0 (min (length value) *metadata-value-most*))))))
 
 (defun png-metadata (octets)
   "The sections of the note for the PNG picture in OCTETS: its EXIF, its text
 and when it says it was last changed. Each packed text is inflated to no
-more than *PNG-TEXT-INFLATED*, all of them to *PNG-TEXT-INFLATED-IN-ALL*;
-in a job, asking it to stop ends the reading between two of them."
-  (let ((at 8) (sections '()) (texts '()) (count 0) (budget *png-text-inflated-in-all*))
+more than *PNG-TEXT-INFLATED*; the texts, packed or plain, are read to no
+more than *PNG-TEXT-INFLATED-IN-ALL* together, and no more than
+*METADATA-MOST-FIELDS* of them, the note saying when some were left out; in
+a job, asking it to stop ends the reading between two of them."
+  (let ((at 8) (sections '()) (texts '()) (count 0) (budget *png-text-inflated-in-all*) (left 0))
     (flet ((inflated (start end)
              ;; the most a packed text could cost counted against what is left for all of them
              (tuatara.runtime:job-check-stop)
@@ -320,14 +344,25 @@ in a job, asking it to stop ends the reading between two of them."
                        ((and (string= type "tIME") (= length 7))
                         (push (cons "Last changed (tIME)" (png-time-words octets data)) texts))
                        ((member type '("tEXt" "zTXt" "iTXt") :test #'string=)
-                        (let ((nul (position 0 octets :start data :end end)))
-                          (when nul
-                            (push (cons (octets-text octets data nul) (png-text-value octets type nul end #'inflated))
-                                  texts)))))
+                        ;; a keyword is 79 octets at most: a chunk with none so short is not read
+                        (let ((nul (position 0 octets :start data :end (min end (+ data 80)))))
+                          (cond ((null nul))
+                                ((or (<= budget 0) (>= (length texts) *metadata-most-fields*)) (incf left))
+                                (t (let ((plain (min (- end nul 1) budget)))
+                                     (unless (string= type "zTXt") (decf budget (max 1 plain)))
+                                     (push (cons (octets-text octets data nul)
+                                                 (png-text-value octets type nul end #'inflated plain))
+                                           texts)))))))
                  (setf at (+ end 4)))))
     (append (nreverse sections)
             (list (metadata-section "PNG text"
-                                    (remove-if (lambda (f) (search "xmpmeta" (or (cdr f) ""))) (nreverse texts)))))))
+                                    (append (remove-if (lambda (f) (search "xmpmeta" (or (cdr f) ""))) (nreverse texts))
+                                            (and (plusp left)
+                                                 (list (cons "Not read"
+                                                             (format nil "~:d text~:p more, past the most read ~
+                                                                          (*metadata-most-fields*, ~
+                                                                          *png-text-inflated-in-all*)"
+                                                                     left))))))))))
 
 (defun webp-metadata (octets)
   "The sections of the note for the WebP picture in OCTETS: its EXIF."
@@ -525,7 +560,8 @@ of structures (an edit history) one field per item."
 
 (defun xmp-sections (octets)
   "The sections of the note giving each XMP packet in OCTETS (at most four),
-the text of edits and of who made the file as programs keep it."
+the text of edits and of who made the file as programs keep it. A packet
+larger than *METADATA-XMP-MOST* is named with its size, not read."
   (let ((start-mark (map '(vector (unsigned-byte 8)) #'char-code "<x:xmpmeta"))
         (end-mark (map '(vector (unsigned-byte 8)) #'char-code "</x:xmpmeta>"))
         (sections '()) (at 0))
@@ -533,15 +569,21 @@ the text of edits and of who made the file as programs keep it."
           for start = (tuatara.io:octets-search start-mark octets :start at)
           for end = (and start (tuatara.io:octets-search end-mark octets :start start))
           while end
-          do (let ((tree (ignoring-errors-reported ("reading an XMP packet")
-                           (xml-parse (octets-text octets start (+ end (length end-mark)))))))
-               (when tree
-                 (push (metadata-section (format nil "XMP~@[ (packet ~d)~]"
-                                                 (and (or sections
-                                                          (tuatara.io:octets-search start-mark octets :start (1+ end)))
-                                                      (1+ (length sections))))
-                                         (xmp-fields tree))
-                       sections)))
+          do (let* ((size (- (+ end (length end-mark)) start))
+                    (heading (format nil "XMP~@[ (packet ~d)~]"
+                                     (and (or sections (tuatara.io:octets-search start-mark octets :start (1+ end)))
+                                          (1+ (length sections)))))
+                    (tree (and (<= size *metadata-xmp-most*)
+                               (ignoring-errors-reported ("reading an XMP packet")
+                                 (xml-parse (octets-text octets start (+ end (length end-mark))))))))
+               (cond (tree (push (metadata-section heading (xmp-fields tree)) sections))
+                     ((> size *metadata-xmp-most*)
+                      (push (metadata-section heading
+                                              (list (cons "Not read"
+                                                          (format nil "~a, more than ~a (*metadata-xmp-most*)"
+                                                                  (octets-words size)
+                                                                  (octets-words *metadata-xmp-most*)))))
+                            sections))))
              (setf at (1+ end)))
     (nreverse sections)))
 
@@ -1029,33 +1071,48 @@ packets, nothing decrypted."
 
 (defmacro metadata-part (&body body)
   "The sections BODY gives, or, when it fails (a file made to break what reads
-it, say), one saying what could not be read, so that the rest is still shown."
+it, say, or one that runs it out of memory), one saying what could not be
+read, so that the rest is still shown."
   `(handler-case (reporting-errors ("reading what a file says of itself") ,@body)
-     (error (e) (list (format nil "* Not read~%Some of what it says of itself could not be read: ~a~%~%"
+     ((or error storage-condition) (e) (list (format nil "* Not read~%Some of what it says of itself could not be read: ~a~%~%"
                               (metadata-value (princ-to-string e)))))))
+
+(defun octets-metadata (octets kind)
+  "The sections of a note giving what a file of KIND (TUATARA.IO:OCTETS-KIND's
+keyword) whose contents are OCTETS says of itself. For a picture these are
+its EXIF, comments and text (JPEG, PNG, TIFF, a camera's raw, WebP, HEIF);
+for a PDF, sound or video its own fields; and XMP wherever it is kept, its
+edit history too. Each section is Org text: a heading, then a line
+- LABEL :: VALUE for each field. All of it is read as data, nothing in the
+file run, every offset checked; what cannot be read is said in a section
+of its own and the rest still given."
+  (append (metadata-part
+           (case kind
+             (:jpeg (jpeg-metadata octets))
+             ;; a camera's raw of TIFF's shape keeps its tags as a TIFF does
+             ((:tiff :raw) (and (tuatara.io:tiff-octets-p octets)
+                                (list (exif-section octets 0 "its own tags"))))
+             (:png (png-metadata octets))
+             (:webp (webp-metadata octets))
+             ((:heif :avif) (heif-metadata octets))
+             (:pdf (pdf-metadata octets))
+             (:mp3 (id3-metadata octets))
+             (:flac (flac-metadata octets))
+             (:openpgp (openpgp-metadata octets))
+             (:mp4 (mp4-metadata octets))))
+          ;; an MP3's ID3 tag may come before what the contents are told by
+          (when (and (not (eq kind :mp3)) (tuatara.io:octets-at-p octets "ID3")) (metadata-part (id3-metadata octets)))
+          (metadata-part (xmp-sections octets))))
 
 (defun built-in-metadata (path kind &key fd size)
   "The sections of the note giving what the file at PATH, of KIND, open as
-file descriptor (FD), of SIZE octets, says of itself, by the readers of
-this file: its pictures', PDF's, sound's and video's own fields, and XMP
-wherever it is kept. A file larger than *METADATA-LARGEST-READ* is read at
-its start and end, and the note says so."
+file descriptor (FD), of SIZE octets, says of itself (OCTETS-METADATA). A
+file larger than *METADATA-LARGEST-READ* is read at its start and end, and
+the note says so; a video or sound read so is not looked into, as its parts
+can be anywhere in it."
   (declare (ignore path))
   (multiple-value-bind (octets cut) (file-octets-for-metadata fd size)
-    (append (metadata-part
-             (case kind
-               (:jpeg (jpeg-metadata octets))
-               ;; a camera's raw of TIFF's shape keeps its tags as a TIFF does
-               ((:tiff :raw) (and (tuatara.io:tiff-octets-p octets)
-                                  (list (exif-section octets 0 "its own tags"))))
-               (:png (png-metadata octets))
-               (:webp (webp-metadata octets))
-               ((:heif :avif) (heif-metadata octets))
-               (:pdf (pdf-metadata octets))
-               (:mp3 (id3-metadata octets))
-               (:flac (flac-metadata octets))
-               (:openpgp (openpgp-metadata octets))
-               (:mp4 (unless cut (mp4-metadata octets)))))
+    (append (octets-metadata octets (if (and cut (eq kind :mp4)) nil kind))
             (when cut
               (list (if (eq kind :mp4)
                         (format nil "* What the video or sound says of itself~%Not read: it is larger than ~a ~
@@ -1066,10 +1123,7 @@ its start and end, and the note says so."
                                                                           (*metadata-largest-read*): what is ~
                                                                           counted or looked for covers those parts only"
                                                                      (octets-words (floor *metadata-largest-read* 2))
-                                                                     (octets-words size))))))))
-            ;; an MP3's ID3 tag may come before what the contents are told by
-            (when (and (not (eq kind :mp3)) (tuatara.io:octets-at-p octets "ID3")) (metadata-part (id3-metadata octets)))
-            (metadata-part (xmp-sections octets)))))
+                                                                     (octets-words size)))))))))))
 
 (defun file-metadata-note
     (path &key (cancel (list nil)) (done (list 0)) (look-up-keys (eq *metadata-look-up-key-owners* t)))

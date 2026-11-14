@@ -70,10 +70,30 @@ Complexity: O(the octets read)."
       (when (eq state :value) (take)))
     words))
 
-(defun org-startup-choice (options choices)
-  "Of the #+STARTUP: words OPTIONS (ORG-STARTUP-OPTIONS), the last that is one of
-CHOICES, as the last such word says in Org; NIL when none is."
-  (find-if (lambda (word) (member word choices :test #'string=)) options :from-end t))
+(defparameter *org-startup-words*
+  '(("overview" :visibility "fold every heading but the first level; the same as fold")
+    ("fold" :visibility "the same as overview")
+    ("content" :visibility "show every heading, and no text")
+    ("showall" :visibility "show everything; the same as nofold")
+    ("nofold" :visibility "the same as showall")
+    ("hidedrawers" :drawers "fold the drawers and notes of the tasks")
+    ("showdrawers" :drawers "leave the drawers and notes open")
+    ("indent" :indent "show the lines indented by the level of their heading")
+    ("noindent" :indent "show the lines as they are written")
+    ("literallinks" :links "show links as written")
+    ("descriptivelinks" :links "show links as their labels")
+    ("inlineimages" :pictures "show the pictures the note links to among its lines")
+    ("noinlineimages" :pictures "do not show them")
+    ("latexpreview" :pictures "show the formulas as pictures")
+    ("nolatexpreview" :pictures "do not show them"))
+  "The words a #+STARTUP: line takes, each its name, the kind of choice it
+makes (the last word of a kind wins) and what it does. Other words are passed over.")
+
+(defun org-startup-choice (options kind)
+  "Of the #+STARTUP: words OPTIONS (ORG-STARTUP-OPTIONS), the last that makes
+the choice KIND (:VISIBILITY, :DRAWERS, :INDENT, :LINKS or :PICTURES; see
+*ORG-STARTUP-WORDS*), as the last such word says in Org; NIL when none does."
+  (find-if (lambda (word) (eq kind (second (assoc word *org-startup-words* :test #'string=)))) options :from-end t))
 
 (define-setting *org-bullets* '("◉" "○" "✸" "✿")
   "The signs Org headlines show in place of their last star, by level.

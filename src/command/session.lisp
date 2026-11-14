@@ -60,10 +60,11 @@ wanting nothing, so that work taken in from the background cannot take the
 editor down. An edit of a buffer a waiting question is about, refused
 \(BUFFER-HELD-BY-QUESTION), is put off: said nothing of, it wants another
 call soon, as the question will be answered."
-  (call-with-guard (lambda ()
-                     (handler-case (funcall function editor)
-                       (buffer-held-by-question () t)))
-                   function 'call-tick-function :quit nil))
+  (flet ((call ()
+           (handler-case (funcall function editor)
+             (buffer-held-by-question () t))))
+    (declare (dynamic-extent #'call))
+    (call-with-guard #'call function 'call-tick-function :quit nil)))
 
 (defvar *after-tick-functions* '()
   "Functions of the editor called after *TICK-FUNCTIONS*, each time, and when
@@ -79,14 +80,16 @@ next call, an internal real time, by function.")
 (defun tick-wanted (function editor now woken)
   "What the tick FUNCTION wants, as *TICK-FUNCTIONS* says, NOW an internal
 real time: called with EDITOR, unless it asked for a number of seconds that
-have not gone and the editor was not WOKEN, the seconds left then."
+have not gone and the editor was not WOKEN, the seconds left then. A wait of
+more than a day is kept as a day: the function is asked again then."
   (let ((due (gethash function *tick-due*)))
     (if (and due (not woken) (< now due))
         ;; a single float, which makes nothing
         (/ (float (- due now) 1f0) internal-time-units-per-second)
         (let ((wanted (call-tick-function function editor)))
           (if (realp wanted)
-              (setf (gethash function *tick-due*) (+ now (round (* wanted internal-time-units-per-second))))
+              (setf (gethash function *tick-due*)
+                    (+ now (round (* (min wanted 86400) internal-time-units-per-second))))
               (remhash function *tick-due*))
           wanted))))
 
@@ -560,8 +563,10 @@ Returns the editor."
              ;; let per-command bookkeeping (modal state, gutters) see the buffer now shown
              (dolist (f (editor-post-command-functions editor)) (call-guarded f f editor))
              (when start (call-guarded start start editor))
-             (tuatara.runtime:start-hang-watch sb-thread:*current-thread* :while (lambda () (editor-running editor)))
-             (command-loop editor)
+             (let ((end-watch (tuatara.runtime:start-hang-watch sb-thread:*current-thread*
+                                                                :while (lambda () (editor-running editor)))))
+               (unwind-protect (command-loop editor)
+                 (funcall end-watch)))
              ;; stopped, however: each client ends, the one who started it last, then what is kept
              ;; between sessions is written
              (let ((clients (editor-clients editor)))

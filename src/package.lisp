@@ -103,7 +103,7 @@ available unqualified, and the public API of TUATARA is used.")
            #:*journal-directory* #:*journal-keyword* #:*journal-title-format* #:*journal-interval*
            #:*journal-file-type* #:*journal-file-name* #:*journal-org-header*
            ;; the terminal
-           #:*kitty-keyboard* #:*terminal-send-escape* #:*terminal-editor-keys* #:*terminal-paste-keys*
+           #:*kitty-keyboard* #:*altgr-as-meta* #:*terminal-send-escape* #:*terminal-editor-keys* #:*terminal-paste-keys*
            #:*terminal-title-limit*
            #:*terminal-compress-after* #:*terminal-picture-memory* #:*terminal-place* #:*terminal-size*
            #:*terminal-width* #:*terminal-program* #:*terminal-scrollback*

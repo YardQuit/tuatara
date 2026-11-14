@@ -63,12 +63,37 @@ input method: but Control+Shift+U, which starts typing a character by its code."
     (and (or ctrl meta)
          (not (and ctrl shift (member keyval '(#x55 #x75)))))))
 
+(defun gdk-command-key (keyval state &optional first-level)
+  "The key handed to the editor at once, never to the input method, for GDK's
+KEYVAL with the modifiers of STATE, or NIL for a key the input method takes:
+a command key (COMMAND-KEY-P), and, under *ALTGR-AS-META*, a letter key
+pressed with AltGr, FIRST-LEVEL being the key value the key gives with no
+modifier. That one is Meta with the letter, its capital with Shift: AltGr-x
+is M-x. FIRST-LEVEL is NIL for a key pressed without AltGr."
+  (if (and tuatara-user:*altgr-as-meta* first-level (<= #x61 first-level #x7a))
+      (multiple-value-bind (ctrl meta shift) (gdk-modifiers state)
+        (declare (ignore meta))
+        (let ((letter (code-char first-level)))
+          (tuatara.frontend:make-key (if shift (char-upcase letter) letter) :ctrl ctrl :meta t)))
+      (and (command-key-p keyval state) (gdk-key keyval state))))
+
+(defun third-level-keyval (controller keycode)
+  "The key value KEYCODE gives with no modifier, when the key CONTROLLER is
+handling now was pressed with AltGr (at the third level of its layout or
+beyond) and *ALTGR-AS-META* is on; else NIL."
+  ;; called, not inlined: a key press with AltGr is rare, and tests stand in for GDK here
+  (declare (notinline gtk-event-controller-get-current-event gdk-key-event-get-level gdk-event-get-display
+                      gdk-key-event-get-layout))
+  (when tuatara-user:*altgr-as-meta*
+    (let ((event (gtk-event-controller-get-current-event controller)))
+      (unless (or (null-pointer-p event) (< (gdk-key-event-get-level event) 2))
+        (gdk-first-level-keyval (gdk-event-get-display event) keycode (gdk-key-event-get-layout event))))))
+
 (define-callback on-command-key-pressed :boolean ((controller :pointer) (keyval :uint) (keycode :uint) (state :uint)
                                                   (data :pointer))
   ;; before the input method: a command key gives up what it is composing (an accent
   ;; typed first, a dead key's) and runs as it always does
-  (declare (ignore controller keycode))
-  (let ((f (data-window data)) (key (and (command-key-p keyval state) (gdk-key keyval state))))
+  (let ((f (data-window data)) (key (gdk-command-key keyval state (third-level-keyval controller keycode))))
     (when (and f key)
       (when (gtk-preedit f)
         (gtk-im-context-reset (gtk-im f))

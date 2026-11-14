@@ -164,6 +164,31 @@ the same way. ~C-z~ is a prefix of its own for this: under it are the commands
 of NORMAL state's selecting, cursor, spelling and replacing keys, on the same
 letters (~C-z m f~ for ~m f~), and the key hints list them.
 
+** AltGr and Meta
+
+On most European keyboards the left Alt key is Meta and the right one is AltGr.
+AltGr picks a third sign of a key: on a Swedish keyboard AltGr-2 types @,
+AltGr-7 types { and AltGr-x types ». Tuatara takes AltGr with a letter key as
+Meta with that letter, so AltGr-x is ~M-x~ and AltGr-Shift-x is ~M-X~. The
+letter is the one the key types without AltGr. AltGr with a digit or any other
+sign types as before, so @, $, {, [, ], }, \ and | still come.
+
+The signs AltGr gives with letters are lost this way: AltGr-e is ~M-e~, not €.
+Type € with ~C-x 8 &~ and =Eu=, or with ~C-x 8 RET~ and its name, =euro sign=
+(chapter 3).
+
+Some layouts type letters of their language with AltGr and a letter: Polish
+(ą, ę, ł, ś, ż), Czech and Slovak, Hungarian, Romanian (ă, ș, ț), Croatian and
+Slovenian, and Lithuanian, and Neo and bone, whose third level is on the
+letter keys. If you write with one of them, set =*altgr-as-meta*= to =nil= in
+your init file, and AltGr types what your keyboard gives.
+
+In the window this works on Wayland and X11 alike. In a terminal it works when
+the terminal reports AltGr by the kitty keyboard protocol (chapter 17);
+elsewhere AltGr types what the keyboard gives.
+
+#+table: settings *altgr-as-meta*
+
 ** Key hints
 
 Press a prefix key and wait a moment. Under the text, a panel opens that lists

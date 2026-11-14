@@ -185,6 +185,7 @@ main article td:not(:last-child) kbd, main article td:not(:last-child) code { wh
   nav.toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; box-sizing: border-box;
     border-right: 0; }
   .site main { border-left: 1px solid var(--rule); }
+  main article { padding-inline: 5%; }
 }
 @media print {
   nav.toc, .node { display: none; }
@@ -197,7 +198,9 @@ main article td:not(:last-child) kbd, main article td:not(:last-child) code { wh
 the contents column and the captions too, the first of these the reader has, as the pages load no
 font from elsewhere. The lines of a paragraph or list item sit as close as a terminal's rows. The
 pages use the window's whole width, the text beside the contents column with no narrower measure of
-its own. In a table every column but the last keeps each key and name whole, breaking only between
+its own, but on a wide screen with a tenth of the text's width left empty, a twentieth each side
+(on a narrow one the pages keep a gutter of 16 pixels); tables and examples wider than that scroll
+within themselves. In a table every column but the last keeps each key and name whole, breaking only between
 them, so a long description takes the room it needs from its own column, never from the keys and
 names beside it. Links in the contents are not underlined. The headings of the text are bold, and a
 section's has a rule in the link colour under it, to be found while scrolling. The section being
@@ -290,9 +293,25 @@ loaded from elsewhere."
                #+latex_header: \\newenvironment{try}{\\begin{tcolorbox}~
                [breakable,enhanced,colback=black!4,boxrule=0pt,arc=0pt]}{\\end{tcolorbox}}~%~
                #+latex_header: \\usepackage{etoolbox}~%~
+               #+latex_header: \\usepackage[labelformat=empty,font=normalfont]{caption}~%~
+               #+latex_header: \\newcommand{\\tablefont}{\\ttfamily\\hyphenchar\\font=`\\-\\relax~
+               {\\bfseries\\hyphenchar\\font=`\\-\\relax}\\lefthyphenmin=40 \\righthyphenmin=40 \\catcode`\\/=13 }~%~
+               #+latex_header: \\begingroup\\catcode`\\/=13 \\gdef/{\\char`\\/\\penalty0\\hskip0pt\\relax}\\endgroup~%~
+               #+latex_header: \\newcommand{\\tablefontend}{\\hyphenchar\\font=-1 {\\bfseries\\hyphenchar\\font=-1 }}~%~
+               #+latex_header: \\AtBeginEnvironment{try}{\\ttfamily\\hbadness=10000 }~%~
+               #+latex_header: \\AtBeginEnvironment{xltabular}{\\tablefont}~%~
+               #+latex_header: \\AtEndEnvironment{xltabular}{\\tablefontend}~%~
+               #+latex_header: \\AtBeginEnvironment{tabularx}{\\tablefont}~%~
+               #+latex_header: \\AtEndEnvironment{tabularx}{\\tablefontend}~%~
+               #+latex_header: \\AtBeginEnvironment{tabular}{\\tablefont}~%~
+               #+latex_header: \\AtEndEnvironment{tabular}{\\tablefontend}~%~
+               #+latex_header: \\AtBeginEnvironment{longtable}{\\tablefont}~%~
+               #+latex_header: \\AtEndEnvironment{longtable}{\\tablefontend}~%~
                #+latex_header: \\pretocmd{\\section}{\\clearpage}{}{}~%~%~a~%~%" *modal-editing-note*)
   "What begins the whole manual as one Org document, for its PDF: the title, a
-page for each chapter, and the look of a box to try things in.")
+page for each chapter, the look of a box to try things in, captions that carry
+no number of their own (the text has it), and tables and boxes set in the font
+and size of inline code.")
 
 (defun chapter-file-links (chapters)
   "A list of (FILE-NAME . TITLE) for CHAPTERS: each chapter's file and its first heading."
@@ -350,6 +369,11 @@ to the chapter's heading, LINKS as CHAPTER-FILE-LINKS gives them."
                                            :simple-calls t)))
     (long-tables-split text)))
 
+(defparameter *characters-across* 64
+  "About how many characters of the PDF's code font go across its text: the
+tables are set in that font, and the export lays a table out by this count
+\(it takes 78 for the proportional type of a page).")
+
 (defun run-pdf (tree)
   "Write the manual under TREE as one LaTeX document, build/manual/tuatara-manual.tex,
 through the enhanced Org export, xelatex's to make into a PDF."
@@ -362,7 +386,8 @@ through the enhanced Org export, xelatex's to make into a PDF."
     (ensure-directories-exist out)
     (write-file note whole)
     (multiple-value-bind (latex named map missing notes)
-        (tuatara.defaults::org-latex-document whole :file (namestring note) :enhanced t)
+        (let ((tuatara.defaults::*org-latex-text-characters* *characters-across*))
+          (tuatara.defaults::org-latex-document whole :file (namestring note) :enhanced t))
       (declare (ignore named map))
       (write-file out latex)
       (dolist (found missing)

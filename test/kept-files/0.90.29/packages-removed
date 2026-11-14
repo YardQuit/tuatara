@@ -1,0 +1,5 @@
+# tuatara packages-removed 1
+# The packages removed (M-x package-remove), the latest first: each is not
+# loaded though the init file names it, until M-x package-load loads it.
+example
+mine

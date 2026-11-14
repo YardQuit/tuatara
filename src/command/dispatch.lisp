@@ -628,7 +628,10 @@ as a secret at hand: the debug log gets no strings of it."
 \(CALL-WITH-GUARD): C-g in it says Quit, an error or running out of memory is
 said and reported in debug mode, and the editor carries on; NIL then, else
 what FUNCTION returns."
-  (call-with-guard (lambda () (apply function arguments)) what 'call-guarded))
+  (declare (dynamic-extent arguments))
+  (flet ((call () (apply function arguments)))
+    (declare (dynamic-extent #'call))
+    (call-with-guard #'call what 'call-guarded)))
 
 (defun repeat-keys-on-p (map)
   "True when the repeat keys of the keymap MAP go on after the command that ran
@@ -675,20 +678,22 @@ a refusal) stops recorded keys that are playing."
       ((null function) (message "No command ~a" command))
       (refusal (message "~a" refusal))
       (t
-        (flet ((backtrace-shown-p () *debug-on-error*))
-          (call-with-guard (lambda ()
-                             (let ((*current-buffer* nil) ; SET-BUFFER lasts until the command ends
-                                   (tuatara.buffer:*narrowing-in-force* undo-buffer)
-                                   (*command-notes* (list '()))
-                                   (*command-undo-since* undo-since))
-                               (funcall function)
-                               (setf finished t)))
-                           command 'run-command
-                           :naming (lambda () (or (editor-this-command editor) command))
-                           :said #'identity :trace-wanted #'backtrace-shown-p
-                           :shown (lambda (e trace)
-                                    (when (and trace (backtrace-shown-p))
-                                      (host-show-backtrace tuatara.runtime:*host* e trace)))))))
+        (flet ((backtrace-shown-p () *debug-on-error*)
+               (call ()
+                 (let ((*current-buffer* nil) ; SET-BUFFER lasts until the command ends
+                       (tuatara.buffer:*narrowing-in-force* undo-buffer)
+                       (*command-notes* (list '()))
+                       (*command-undo-since* undo-since))
+                   (funcall function)
+                   (setf finished t)))
+               (naming () (or (editor-this-command editor) command)))
+          (flet ((shown (e trace)
+                   (when (and trace (backtrace-shown-p))
+                     (host-show-backtrace tuatara.runtime:*host* e trace))))
+            (declare (dynamic-extent #'backtrace-shown-p #'call #'naming #'shown))
+            (call-with-guard #'call command 'run-command
+                             :naming #'naming :said #'identity :trace-wanted #'backtrace-shown-p
+                             :shown #'shown)))))
     (unless finished (note-command-failed))
     (when (live-buffer-p undo-buffer)
       (tuatara.buffer:merge-undo-groups undo-buffer (cdr undo-since))))

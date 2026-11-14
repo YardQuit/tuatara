@@ -308,6 +308,11 @@
   ;; the terminal; with it Escape and Alt arrive whole.
   ;; (setf *kitty-keyboard* nil)
 
+  ;; AltGr types what the keyboard layout gives with a letter too (AltGr-e €),
+  ;; as Polish, Czech, Hungarian, Romanian or Neo writers need. Not set: t:
+  ;; AltGr with a letter is Meta (AltGr-x is M-x).
+  ;; (setf *altgr-as-meta* nil)
+
   ;;; Editing: tabs, indentation, pairs, filling
   ;; TAB indents where the mode indents, else goes on to the next tab stop; C-z
   ;; TAB goes to it anywhere; C-q TAB puts a tab in

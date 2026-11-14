@@ -5,7 +5,8 @@
   (:use #:cl)
   (:import-from #:tuatara.io #:define-c-function #:null-pointer #:null-pointer-p)
   (:import-from #:tuatara.runtime #:define-record #:define-setting)
-  (:import-from #:tuatara-user #:*tui-padding* #:*tui-pictures* #:*tui-mouse* #:*tui-colours* #:*kitty-keyboard*)
+  (:import-from #:tuatara-user #:*tui-padding* #:*tui-pictures* #:*tui-mouse* #:*tui-colours* #:*kitty-keyboard*
+                #:*altgr-as-meta*)
   (:documentation "The ncurses frontend: paints rows into the terminal and turns key presses into events.")
   (:export #:tui-frontend #:make-tui-frontend))
 
@@ -321,13 +322,17 @@ switching themes back and forth never uses the pairs up."
   "The special keys by the names terminal descriptions give them with modifiers
 (kUP5: Control and up).")
 
-(defun modifier-bits (field)
-  "The modifiers a terminal's modifier FIELD stands for (one more than the sum
-of 1 Shift, 2 Alt, 4 Control, as xterm and kitty send it; NIL for none), as
-three values: shift, meta and control."
-  (let* ((number (or (and field (tuatara.text:whole-number (first (uiop:split-string field :separator ":")))) 1))
-         (bits (max 0 (1- number))))
+(defun modifier-flags (number)
+  "The modifiers a terminal's modifier NUMBER stands for (one more than the sum
+of 1 Shift, 2 Alt, 4 Control, as xterm and kitty send it), as three values:
+shift, meta and control."
+  (let ((bits (max 0 (1- number))))
     (values (logtest bits 1) (logtest bits 2) (logtest bits 4))))
+
+(defun modifier-bits (field)
+  "The modifiers a terminal's modifier FIELD, text, stands for (MODIFIER-FLAGS;
+NIL for none), as three values: shift, meta and control."
+  (modifier-flags (or (and field (tuatara.text:whole-number (first (uiop:split-string field :separator ":")))) 1)))
 
 (defun key-name-key (name)
   "The KEY a terminal description's NAME for a special key with modifiers
@@ -361,6 +366,12 @@ at the first key read (after the init file has had its say).")
   "True while the terminal sends keys by the kitty keyboard protocol, switched on
 by FRONTEND-START (KITTY-KEYBOARD-SUPPORTED-P): Escape, Alt and Control keys
 then come as CSI ... u sequences, read without a timer.")
+
+(defvar *altgr-held* nil
+  "True while the terminal has reported AltGr pressed and not let go since.")
+
+(defvar *kitty-flags* nil
+  "The flags of the kitty keyboard protocol asked of the terminal, or NIL when it is off.")
 
 (defvar *terminal-answers* :unasked
   "What the terminal said when asked at the start (ASK-TERMINAL), a list of
@@ -531,8 +542,20 @@ the first time, or again in place of the screen before, which has ended."
 
 (defun kitty-keyboard (on)
   "Switch the kitty keyboard protocol on (ON true) or back off: on, keys are
-told apart (1) and a key with Shift is reported with what it types (4)."
-  (terminal-control (if on "[>5u" "[<u")))
+told apart (1) and a key with Shift is reported with what it types (4).
+Under *ALTGR-AS-META* every key comes as a sequence (8), with what it types
+(16), and as pressed and let go (2), so that AltGr held is known; and the
+terminal says when it loses the focus, as AltGr let go then is not reported.
+Either way AltGr is taken as not held."
+  (setf *altgr-held* nil)
+  (cond ((not on)
+         (terminal-control "[<u")
+         (when (eql *kitty-flags* 31) (terminal-control "[?1004l"))
+         (setf *kitty-flags* nil))
+        (t
+         (setf *kitty-flags* (if *altgr-as-meta* 31 5))
+         (terminal-control "[>~du" *kitty-flags*)
+         (when (eql *kitty-flags* 31) (terminal-control "[?1004h")))))
 
 (defun give-terminal-back (f)
   "Leave F's terminal as it was before the editor: its pictures gone, and its
@@ -638,7 +661,16 @@ text (TUI-PADDING), which is what the editor has to lay out."
   "Have F give the editor a RESIZE-EVENT after the events already waiting."
   (setf (tui-pending f) (append (tui-pending f) (list (resize-event f)))))
 
+(defun kitty-flags-follow-setting ()
+  "Ask the terminal again for the kitty keyboard protocol's flags when
+*ALTGR-AS-META* was changed since they were asked for, and the protocol is on."
+  (when (and *kitty-keyboard-on* *kitty-flags* (not (eql *kitty-flags* (if *altgr-as-meta* 31 5))))
+    (kitty-keyboard nil)
+    (kitty-keyboard t)))
+
 (defmethod tuatara.frontend:frontend-settings-changed ((f tui-frontend))
+  (when (tui-window f)
+    (kitty-flags-follow-setting))
   ;; other colours asked for: the screen started again for them, and drawn whole
   (when (and (tui-window f) (not (eql (wanted-colours) *colours-wanted*)))
     (%endwin)
@@ -671,7 +703,8 @@ text (TUI-PADDING), which is what the editor has to lay out."
         ((= code 0) (tuatara.frontend:make-key #\Space :ctrl t :meta meta))
         ((< code 27) (tuatara.frontend:make-key (code-char (+ code 96)) :ctrl t :meta meta))
         ((< code 32) (tuatara.frontend:make-key (code-char (+ code 64)) :ctrl t :meta meta))
-        (t (tuatara.frontend:make-key (code-char code) :meta meta))))
+        (meta (tuatara.frontend:make-key (code-char code) :meta t))
+        (t (plain-key (code-char code)))))
 
 (defun decide-kitty-keyboard ()
   "Switch the kitty keyboard protocol on where *KITTY-KEYBOARD* and the terminal
@@ -829,31 +862,134 @@ return, Tab, backspace, and the keypad's keys.")
 the guess for a key kitty's protocol reports with Shift but without what it
 types then.")
 
+(defparameter *altgr-key-codes* '(57453 57449)
+  "Key codes of the kitty keyboard protocol for AltGr: the third level's
+shift key, and the right Alt key, which some terminals report for it.")
+
+(defvar *csi-numbers* (make-array 64 :element-type 'fixnum :initial-element -1)
+  "The numbers of the CSI sequence read last by CSI-NUMBERS, each field's
+subfields one after another; -1 for one left empty.")
+
+(defvar *csi-field-starts* (make-array 5 :element-type 'fixnum :initial-element 0)
+  "Where each of the first four fields of the CSI sequence read last by
+CSI-NUMBERS starts in *CSI-NUMBERS*, and, last, where its numbers end.")
+
+(defun csi-numbers (parameters)
+  "Read PARAMETERS, the text between CSI and its final character, into
+*CSI-NUMBERS* and *CSI-FIELD-STARTS*: fields parted by ; and their subfields
+by :, as the kitty keyboard protocol and xterm send them. False, with nothing
+read, for parameters with anything but digits in them (a terminal's answer,
+CSI ? ...). Nothing is made: the two vectors are filled again each time."
+  (let ((numbers *csi-numbers*) (starts *csi-field-starts*) (n 0) (field 0) (value -1))
+    (declare (type (simple-array fixnum (*)) numbers starts) (fixnum n field value))
+    (setf (aref starts 0) 0)
+    (flet ((end-number ()
+             (when (< n (length numbers))
+               (setf (aref numbers n) value)
+               (incf n))
+             (setf value -1)))
+      (loop for c across parameters
+            for digit = (digit-char-p c)
+            do (cond (digit (setf value (min 99999999 (+ (* (max value 0) 10) digit))))
+                     ((char= c #\:) (end-number))
+                     ((char= c #\;)
+                      (end-number)
+                      (incf field)
+                      (when (< field 4) (setf (aref starts field) n)))
+                     (t (return-from csi-numbers nil))))
+      (end-number)
+      (loop for k from (1+ (min field 3)) to 4 do (setf (aref starts k) n))
+      t)))
+
+(defun csi-number (field subfield &optional (default -1))
+  "The number at SUBFIELD of FIELD, from 0, of the CSI sequence CSI-NUMBERS
+read last; DEFAULT when it is missing or left empty."
+  (let ((at (+ (aref *csi-field-starts* field) subfield)))
+    (if (and (< field 4) (< at (aref *csi-field-starts* (1+ field))))
+        (let ((value (aref *csi-numbers* at))) (if (minusp value) default value))
+        default)))
+
+(defun csi-subfields (field)
+  "How many subfields FIELD of the CSI sequence CSI-NUMBERS read last has."
+  (if (< field 4) (- (aref *csi-field-starts* (1+ field)) (aref *csi-field-starts* field)) 0))
+
+(defvar *plain-keys* (make-array 256 :initial-element nil)
+  "The keys of the first 256 characters with no modifier, each made once, as
+keys are never changed.")
+
+(defun plain-key (char)
+  "The KEY of CHAR with no modifier, the same one each time for the first 256 characters."
+  (let ((code (char-code char)))
+    (if (< code 256)
+        (or (svref *plain-keys* code) (setf (svref *plain-keys* code) (tuatara.frontend:make-key char)))
+        (tuatara.frontend:make-key char))))
+
+(defun other-script-letter-p (code)
+  "True when CODE is that of a letter of a script other than the Latin one
+\(Cyrillic, Greek, Arabic and the rest)."
+  (and (>= code #x370) (not (<= #x1e00 code #x1eff)) (alpha-char-p (code-char code))))
+
+(defun altgr-letter (code base text meta)
+  "The letter, a to z, of a key pressed with AltGr, when AltGr is held
+\(*ALTGR-HELD*), *ALTGR-AS-META* is on, META is not held and TEXT, the code
+of the first character it types, is another sign than its letter or -1 for
+none (with Control); else NIL. The letter is the key's CODE in the kitty
+keyboard protocol, or else its BASE, its place on a US keyboard, as kitty and
+foot give the sign AltGr makes as the code; but never for a key whose code is
+a letter of another script, as on a Russian layout, which keeps its own
+letter. CODE and BASE are -1 when not given."
+  (let ((letter (cond ((<= 97 code 122) code)
+                      ((and (<= 97 base 122) (not (other-script-letter-p code))) base))))
+    (when (and letter *altgr-held* *altgr-as-meta* (not meta)
+               (or (minusp text) (char-not-equal (code-char text) (code-char letter))))
+      (code-char letter))))
+
 (defun kitty-key (parameters)
   "The KEY a CSI u sequence of the kitty keyboard protocol stands for, its
-PARAMETERS the text between CSI and u (code[:shifted[:base]];modifiers[;text]);
-NIL for a key of no use here (a lock key alone, say). A key with Shift is
-what it types with Shift (M-> rather than M-S-.), as the window frontend has
-it (by a US keyboard when the terminal does not say); Shift stays only on
-keys that type nothing."
-  (let* ((fields (uiop:split-string parameters :separator ";"))
-         (codes (uiop:split-string (first fields) :separator ":"))
-         (code (tuatara.text:whole-number (first codes)))
-         (shifted-code (and (second codes) (plusp (length (second codes))) (tuatara.text:whole-number (second codes)))))
-    (multiple-value-bind (shift meta ctrl) (modifier-bits (second fields))
-      (when code
-        (let ((special (cdr (assoc code *kitty-key-codes*))))
-          (cond ((keywordp special) (tuatara.frontend:make-key special :ctrl ctrl :meta meta :shift shift))
-                ((or (< code 32) (and (null special) (<= 57344 code 63743))) nil)
-                (t (let ((char (or special (code-char code))))
-                     (cond ((and shift shifted-code (>= shifted-code 32))
-                            (tuatara.frontend:make-key (code-char shifted-code) :ctrl ctrl :meta meta))
-                           ((and shift (not shifted-code) (gethash char *us-shifted-characters*))
-                            (tuatara.frontend:make-key (gethash char *us-shifted-characters*) :ctrl ctrl :meta meta))
-                           ((and shift (alpha-char-p char))
-                            (tuatara.frontend:make-key (char-upcase char) :ctrl ctrl :meta meta))
-                           (t (tuatara.frontend:make-key char :ctrl ctrl :meta meta
-                                                              :shift (and shift (not (graphic-char-p char))))))))))))))
+PARAMETERS the text between CSI and u
+\(code[:shifted[:base]];modifiers[:event][;text]); NIL for a key of no use
+here (a lock key alone, a key let go, AltGr). A key with Shift is what it
+types with Shift (M-> rather than M-S-.), as the window frontend has it (by a
+US keyboard when the terminal does not say); Shift stays only on keys that
+type nothing. A key that types text with neither Control nor Meta is the
+character it types, or a string when it types more than one. Under
+*ALTGR-AS-META*, a letter key pressed with AltGr is Meta with the letter
+\(ALTGR-LETTER). An ordinary key makes nothing but a key of its own with a
+modifier."
+  (unless (csi-numbers parameters)
+    (return-from kitty-key nil))
+  (let ((code (csi-number 0 0)))
+    (when (= (csi-number 1 1 1) 3)
+      (when (member code *altgr-key-codes*) (setf *altgr-held* nil))
+      (return-from kitty-key nil))
+    (when (minusp code)
+      (return-from kitty-key nil))
+    (multiple-value-bind (shift meta ctrl) (modifier-flags (csi-number 1 0 1))
+      (let* ((shifted-code (csi-number 0 1))
+             (text (csi-number 2 0))
+             (special (cdr (assoc code *kitty-key-codes*)))
+             (altgr (altgr-letter code (csi-number 0 2) text meta)))
+        (cond ((member code *altgr-key-codes*) (setf *altgr-held* t) nil)
+              (altgr (tuatara.frontend:make-key (if shift (char-upcase altgr) altgr) :ctrl ctrl :meta t))
+              ((keywordp special) (tuatara.frontend:make-key special :ctrl ctrl :meta meta :shift shift))
+              ((or (< code 32) (and (null special) (<= 57344 code 63743))) nil)
+              ((and (>= text 32) (not ctrl) (not meta))
+               (if (> (csi-subfields 2) 1)
+                   (let ((codes (loop for i below (csi-subfields 2)
+                                      for c = (csi-number 2 i)
+                                      when (>= c 32) collect c)))
+                     (map 'string #'code-char codes))
+                   (plain-key (code-char text))))
+              (t (let ((char (or special (code-char code))))
+                   (cond ((and shift (>= shifted-code 32))
+                          (tuatara.frontend:make-key (code-char shifted-code) :ctrl ctrl :meta meta))
+                         ((and shift (minusp shifted-code) (gethash char *us-shifted-characters*))
+                          (tuatara.frontend:make-key (gethash char *us-shifted-characters*) :ctrl ctrl :meta meta))
+                         ((and shift (alpha-char-p char))
+                          (tuatara.frontend:make-key (char-upcase char) :ctrl ctrl :meta meta))
+                         ((not (or ctrl meta shift)) (plain-key char))
+                         (t (tuatara.frontend:make-key char :ctrl ctrl :meta meta
+                                                            :shift (and shift (not (graphic-char-p char)))))))))))))
 
 (defparameter *csi-tilde-keys*
   '((2 . :insert) (3 . :delete) (5 . :page-up) (6 . :page-down) (7 . :home) (8 . :end)
@@ -865,17 +1001,22 @@ keys that type nothing."
   "The KEY a CSI sequence stands for, its PARAMETERS the text between CSI and
 its FINAL character: kitty's CSI u, and the special keys with modifiers as
 xterm sends them (CSI 1;5A, CSI 3;3~); NIL for any other, a terminal's
-answer among them."
-  (unless (find #\? parameters)
-    (let ((fields (uiop:split-string parameters :separator ";")))
-      (multiple-value-bind (shift meta ctrl) (modifier-bits (second fields))
-        (let ((base (case final
-                      (#\u (return-from csi-key (kitty-key parameters)))
-                      (#\Z (return-from csi-key (tuatara.frontend:make-key :tab :shift t)))
-                      (#\A :up) (#\B :down) (#\C :right) (#\D :left) (#\H :home) (#\F :end)
-                      (#\P :f1) (#\Q :f2) (#\S :f4)
-                      (#\~ (cdr (assoc (tuatara.text:whole-number (first fields)) *csi-tilde-keys*))))))
-          (and base (tuatara.frontend:make-key base :ctrl ctrl :meta meta :shift shift)))))))
+answer, the focus gained or lost and a key let go among them. A string for
+text of more than one character (KITTY-KEY)."
+  (cond ((char= final #\u) (kitty-key parameters))
+        ((not (csi-numbers parameters)) nil)
+        ;; the terminal lost the focus (CSI O): AltGr let go meanwhile goes unreported
+        ((and (char= final #\O) (zerop (length parameters)))
+         (setf *altgr-held* nil)
+         nil)
+        ((= (csi-number 1 1 1) 3) nil)
+        (t (multiple-value-bind (shift meta ctrl) (modifier-flags (csi-number 1 0 1))
+             (let ((base (case final
+                           (#\Z (return-from csi-key (tuatara.frontend:make-key :tab :shift t)))
+                           (#\A :up) (#\B :down) (#\C :right) (#\D :left) (#\H :home) (#\F :end)
+                           (#\P :f1) (#\Q :f2) (#\S :f4)
+                           (#\~ (cdr (assoc (csi-number 0 0) *csi-tilde-keys*))))))
+               (and base (tuatara.frontend:make-key base :ctrl ctrl :meta meta :shift shift)))))))
 
 (defconstant +key-mouse+ 409 "ncurses' code for the start of a report of the mouse.")
 
@@ -914,12 +1055,16 @@ other buttons."
                                 (case count (1 :down-mouse-1) (2 :double-mouse-1) (t :triple-mouse-1)))))))
           (and base (tuatara.frontend:make-key base :ctrl ctrl :meta meta :shift shift :column column :row row)))))))
 
+(defvar *csi-parameters* (make-array 32 :element-type 'character :fill-pointer 0 :adjustable t)
+  "The parameters of the CSI sequence READ-CSI read last, filled again by the next.")
+
 (defun read-csi (window &optional first)
   "The parameters and the final character of a CSI sequence whose ESC [ has
 been read from WINDOW, FIRST its next character's code when read already;
 the rest waited for at most 1/10 s, as from a busy terminal or over a slow
-connection it may come in parts. NIL when it breaks off."
-  (let ((parameters (make-string-output-stream))
+connection it may come in parts. NIL when it breaks off. The parameters are
+*CSI-PARAMETERS*, filled again by the next read: nothing is made for them."
+  (let ((parameters *csi-parameters*)
         (deadline (tuatara.runtime:deadline-in 1/10)))
     (%nodelay window t)
     (unwind-protect
@@ -931,11 +1076,11 @@ connection it may come in parts. NIL when it breaks off."
                             (t (let ((left (tuatara.runtime:seconds-left deadline)))
                                  (unless (and (plusp left) (consp (tuatara.io:wait-for-fds (list 0) left)))
                                    (return nil)))))))))
+           (setf (fill-pointer parameters) 0)
            (loop for value = (or (shiftf first nil) (next))
                  do (cond ((null value) (return nil))
-                          ((<= #x40 value #x7e)
-                           (return (values (get-output-stream-string parameters) (code-char value))))
-                          ((<= #x20 value #x3f) (write-char (code-char value) parameters))
+                          ((<= #x40 value #x7e) (return (values parameters (code-char value))))
+                          ((<= #x20 value #x3f) (vector-push-extend (code-char value) parameters))
                           (t (return nil)))))
       (%nodelay window nil))))
 
@@ -1048,12 +1193,18 @@ second part."
         (read-wide-char window)
         (values status value))))
 
-(defun key-event-or-tick (key)
-  "The event of KEY, a key of the terminal; a :TICK when KEY is NIL, a key or
-sequence of no use here, which counts as no key at all."
-  (if key
-      (tuatara.frontend:make-event :key :key key)
-      (tuatara.frontend:make-event :tick)))
+(defun key-event (f key)
+  "The event of KEY, a key of F's terminal; NIL when KEY is NIL, a key or
+sequence of no use here (a key let go), which counts as nothing read. KEY may
+be a string, the text one key typed: each of its characters is then a key,
+the first given now and the rest after F's pending events."
+  (cond ((stringp key)
+         (setf (tui-pending f)
+               (append (tui-pending f)
+                       (map 'list (lambda (c) (tuatara.frontend:make-event :key :key (tuatara.frontend:make-key c)))
+                            (subseq key 1))))
+         (tuatara.frontend:make-event :key :key (tuatara.frontend:make-key (char key 0))))
+        (key (tuatara.frontend:make-event :key :key key))))
 
 (defun read-escape-sequence (f window)
   "The event for an ESC read from F's WINDOW: a key in a CSI sequence (kitty's
@@ -1062,7 +1213,7 @@ prefix when another key follows at once, or a lone escape. By kitty's protocol
 a lone ESC is never a key (Escape is CSI 27 u): the rest of its sequence is
 waited for, never taken for keys typed. After ESC [ the rest is waited for in
 every mode, as a sequence may come in two parts (over a network), and a paste
-is never read as keys."
+is never read as keys. NIL for a sequence of no use here (KEY-EVENT)."
   (%nodelay window t)
   (multiple-value-bind (status value status-after value-after)
       (multiple-value-bind (status value) (if *kitty-keyboard-on*
@@ -1079,16 +1230,17 @@ is never read as keys."
              (cond ((null final) (tuatara.frontend:make-event :tick))
                    ;; text pasted: read whole, to go in as text and never as keys
                    ((paste-start-p parameters final) (read-paste f window))
-                   (t (key-event-or-tick (if (and (plusp (length parameters)) (char= (char parameters 0) #\<))
-                                             (mouse-key f parameters final)
-                                             (csi-key parameters final)))))))
+                   (t (key-event f (if (and (plusp (length parameters)) (char= (char parameters 0) #\<))
+                                       (mouse-key f parameters final)
+                                       (csi-key parameters final)))))))
           ((= status 0)
            (tuatara.frontend:make-event :key :key (char-key value :meta t)))
           (t (tuatara.frontend:make-event :key :key (tuatara.frontend:make-key :escape))))))
 
 (defun wide-char-event (f window status value)
   "The event for what wget_wch read from F's WINDOW: STATUS 0 and a character
-VALUE, or a key code, or nothing at all (the end of input)."
+VALUE, or a key code, or nothing at all (the end of input); NIL for a key or
+sequence of no use here, such as a key let go."
   (cond ((= status +key-code-yes+)
          (cond ((= value +key-resize+)
                 (resize-event f))
@@ -1098,8 +1250,8 @@ VALUE, or a key code, or nothing at all (the end of input)."
                ;; description says: the rest read here
                ((= value +key-mouse+)
                 (multiple-value-bind (parameters final) (read-csi window)
-                  (key-event-or-tick (and final (mouse-key f (concatenate 'string "<" parameters) final)))))
-               (t (key-event-or-tick (ncurses-key value)))))
+                  (key-event f (and final (mouse-key f (concatenate 'string "<" parameters) final)))))
+               (t (key-event f (ncurses-key value)))))
         ((/= status 0) (tuatara.frontend:make-event :quit))
         ((= value 27) (read-escape-sequence f window))
         (t (tuatara.frontend:make-event :key :key (char-key value)))))
@@ -1110,7 +1262,8 @@ as it takes): a key, a resize, or a :TICK when the time ran out or another
 thread called FRONTEND-WAKE; :QUIT once the terminal is gone. What ncurses has
 read ahead, and a resize it was told of, come first; then the terminal and the
 wake pipe are waited on together, a second at a time, since the resize signal
-may reach another thread and so not end the wait."
+may reach another thread and so not end the wait. A key of no use (a key let
+go) is no event: the wait goes on."
   (let ((pending (pop (tui-pending f))))
     (when pending (return-from next-event pending)))
   (decide-kitty-keyboard)
@@ -1123,7 +1276,8 @@ may reach another thread and so not end the wait."
           (progn (%nodelay window t)
                  (unwind-protect (read-wide-char window) (%nodelay window nil)))
         (when (or (= status 0) (= status +key-code-yes+))
-          (return (wide-char-event f window status value)))
+          (let ((event (wide-char-event f window status value)))
+            (when event (return event))))
         (setf *keys-given-back* nil))
       (let* ((left (and deadline (tuatara.runtime:seconds-left deadline)))
              (ready (if (and left (<= left 0))

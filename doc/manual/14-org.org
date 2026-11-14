@@ -709,7 +709,11 @@ and no time is never announced. The tag itself is
    A =CLOSED:= line joins the deadline. Save with ~C-x C-s~.
 #+end_try
 
-#+table: commands org-schedule org-deadline org-time-stamp org-time-stamp-inactive
+~M-x describe-timestamp-settings~ lists what a timestamp may hold that
+Tuatara reads: active and inactive, times and ranges, repeaters, warnings and
+delays, the =SCHEDULED=, =DEADLINE= and =CLOSED= lines, and dates by rule.
+
+#+table: commands org-schedule org-deadline org-time-stamp org-time-stamp-inactive describe-timestamp-settings
 
 These commands work only while a date is being asked for. You will seldom
 call them by name, but they are what the keys above run.
@@ -1018,7 +1022,10 @@ share with others:
 
 The templates are then read from there, and Tuatara's four are still offered.
 
-#+table: commands org-capture org-capture-finalize org-capture-refile org-capture-kill org-capture-template-copy
+~M-x describe-capture-template-settings~ lists the lines a template's head
+holds, where it can file its text, and every =%= placeholder its text takes.
+
+#+table: commands org-capture org-capture-finalize org-capture-refile org-capture-kill org-capture-template-copy describe-capture-template-settings
 
 #+table: settings *capture-template-directories*
 
@@ -1172,6 +1179,9 @@ above it.
 The numbers do not change by themselves when you change a field. Press
 ~C-c *~ anywhere in the table to work the formulas out again, or ~C-c C-c~
 on the =#+TBLFM:= line.
+
+~M-x describe-table-formula-settings~ lists what a formula may say: the
+references, operators, functions and flags, with small examples.
 
 You do not have to write that line by hand. ~C-c =~ asks for the formula of
 the column the cursor is in and adds it to the line for you. With ~C-u~
@@ -1410,7 +1420,11 @@ not safely or read-only.
 7. Press ~C-x T p~ again to show the link as written.
 #+end_try
 
-#+table: commands inline-pictures-mode org-resize-picture
+~M-x describe-inline-picture-settings~ lists what a note writes to size and
+place its pictures, which links and formulas are shown, and the keys and
+settings that change them.
+
+#+table: commands inline-pictures-mode org-resize-picture describe-inline-picture-settings
 
 #+table: settings *global-inline-pictures-mode* *inline-pictures-modes* *inline-picture-width* *org-startup-shows-pictures*
 
@@ -1966,7 +1980,7 @@ wrote yourself, since whoever sends you a note can name any file in them.
 
 #+table: commands show-line-in-pdf pdf-view-show-source pdf-view-show-source-at-click
 
-#+table: commands org-insert-export-drawer describe-export-settings export-latex-template-copy export-template-from-docx export-template-from-latex insert-formatted-note-template org-macro-wrap org-macro-unwrap export-check-redactions
+#+table: commands org-insert-export-drawer describe-export-settings describe-org-keyword-settings export-latex-template-copy export-template-from-docx export-template-from-latex insert-formatted-note-template org-macro-wrap org-macro-unwrap export-check-redactions
 
 #+table: settings *latex-engines* *latex-main-font* *latex-sans-font* *latex-mono-font* *logos-directory* *export-trusted-directories* *latex-redaction-commands*
 
@@ -2017,6 +2031,10 @@ a macro or a formula that Emacs would run when it opened the file. Tuatara
 reads such a note as text only.
 
 *** What Tuatara adds to Org
+
+~M-x describe-org-keyword-settings~ lists every =#+KEYWORD:= line Tuatara
+reads and the words of =#+OPTIONS:= and =#+STARTUP:=, and marks the lines
+that only Tuatara reads.
 
 These are the names that only Tuatara acts on. Each can be written in a note
 that Emacs opens too. The last column is what Org 9.8.7 does with the line.

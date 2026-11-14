@@ -34,12 +34,15 @@ is found read already by another that commits the same."
     (clrhash tuatara.defaults::**committed-lines**)))
 
 (defun thread-cpu-time ()
-  "The processor time this thread has used, in internal time units: what
-work in the thread costs however busy the rest of the machine is, for a bound
-on work that does not wait for another thread or program."
+  "The processor time this thread has used, in internal time units, less the
+time spent collecting garbage: what work in the thread costs however busy the
+rest of the machine is and however full the heap the tests before it left,
+for a bound on work that does not wait for another thread or program. The
+garbage the work makes is bounded by counting it, not by this."
   (multiple-value-bind (seconds nanoseconds) (sb-unix:clock-gettime sb-unix:clock-thread-cputime-id)
-    (+ (* seconds internal-time-units-per-second)
-       (floor (* nanoseconds internal-time-units-per-second) 1000000000))))
+    (- (+ (* seconds internal-time-units-per-second)
+          (floor (* nanoseconds internal-time-units-per-second) 1000000000))
+       sb-ext:*gc-run-time*)))
 
 (defvar *slowdown-sink* 0
   "Where MACHINE-SLOWDOWN leaves its sum, so that the work is not dropped.")

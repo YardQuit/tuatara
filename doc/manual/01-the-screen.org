@@ -20,7 +20,9 @@ the manual gives that too.
 Most commands have a key. A key written as ~C-x~ means hold down the Control
 key and press x. A key written as ~M-x~ means hold down Alt (called Meta in
 older manuals) and press x. On a terminal where Alt does not reach the
-program, press Escape, let go, then press x. ~S-~ stands for Shift.
+program, press Escape, let go, then press x. ~S-~ stands for Shift. On most
+European keyboards the right Alt key is AltGr, and with a letter it works as
+Meta too: AltGr-x is ~M-x~ (chapter 8 tells more).
 
 Several keys in a row, as in ~C-x C-f~, are pressed one after the other. You
 may keep Control held down through the whole sequence. A few keys have names

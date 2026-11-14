@@ -573,14 +573,17 @@ second frame waiting its turn on it."
     (values (/ octets (1+ (count #\Space keys))) frames)))
 
 (define-test (frames terminal-hidden-frame-makes-no-garbage)
-  ;; a frame waiting its turn makes nothing on each key: the work between keys that goes through
-  ;; every frame's windows makes as much with it as without
+  ;; the work between keys makes nothing, and a frame waiting its turn adds nothing to it: the work
+  ;; that goes through every frame's windows makes as much with it as without
   (let ((keys "a b c d DEL DEL DEL DEL a b c d DEL DEL DEL DEL"))
     (flet ((least (hidden)
-             ;; the least of three: work timed by the clock may make something once in a while
-             (loop repeat 3 minimize (ticks-garbage-per-key keys :hidden hidden))))
+             ;; the least of five: work timed by the clock may make something once in a while, and
+             ;; the count of octets takes in what other threads make meanwhile
+             (loop repeat 5 minimize (ticks-garbage-per-key keys :hidden hidden))))
       (is = 2 (nth-value 1 (ticks-garbage-per-key keys :hidden t)))
       (let ((alone (least nil)) (hidden (least t)))
+        ;; with nothing going on, the tick functions and the guard around each make nothing
+        (true (<= alone 8) "~,1f octets a key between keys" alone)
         (true (<= hidden (+ alone 8)) "~,1f octets a key with a frame hidden, ~,1f without" hidden alone)))))
 
 (define-test (frames terminal-frame-shown-at-the-size-now)

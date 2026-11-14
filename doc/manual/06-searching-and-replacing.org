@@ -54,8 +54,9 @@ Figure 6.1 shows the screen while a search is open.
  +----------------------------------------------------------------+
  | 1/2    Regex search forward: ki                                |
  +----------------------------------------------------------------+
-    ^                                                  ^
-    place and number of matches                        what you typed
+    ^                           ^
+    |                           what you typed
+    place and number of matches
 #+end_example
 
 The =1/2= before the prompt says the cursor is at the first of two matches.
@@ -106,8 +107,9 @@ you mend it. Either fix it or press ~M-r~ to take it as plain text.
 | =^=, =$=   | The start, the end of a line       | =^Dear= finds lines starting with Dear |
 | =\b=       | The edge of a word                 | =\bkea\b= does not find kearns |
 | =\n=       | One line end of any kind (LF, CRLF or a lone CR) | =kea\nTui= finds a line break |
-| =a\|b=     | Either one                         | =tui\|kea=                    |
 | =(...)=    | A group; later it can be called =\1=, =\2= | =(\d+)-(\d+)=         |
+
+A bar between two patterns finds either one: =tui|kea= finds tui and kea.
 
 Outside brackets, =\n= matches any one line end, as =$= stops before it, so a
 pattern for a line break works in a file with CRLF line ends. Inside brackets,

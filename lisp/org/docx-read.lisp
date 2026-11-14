@@ -972,16 +972,22 @@ footers, when it has any."
 
 (defun metadata-value (text)
   "TEXT, a value a file holds, as the note shows it: on one line, kept from
-being read as markup (ORG-SAFE-LINE), at most 500 characters."
-  (let ((text (org-safe-line (string-trim '(#\Space #\Tab #\Nul) (or text "")))))
-    (if (> (length text) 500) (format nil "~a... (~:d characters)" (subseq text 0 500) (length text)) text)))
+being read as markup (ORG-SAFE-LINE), at most *METADATA-VALUE-MOST*
+characters."
+  (let ((text (org-safe-line (string-trim '(#\Space #\Tab #\Nul) (or text ""))))
+        (most *metadata-value-most*))
+    (if (> (length text) most) (format nil "~a... (~:d characters)" (subseq text 0 most) (length text)) text)))
 
 (defun metadata-lines (fields out)
   "Write to OUT a line - LABEL :: VALUE for each of FIELDS, each (LABEL .
-VALUE), both as METADATA-VALUE shows them; those with no value left out."
+VALUE), both as METADATA-VALUE shows them; those with no value left out.
+Two colons or more in a label, which a file names itself, are written as
+one, so that the line's first :: always ends its label, for Org and for a
+program reading the note."
   (loop for (label . value) in fields
         when (plusp (length value))
-        do (format out "- ~a :: ~a~%" (metadata-value label) (metadata-value value))))
+        do (format out "- ~a :: ~a~%" (cl-ppcre:regex-replace-all "::+" (metadata-value label) ":")
+                   (metadata-value value))))
 
 (defun office-about-section (what path fields &key more macros events embedded outside (changes 0) (comments 0))
   "The first section of a note read from the office file at PATH, WHAT in

@@ -1,0 +1,6 @@
+# tuatara look-only 1
+# Projects looked at only, never trusted to run their own programs: git
+# reads them and runs nothing they name. One directory a line, where it
+# really is (\\, \n and \r stand for \, a newline and a return).
+/cases/2026-0001/seized repo/
+/cases/2026-0002/

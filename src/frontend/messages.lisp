@@ -451,7 +451,7 @@ its health and its fonts too."
     (tuatara-user:*gui-renderer* (:gl :vulkan :cairo nil) :at-start)
     (tuatara-user:*tui-padding* :padding) (tuatara-user:*tui-pictures* (:auto t nil))
     (tuatara-user:*tui-mouse* :boolean) (tuatara-user:*tui-colours* (:auto :24-bit 256 16 8 nil))
-    (tuatara-user:*kitty-keyboard* (:auto t nil) :at-start))
+    (tuatara-user:*kitty-keyboard* (:auto t nil) :at-start) (tuatara-user:*altgr-as-meta* :boolean))
   "The settings a client's window or terminal is shown by, which the editor
 reads from its init file and tells its clients, each (NAME KIND [:AT-START]):
 KIND, :FONT for a font's name or NIL, :PADDING for room round the text,

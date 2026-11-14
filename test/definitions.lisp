@@ -4,7 +4,7 @@
 (in-package #:tuatara.tests)
 
 (define-test definitions
-  :description "No function, macro or command is defined twice in one package, where the later would quietly replace the earlier; no two tests have one name; the core asks the host, never a variable holding one function; the octets of a mapped file are read through the text layer alone; no source file names a package of a higher layer; no source file holds a tab character.")
+  :description "No function, macro or command is defined twice in one package, where the later would quietly replace the earlier; no two tests have one name; the core asks the host, never a variable holding one function; the octets of a mapped file are read through the text layer alone; no source file names a package of a higher layer; no source file holds a tab character or ends a line with a backslash; all of the editor's own Lisp parses.")
 
 (defun source-files (top)
   "Every Lisp source file under the directory TOP of the repository (\"lisp\", \"src\")."
@@ -128,6 +128,37 @@ the package's name and the reader's name in lower case."
   ;; a tab in the text a program writes is written as #\Tab or ~c, never typed into the source
   (let ((tabbed (remove-if-not (lambda (file) (find #\Tab (uiop:read-file-string file))) (core-source-files))))
     (false tabbed "~{~a~^, ~}" (mapcar #'file-namestring tabbed))))
+
+(define-test (definitions no-backslash-before-line-end)
+  ;; a backslash before the line end in a string escapes the newline, which then stays in the string: a long string
+  ;; is split with CONCATENATE, never as C and shell join lines
+  (let ((found '()))
+    (dolist (file (append (core-source-files) (source-files "test")))
+      (with-open-file (in file :external-format :utf-8)
+        (loop for line = (read-line in nil) while line for number from 1
+              ;; backslashes ending the line, an odd count leaving the last one to escape the newline
+              for run = (- (length line) (or (position #\\ line :from-end t :test-not #'char=) -1) 1)
+              when (and (oddp run) (char/= #\; (char (string-left-trim " " line) 0)))
+                do (push (format nil "~a:~d" (file-namestring file) number) found))))
+    (false found "~{~a~^, ~}" (reverse found))))
+
+(define-test (definitions own-lisp-parses-cleanly)
+  ;; all of this editor's own Lisp parses with its Lisp grammar without errors
+  (let ((broken '())
+        ;; a pattern, which system-relative-pathname would take as a name
+        (files (directory (merge-pathnames "**/*.lisp" (asdf:system-source-directory "tuatara")))))
+    (true (> (length files) 100) "~d files" (length files))
+    (dolist (file files)
+      (unless (or (search "/build/" (namestring file)) (search "/.project/" (namestring file))
+                  ;; the grammar takes the symbols ^ and \\ (Calc's operators) and #\; before a
+                  ;; blank for no Lisp: a gap in the grammar, not in the file
+                  (search "lisp/org/formulas.lisp" (namestring file)))
+        (multiple-value-bind (tree rope parser) (parse-string "commonlisp" (uiop:read-file-string file))
+          (declare (ignore rope))
+          (when (tuatara.syntax:tree-has-error-p tree)
+            (push (enough-namestring file (asdf:system-source-directory "tuatara")) broken))
+          (release-parse tree parser))))
+    (is equal '() broken)))
 
 (defparameter *mapped-octets-read-elsewhere*
   '(("save.lisp" "a save writes what the kernel did not copy of a stretch it noted read (NOTE-READ) first")

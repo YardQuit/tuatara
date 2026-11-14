@@ -722,27 +722,42 @@ Text.
   (let ((notes (getf (html-parts-of (format nil "#+TOC: tables~%~%* Head~%Text~%")) :notes)))
     (true (find-if (lambda (n) (search "#+TOC: tables line left out" n)) notes) "~s" notes)))
 
-(define-test (html-export names-only-tuatara-acts-on-are-in-the-source)
-  ;; each name the manual's table "What Tuatara adds to Org" lists is found in the source: a name
-  ;; renamed or dropped there is changed in the manual as well
+(defun manual-tuatara-written ()
+  "What the first column of the manual's table \"What Tuatara adds to Org\"
+writes between = signs, each as written (=#+template: NAME= gives \"#+template:
+NAME\"), in order."
   (let* ((manual (merge-pathnames "doc/manual/14-org.org" tuatara.runtime:*source-tree*))
          (lines (uiop:read-file-lines manual))
          (start (position "*** What Tuatara adds to Org" lines :test #'string=))
          (end (position-if (lambda (line) (uiop:string-prefix-p "*** " line)) lines :start (1+ start)))
-         (names '())
+         (written '()))
+    (dolist (line (subseq lines start end))
+      (when (uiop:string-prefix-p "| =" line)
+        (let ((cell (string-trim " " (second (cl-ppcre:split "\\|" line)))))
+          (cl-ppcre:do-register-groups (shown) ("=([^=]+)=" cell)
+            (push shown written)))))
+    (nreverse written)))
+
+(defun manual-tuatara-names ()
+  "The names the first column of the manual's table \"What Tuatara adds to
+Org\" gives (MANUAL-TUATARA-WRITTEN), each once: the word in front of the first
+space, colon or bracket, without its #+ or its colons."
+  (let ((names '()))
+    (dolist (shown (manual-tuatara-written))
+      (let ((name (cl-ppcre:regex-replace "_[0-9].*$" (first (cl-ppcre:split "[ :(]" (string-left-trim "{#+:" shown)))
+                                          ""))) ; :TOC_3_gh: names the :TOC: tag
+        (when (> (length name) 2) (pushnew name names :test #'string=))))
+    (nreverse names)))
+
+(define-test (html-export names-only-tuatara-acts-on-are-in-the-source)
+  ;; each name the manual's table "What Tuatara adds to Org" lists is found in the source: a name
+  ;; renamed or dropped there is changed in the manual as well
+  (let* ((names (manual-tuatara-names))
          (sources (format nil "~{~a~%~}"
                           (loop for pattern in '("lisp/**/*.lisp" "src/**/*.lisp")
                                 append (loop for file in (directory (merge-pathnames pattern tuatara.runtime:*source-tree*))
                                              collect (alexandria:read-file-into-string file :external-format :utf-8)))))
          (missing '()))
-    (true start "the section is in the manual")
-    (dolist (line (subseq lines start end))
-      (when (uiop:string-prefix-p "| =" line)
-        (let ((cell (string-trim " " (second (cl-ppcre:split "\\|" line)))))
-          (cl-ppcre:do-register-groups (shown) ("=([^=]+)=" cell)
-            (let ((name (cl-ppcre:regex-replace "_[0-9].*$" (first (cl-ppcre:split "[ :(]" (string-left-trim "{#+:" shown)))
-                                                ""))) ; :TOC_3_gh: names the :TOC: tag
-              (when (> (length name) 2) (pushnew name names :test #'string=)))))))
     (true names "the table names something")
     (dolist (name names)
       (unless (search name sources :test #'char-equal) (push name missing)))

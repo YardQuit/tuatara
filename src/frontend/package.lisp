@@ -3,7 +3,7 @@
 
 (defpackage #:tuatara.frontend
   (:use #:cl #:alexandria)
-  (:import-from #:tuatara.runtime #:define-record)
+  (:import-from #:tuatara.runtime #:define-record #:define-setting)
   (:documentation "The narrow interface every painter implements: frames and windows, input,
 glyph-row output, cursor shape, clipboard, pictures, keys and their
 descriptions.")

@@ -45,6 +45,8 @@ window makes, loaded when a window is opened.")
            #:gdk-clipboard-set-text
            #:gtk-icon-theme-get-for-display #:gtk-icon-theme-add-search-path #:gtk-window-set-default-icon-name
            #:gdk-clipboard-read-text-async #:gdk-clipboard-read-text-finish #:gdk-keyval-to-unicode
+           #:gtk-event-controller-get-current-event #:gdk-event-get-display #:gdk-key-event-get-level
+           #:gdk-key-event-get-layout #:gdk-first-level-keyval
            ;; pango
            #:pango-cairo-create-layout #:pango-layout-set-font-description #:pango-layout-set-text
            #:pango-layout-get-pixel-size #:pango-layout-get-baseline #:pango-cairo-show-layout
@@ -528,6 +530,38 @@ icon themes' directories are (hicolor/48x48/apps/NAME.png)."
 (define-c-function ("gdk_keyval_to_unicode" gdk-keyval-to-unicode) :uint32
   "The character KEYVAL types, or 0."
   (keyval :uint))
+
+(define-c-function ("gtk_event_controller_get_current_event" gtk-event-controller-get-current-event) :pointer
+  "The event CONTROLLER is handling now, owned by GTK; null outside its handlers."
+  (controller :pointer))
+
+(define-c-function ("gdk_event_get_display" gdk-event-get-display) :pointer
+  "The display EVENT came from."
+  (event :pointer))
+
+(define-c-function ("gdk_key_event_get_level" gdk-key-event-get-level) :uint
+  "The level of its layout the key of EVENT was pressed at: 0 alone, 1 with
+Shift, 2 and up with AltGr (the third level and beyond)."
+  (event :pointer))
+
+(define-c-function ("gdk_key_event_get_layout" gdk-key-event-get-layout) :uint
+  "The number of the keyboard layout the key of EVENT was read by."
+  (event :pointer))
+
+(define-c-function ("gdk_display_translate_key" %gdk-display-translate-key) :boolean
+  "Store at KEYVAL the key value KEYCODE gives on DISPLAY with the modifiers
+of STATE in layout GROUP; the other places may be null. False for a keycode
+that gives none."
+  (display :pointer) (keycode :uint) (state :uint) (group :int)
+  (keyval :pointer) (effective-group :pointer) (level :pointer) (consumed :pointer))
+
+(defun gdk-first-level-keyval (display keycode layout)
+  "The key value KEYCODE gives on DISPLAY in LAYOUT with no modifier held (a
+for the A key, whatever AltGr or Shift make it give); NIL for none."
+  (sb-alien:with-alien ((keyval sb-alien:unsigned-int 0))
+    (and (%gdk-display-translate-key display keycode 0 layout (sb-alien:alien-sap (sb-alien:addr keyval))
+                                     (null-pointer) (null-pointer) (null-pointer))
+         keyval)))
 
 ;;; Pango
 

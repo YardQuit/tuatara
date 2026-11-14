@@ -229,7 +229,7 @@ takes). :ARGUMENTS is what its form says, as ORG-READ-RULE reads them. :HOUR,
     tuatara.io:visit-file put-text-by-lines save-buffer-with-care
     ;; text from elsewhere written into Org safely, and read back
     org-safe-line org-safe-line-words org-escape-block org-unescape-block tuatara.io:inflate tuatara.text:xml-parse
-    xmp-fields jpeg-metadata file-sha256 octets-sha256 octets-md5 shown-file
+    xmp-fields jpeg-metadata octets-metadata tuatara.io:jpeg-segments file-sha256 octets-sha256 octets-md5 shown-file
     ;; PDF objects, read from octets alone
     pdf-object-at pdf-date-words *pdf-item-limit* tuatara.io:pdf-header-at pdf-white-p pdf-get pdf-dictionary-p
     pdf-ref-p pdf-array-items map-pdf-dictionary pdf-indirect-object-at pdf-indirect-get map-pdf-written-objects

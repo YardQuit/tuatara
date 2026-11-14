@@ -27,6 +27,24 @@ modifiers; COLUMN and ROW, the cell of the screen a mouse key happened at."
 
 (setf (documentation 'make-key 'function) "Return a KEY for BASE with the modifiers CTRL, META and SHIFT.")
 
+(define-setting tuatara-user:*altgr-as-meta* t
+  "Whether AltGr, the right Alt key of most European keyboards, works as
+Meta with a letter. On such a keyboard AltGr picks a third sign of a key
+\(AltGr-x types » on a Swedish layout), so AltGr-x is no command.
+- t: AltGr held with a letter key is Meta with the letter the key types
+  without AltGr, so AltGr-x is M-x and AltGr-Shift-x is M-X. AltGr with
+  digits and other signs types as before, so @, $, {, [, ], }, \\ and |
+  still come. AltGr-e is M-e, not €: type € by \\[insert-digraph] E u, or
+  by \\[insert-char] and its name, euro sign. In a terminal this works where
+  the terminal reports every key pressed and let go by the kitty keyboard
+  protocol, AltGr among them, as kitty and foot do; elsewhere nothing
+  changes. This is the standard.
+- nil: AltGr types what the keyboard layout gives. Set it so where AltGr
+  with a letter types letters of the language: Polish (ą ę ł ś ż), Czech
+  and Slovak, Hungarian, Romanian (ă ș ț), Croatian and Slovenian,
+  Lithuanian, and Neo or bone, whose third level is on the letter keys."
+  :values boolean)
+
 (defun key-spec (key)
   "The canonical, EQUAL-comparable form of KEY: a list of modifier keywords in
 the order :ctrl :meta :shift followed by the base."

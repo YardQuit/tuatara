@@ -1,0 +1,5 @@
+# tuatara places 1
+# Where point was in the files Tuatara visited, the latest first: the octet,
+# then the file's path (\\, \n and \r stand for \, a newline and a return).
+120 /notes/report.org
+0 /notes/a b.org

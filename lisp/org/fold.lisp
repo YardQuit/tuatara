@@ -475,7 +475,7 @@ In a table, go back a field, aligned."
   "Fold BUFFER as its #+STARTUP: words OPTIONS ask (ORG-STARTUP-OPTIONS), the
 last of them saying: overview (or fold), content, or showall (nofold); the
 file parsed only when one of the first two does."
-  (let ((choice (org-startup-choice options '("overview" "fold" "content" "showall" "nofold"))))
+  (let ((choice (org-startup-choice options :visibility)))
     (when (member choice '("overview" "fold" "content") :test #'string=)
       (let ((parse (org-parse-now buffer)))
         (when parse
@@ -495,7 +495,7 @@ one opens at once with them shown, each folded by \\`TAB' on its line.")
 #+STARTUP: words OPTIONS ask, hidedrawers or showdrawers, the last of them
 saying; with neither, as *ORG-FOLD-METADATA* says. A file larger than
 *ORG-FOLD-METADATA-MOST* is left as it is."
-  (let ((choice (org-startup-choice options '("hidedrawers" "showdrawers")))
+  (let ((choice (org-startup-choice options :drawers))
         (size (tuatara.buffer:buffer-size buffer)))
     (when (and (if choice (string= choice "hidedrawers") *org-fold-metadata*)
                (<= size *org-fold-metadata-most*))

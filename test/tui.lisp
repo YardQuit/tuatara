@@ -122,6 +122,8 @@
       (flet ((sent (function)
                (let ((f (tuatara.frontend.tui:make-tui-frontend))
                      (tuatara.frontend.tui::*kitty-keyboard-on* t)
+                     (tuatara.frontend.tui::*kitty-flags* 31)
+                     (tuatara.frontend.tui::*altgr-held* t)
                      (tuatara.frontend.tui::*shown-cursor-shape* :bar)
                      (tuatara.frontend.tui::*shown-cursor-colour* "#123456")
                      (tuatara.frontend.tui::*saved-stderr* nil)
@@ -131,21 +133,26 @@
                  (values (with-output-to-string (*standard-output*) (funcall function f))
                          (reverse calls)
                          tuatara.frontend.tui::*kitty-keyboard-on*
-                         tuatara.frontend.tui::*shown-cursor-shape*))))
+                         tuatara.frontend.tui::*shown-cursor-shape*
+                         tuatara.frontend.tui::*altgr-held*))))
         (let* ((esc (string #\Escape))
                (given-back (concatenate 'string esc "[0 q" esc "]112" (string (code-char 7)) esc "[<u"
-                                        esc "[?1002l" esc "[?1006l" esc "[?2004l" esc "[8h")))
+                                        esc "[?1004l" esc "[?1002l" esc "[?1006l" esc "[?2004l" esc "[8h")))
           (multiple-value-bind (out calls kitty shape) (sent #'tuatara.frontend:frontend-stop)
             (is string= given-back out)
             (is equal '((:forget t) :endwin) calls)
             (false kitty)
             (false shape))
-          (multiple-value-bind (out calls kitty shape)
+          ;; AltGr held when the terminal was lent: not held when it comes back, its letting go unseen
+          (multiple-value-bind (out calls kitty shape held)
               (sent (lambda (f) (tuatara.frontend:frontend-lend-terminal f (lambda () (write-string "program")))))
-            (is string= (concatenate 'string given-back "program" esc "[>5u" esc "[?1002h" esc "[?1006h" esc "[?2004h" esc "[8l") out)
+            (is string= (concatenate 'string given-back "program" esc "[>31u" esc "[?1004h"
+                                     esc "[?1002h" esc "[?1006h" esc "[?2004h" esc "[8l")
+                out)
             (is equal '((:forget t) :endwin :clearok :refresh) calls)
             (true kitty)
-            (false shape)))))))
+            (false shape)
+            (false held)))))))
 
 (define-test (tui row-written-without-garbage)
   ;; a row's spans and the face painted past its text are written to the terminal from the row itself,

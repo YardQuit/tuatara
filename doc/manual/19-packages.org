@@ -552,11 +552,11 @@ desktop's keyring. In Org files and the agenda its commands are under
 
 *** themes
 
-themes adds fourteen colour themes, each a dark or light version of a palette
+themes adds fifteen colour themes, each a dark or light version of a palette
 you may know from other editors: catppuccin-mocha, catppuccin-latte, dracula,
 nord, one-dark, solarized-dark, solarized-light, tokyo-night,
 tokyo-night-light, rose-pine, rose-pine-dawn, everforest-dark,
-everforest-light and kanagawa-wave. It needs nothing installed.
+everforest-light, kanagawa-wave and iroaseta. It needs nothing installed.
 
 ~M-x load-theme~ lists every theme, with a description beside each, and
 applies the one you choose. To have one at every start, put it after the

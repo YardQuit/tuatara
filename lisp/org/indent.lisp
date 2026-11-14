@@ -175,8 +175,8 @@ bullets' ways of showing it, and links shown as their labels or as written as
   (setf (tuatara.buffer:buffer-local buffer :line-prefix-function) 'org-line-prefix
         (tuatara.buffer:buffer-local buffer :line-scale-function) 'org-line-scale
         (tuatara.display:buffer-replacements-function buffer) 'org-display-replacements)
-  (let ((indent (org-startup-choice options '("indent" "noindent")))
-        (links (org-startup-choice options '("literallinks" "descriptivelinks"))))
+  (let ((indent (org-startup-choice options :indent))
+        (links (org-startup-choice options :links)))
     (setf (tuatara.buffer:buffer-local buffer 'org-indent)
           (if indent (string= indent "indent") *org-startup-indented*))
     (setf (tuatara.buffer:buffer-local buffer 'org-links-literal)

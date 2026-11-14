@@ -168,6 +168,77 @@ integers (SHORT, LONG) or of fractions (N . D) (RATIONAL), or octets."
       (note-has note "- dc:creator :: Ana Timaru")
       (note-has note "- xmpMM:History :: stEvt:action saved, stEvt:when 2026-03-02T10:00:00, stEvt:softwareAgent Kea Hamilton 3"))))
 
+(define-test (metadata read-from-octets-alone)
+  ;; what a package reads from a picture it holds, with no file to open: the same sections the note gives
+  (let ((note (format nil "~{~a~}" (tuatara:octets-metadata (jpeg-test-octets) :jpeg))))
+    (note-has note "- Software :: Darkroom 4.2")
+    (note-has note "- Comment :: Shot from the ridge")
+    (note-has note "- xmp:CreatorTool :: Kea Hamilton 3"))
+  (let ((note (format nil "~{~a~}" (tuatara:octets-metadata
+                                    (octets-of #x89 "PNG" 13 10 26 10
+                                               (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                                               (png-chunk "tEXt" (octets-of "Software" 0 "GIMP 2.10.38"))
+                                               (png-chunk "tIME" (octets-of (be-octets 2026 2) 3 2 10 0 0))
+                                               (png-chunk "IEND" #()))
+                                    :png))))
+    (note-has note "- Software :: GIMP 2.10.38")
+    (note-has note "- Last changed (tIME) :: 2026-03-02 10:00:00 UTC"))
+  (note-has (format nil "~{~a~}" (tuatara:octets-metadata *exif-test-tiff* :tiff)) "- Make :: Kea Cameras")
+  ;; the segments of a JPEG before its picture data, each marker with where its data lies
+  (let ((markers '()))
+    (tuatara:jpeg-segments (jpeg-test-octets) (lambda (marker start end) (push (list marker start end) markers) nil))
+    (true (find #xE1 markers :key #'first))
+    (true (find #xFE markers :key #'first))))
+
+(define-test (metadata large-texts-read-in-part)
+  ;; a text of megabytes is cut before it is made a string; an XMP packet past the most read is named, not
+  ;; parsed; a chunk claiming more than the file holds is left
+  (let* ((png (octets-of #x89 "PNG" 13 10 26 10
+                         (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                         (png-chunk "tEXt" (octets-of "Comment" 0 (make-array (* 4 1024 1024) :initial-element 65)))
+                         (png-chunk "IEND" #())))
+         (before (sb-ext:get-bytes-consed))
+         (note (format nil "~{~a~}" (tuatara:octets-metadata png :png))))
+    (true (< (- (sb-ext:get-bytes-consed) before) (* 4 1024 1024)) "~:d octets made"
+          (- (sb-ext:get-bytes-consed) before))
+    (note-has note "- Comment :: AAAA"))
+  (let* ((xmp (octets-of #xFF #xD8 "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                         (make-array (* 5 1024 1024) :initial-element 32) "</x:xmpmeta>"))
+         (before (sb-ext:get-bytes-consed))
+         (note (format nil "~{~a~}" (tuatara:octets-metadata xmp :jpeg))))
+    (true (< (- (sb-ext:get-bytes-consed) before) (* 4 1024 1024)) "~:d octets made"
+          (- (sb-ext:get-bytes-consed) before))
+    (note-has note "- Not read :: ")
+    (note-has note "(*metadata-xmp-most*)"))
+  (let ((png (octets-of #x89 "PNG" 13 10 26 10
+                        (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                        (be-octets 400000000 4) "tEXt" "Comment" 0 "short")))
+    (true (listp (tuatara:octets-metadata png :png)))))
+
+(define-test (metadata many-texts-read-within-bounds)
+  ;; thousands of PNG texts of 4 KB each: the first *metadata-most-fields* read, each cut as it is read, the
+  ;; rest counted
+  (let* ((text (png-chunk "tEXt" (octets-of "Comment" 0 (make-array 4096 :initial-element #xE9))))
+         (png (apply #'octets-of #x89 "PNG" 13 10 26 10
+                     (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                     (append (loop repeat 3000 collect text) (list (png-chunk "IEND" #())))))
+         (before (sb-ext:get-bytes-consed))
+         (note (format nil "~{~a~}" (tuatara:octets-metadata png :png)))
+         (made (- (sb-ext:get-bytes-consed) before)))
+    (true (< made (* 64 1024 1024)) "~:d octets made" made)
+    (true (< (length note) (* 1200 1024)) "a note of ~:d characters" (length note))
+    (note-has note "- Not read :: 1,000 texts more")))
+
+(define-test (metadata labels-end-at-their-colons)
+  ;; a PNG text whose keyword holds :: cannot make its line read as another field
+  (note-has (format nil "~{~a~}" (tuatara:octets-metadata
+                                  (octets-of #x89 "PNG" 13 10 26 10
+                                             (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                                             (png-chunk "tEXt" (octets-of "DateTime :: 2020:01:01 00:00:00" 0 "x"))
+                                             (png-chunk "IEND" #()))
+                                  :png))
+            "- DateTime : 2020:01:01 00:00:00 :: x"))
+
 (define-test (metadata other-pictures)
   (with-test-directory (dir)
     ;; PNG: its EXIF, its text (plain, packed, international) and when it says it was changed

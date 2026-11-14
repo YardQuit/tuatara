@@ -228,7 +228,7 @@ the last of inlineimages and latexpreview (on), noinlineimages and
 nolatexpreview (off) there says so: on only as *ORG-STARTUP-SHOWS-PICTURES*
 allows, in a file visited as usual (ORG-OWN-WORDS-P)."
   (show-inline-pictures buffer 'org-inline-pictures)
-  (let* ((choice (org-startup-choice options '("inlineimages" "noinlineimages" "latexpreview" "nolatexpreview")))
+  (let* ((choice (org-startup-choice options :pictures))
          (on (member choice '("inlineimages" "latexpreview") :test #'string=)))
     (when (and choice (or (not on) (and *org-startup-shows-pictures* (org-own-words-p buffer))))
       (setf (tuatara.buffer:buffer-local buffer :inline-pictures) (and on t)))))
@@ -357,6 +357,98 @@ while it is resized, point on its line or not."
                                  (format nil "Width ~d pixels, none written" shown)))
                             (width (format nil "Width ~a" (org-picture-width-words width)))
                             (t "No width written"))))))))
+
+;;; What a note writes to size and place its pictures
+
+(defun describe-picture-turning-on (stream)
+  "Write to STREAM the last sections of \\[describe-inline-picture-settings]:
+how pictures are turned on, the keys and the settings."
+  (let ((s stream))
+     (write-help-section s "Turning pictures on"
+                         :intro "#+STARTUP: inlineimages turns the pictures of a note on and latexpreview its
+                         formulas; noinlineimages and nolatexpreview turn them off. The words turn them on only
+                         when *ORG-STARTUP-SHOWS-PICTURES* is t and the note is visited as usual, not safely or
+                         read-only; off they always turn them.")
+     (write-help-section s "Keys"
+                         :rows (list (substitute-command-keys "\\[inline-pictures-mode]")
+                                     "show or hide the pictures of the buffer"
+                                     (substitute-command-keys "\\<org-mode>\\[inline-add-picture]")
+                                     "ask for a picture and write its link with the lines it takes"
+                                     (substitute-command-keys "\\<org-mode>\\[org-resize-picture]")
+                                     (format nil "on a picture or its #+ATTR_ORG: line, then ~{~a~^ ~}: a step wider,
+                                     the same, a step narrower, no width written; a prefix argument gives that many
+                                     steps. The width is written as :width on the #+ATTR_ORG: line, in pixels, or
+                                     as a share where it was written so"
+                                             (mapcar #'first *org-picture-resize-repeat-keys*)))
+                         :width 12)
+     (write-help-section s "Settings"
+                         :rows '("*org-startup-shows-pictures*" "t lets the #+STARTUP: words turn pictures on;
+                                 nil, as standard, only off"
+                                 "*inline-picture-width*" "how wide a picture is drawn when nothing gives its
+                                 width: t, its own, or a number of pixels; never wider than the text"
+                                 "*global-inline-pictures-mode*" "show pictures in every buffer that can"
+                                 "*inline-pictures-modes*" "show them in the modes listed, as '((org-mode . t))"
+                                 "*formula-preamble*" "the LaTeX put before each formula's own")
+                         :width 30)))
+
+(define-command describe-inline-picture-settings ()
+  "Show what a note writes to have its pictures and formulas shown among its
+lines: how the #+ATTR_ORG: line above a picture sizes and places it, which
+links and formulas are shown as pictures in Org, Markdown and LaTeX files, the
+keys that show and resize them, and the settings that change them. The lines
+are filled to *HELP-COLUMN*."
+  (show-help
+   (with-output-to-string (s)
+     (write-help-section s "Pictures among the lines"
+                         :intro "A link to a picture alone on its line is shown as the picture, and a formula
+                         as it is set, while \\[inline-pictures-mode] is on for the buffer. The text stays as
+                         written; point on the picture shows it. A terminal that draws no pictures shows a
+                         line naming each picture and its size. Never in a file opened safely."
+                         :example "#+CAPTION: The plan
+#+ATTR_ORG: :width 50% :align center
+[[file:plan.png]]")
+     (write-help-section s "What shows as a picture"
+                         :rows (list "Org"
+                                     (format nil "[[file:diagram.png]] or [[./diagram.png]] alone on its line, with
+                                     no label, to a file of one of these kinds: ~{~a~^, ~}. As formulas: $...$
+                                     and \\(...\\) in a line, \\=\\[...\\] and $$...$$ alone on their lines,
+                                     and LaTeX environments."
+                                             (mapcar #'cdr *image-formats*))
+                                     "Markdown"
+                                     "None among the lines. \\<org-mode>\\[inline-add-picture] writes
+                                     ![](picture.png){width=100%} for the programs that make the page."
+                                     "LaTeX"
+                                     (format nil "Formulas only: $...$, \\(...\\), \\=\\[...\\] and the ~{~a~^, ~}
+                                     environments. \\<org-mode>\\[inline-add-picture] writes a figure with
+                                     \\includegraphics, which is not shown."
+                                             *latex-math-environments*)
+                                     "Writing a link"
+                                     "\\<org-mode>\\[insert-link] writes a link as the mode writes links; a picture
+                                      is a link
+                                     to its file with no label.")
+                         :width 14)
+     (write-help-section s "#+ATTR_ORG: and the lines like it"
+                         :intro "Written right above the link, after #+CAPTION: and #+NAME:. Each argument is
+                         written :NAME VALUE."
+                         :rows '(":width 400" "that many pixels; 400px is the same"
+                                 ":width 50%" "half the text's width (the window's, up to the fill column)"
+                                 ":width 0.5" "the same: a number with a point, up to 2"
+                                 ":width t" "the picture's own width"
+                                 ":align left" "where a picture alone in its paragraph stands: left (as standard),
+                                 center or right"
+                                 ":center t" "the same as :align center"
+                                 ":float left" "the text goes round the picture, which stands on the left; right
+                                 likewise; wrap, on the side :placement says"
+                                 ":placement {r}" "with :float wrap, {r or {R puts the picture on the right, any
+                                 other value on the left")
+                         :width 16)
+     (write-help-section s "Other #+ATTR_...: lines"
+                         :intro (format nil "~{~a~^, ~}. Where #+ATTR_ORG: gives no width, align or float, the
+                         first of these lines that does is read. :float is Tuatara's own; other programs that
+                         read Org ignore it."
+                                        (mapcar (lambda (keyword) (format nil "#+~a:" keyword))
+                                                *org-attribute-keywords*)))
+     (describe-picture-turning-on s))))
 
 (defun install-org-pictures ()
   "Bind \\[org-resize-picture] in Org buffers, and the keys that go on with it."

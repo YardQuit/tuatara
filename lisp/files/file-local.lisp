@@ -152,25 +152,35 @@ a mode that runs what is typed (the Lisp prompt, *scratch*'s Lisp)."
       (multiple-value-bind (extensions names interpreters paths) (mode-file-rules mode)
         (or extensions names interpreters paths))))
 
+(defparameter *file-local-settings*
+  '(("mode" :mode "the major mode, by name (org, markdown, fundamental): one that some files get by their names")
+    ("tab-width" (:whole 1 64) "how many columns a tab fills: a whole number from 1 to 64")
+    ("indent-tabs-mode" :boolean "t indents with tabs, nil with spaces")
+    ("fill-column" (:whole 1 1000) "the column text is filled to: a whole number from 1 to 1000")
+    ("sentence-end-double-space" :boolean "t for two spaces after a sentence, nil for one"))
+  "The settings a file may give itself: each its name, the kind of value it
+takes (:MODE, :BOOLEAN or (:WHOLE LOW HIGH)) and what it sets.")
+
 (defun apply-file-local-setting (buffer name value)
   "Give BUFFER the setting NAME, with VALUE, that its file names for itself,
-when it is one Tuatara takes and VALUE suits it; true when it was taken."
-  (flet ((whole (low high) (and (integerp value) (<= low value high))))
-    (cond ((string= name "mode")
+when it is one of *FILE-LOCAL-SETTINGS* and VALUE suits it; true when it was
+taken."
+  (let* ((entry (assoc name *file-local-settings* :test #'string=))
+         (kind (second entry)))
+    (cond ((null entry) nil)
+          ((eq kind :mode)
            (let ((mode (and (stringp value)
                             (ignoring-errors-reported ("finding the mode ~a" value)
                               (mode-named (make-symbol (string-upcase value)))))))
              (when (and mode (file-mode-p mode))
                (set-major-mode buffer mode)
                t)))
-          ((string= name "tab-width")
-           (when (whole 1 64) (setf (tuatara.buffer:buffer-local buffer :tab-width) value) t))
-          ((string= name "indent-tabs-mode")
-           (when (member value '(t nil)) (setf (tuatara.buffer:buffer-local buffer :indent-tabs-mode) value) t))
-          ((string= name "fill-column")
-           (when (whole 1 1000) (setf (tuatara.buffer:buffer-local buffer :fill-column) value) t))
-          ((string= name "sentence-end-double-space")
-           (when (member value '(t nil)) (setf (tuatara.buffer:buffer-local buffer :sentence-end-double-space) value) t)))))
+          ((or (eq kind :boolean) (eq (first kind) :whole))
+           (when (if (eq kind :boolean)
+                     (member value '(t nil))
+                     (and (integerp value) (<= (second kind) value (third kind))))
+             (setf (tuatara.buffer:buffer-local buffer (intern (string-upcase name) :keyword)) value)
+             t)))))
 
 (defun file-declares (buffer name)
   "Whether BUFFER's file names the setting NAME for itself, as two values: its
@@ -211,6 +221,47 @@ mode first, and say which of them are left alone; then call
   "Take a file's own settings as it is opened, after its mode is set by its name."
   (setf tuatara.buffer:*find-file-functions*
         (append (remove 'take-file-local-settings tuatara.buffer:*find-file-functions*) (list 'take-file-local-settings))))
+
+(define-command describe-file-local-settings ()
+  "Show how a file names settings for itself, on its first line between -*- and
+-*- or in a Local Variables: block near its end: where each may stand, the
+settings that are taken and the values they take, and what is left alone and
+why. The lines are filled to *HELP-COLUMN*."
+  (show-help
+   (with-output-to-string (s)
+     (write-help-section s "Settings a file gives itself"
+                         :intro "A file may say how it is shown and edited, in a line of its own that any
+                         editor reading such lines understands. They are read as the file is opened, after its
+                         mode is chosen by its name, and only while *FILE-LOCAL-VARIABLES* is t."
+                         :example "# -*- mode: org; fill-column: 72 -*-")
+     (write-help-section s "On the first line"
+                         :intro "Between -*- and -*-, on the first line, or the second when the first begins
+                         #!. NAME: VALUE pairs apart by semicolons, or one word alone, which names the mode:
+                         -*- org -*-. Only the first 1024 bytes are looked at. The name may be written
+                         in any case.")
+     (write-help-section s "In a block near the end"
+                         :intro (format nil "A line that says Local Variables: with nothing after it but what
+                         closes a comment (--> or */), within the last ~d characters; the last such line
+                         begins the block. Each line after it has the same text before it (and after it, for
+                         a comment with a closer) as that line, and holds NAME: VALUE. The block ends at a line
+                         that says End: or does not begin so."
+                                        *file-local-tail*)
+                         :example "# Local Variables:
+# tab-width: 8
+# End:")
+     (write-help-section s "Settings taken"
+                         :rows (loop for (name nil words) in *file-local-settings* append (list name words))
+                         :width 28)
+     (write-help-section s "Values"
+                         :intro "A whole number (up to nine digits), t, nil, or else the text as written. A
+                         value is only ever read as text or a number; nothing a file says is run.")
+     (write-help-section s "What is left alone"
+                         :intro "Any other name, eval and the rest, is left alone and the echo area names it,
+                         except coding and lexical-binding, which are passed over without a word. A value that
+                         does not suit its setting (tab-width: 0, a mode no file takes by name, such as a list
+                         or the Lisp prompt) is left alone too. A file opened safely is never read for
+                         settings, and a package may take more names (*FILE-LOCAL-SETTING-FUNCTIONS*), given the
+                         value as a number, t, nil or text."))))
 
 (defun file-local-text (value)
   "VALUE as a file's own setting writes it: t, nil, a number, or the text."

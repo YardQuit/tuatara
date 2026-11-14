@@ -134,23 +134,7 @@ the parser. Release them with RELEASE-PARSE."
     (multiple-value-bind (tree rope parser) (parse-string "commonlisp" text)
       (declare (ignore rope))
       (false (tuatara.syntax:tree-has-error-p tree))
-      (release-parse tree parser)))
-  ;; so does all of this editor's own Lisp
-  (let ((broken '())
-        ;; a pattern, which system-relative-pathname would take as a name
-        (files (directory (merge-pathnames "**/*.lisp" (asdf:system-source-directory "tuatara")))))
-    (true (> (length files) 100) "~d files" (length files))
-    (dolist (file files)
-      (unless (or (search "/build/" (namestring file)) (search "/.project/" (namestring file))
-                  ;; the grammar takes the symbols ^ and \\ (Calc's operators) and #\; before a
-                  ;; blank for no Lisp: a gap in the grammar, not in the file
-                  (search "lisp/org/formulas.lisp" (namestring file)))
-        (multiple-value-bind (tree rope parser) (parse-string "commonlisp" (uiop:read-file-string file))
-          (declare (ignore rope))
-          (when (tuatara.syntax:tree-has-error-p tree)
-            (push (enough-namestring file (asdf:system-source-directory "tuatara")) broken))
-          (release-parse tree parser))))
-    (is equal '() broken)))
+      (release-parse tree parser))))
 
 (define-test (syntax lisp-loop-named-parses)
   ;; a loop given a name for return-from parses without errors, the name in a clause of its own

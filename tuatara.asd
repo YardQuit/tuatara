@@ -5,7 +5,7 @@
   :description "Tuatara: an Emacs-shaped editor in Common Lisp."
   :author "Michael A Jones <yardquit@pm.me>"
   :license "GPL-3.0-or-later"
-  :version "0.90.28"
+  :version "0.90.29"
   :depends-on ("tuatara/core")
   :in-order-to ((test-op (test-op "tuatara/tests"))))
 
@@ -114,7 +114,8 @@ and the frontend interface. Depends on nothing under lisp/ or frontends/."
                          (:file "toc") (:file "links") (:file "linking") (:file "clock") (:file "checklist")
                          (:file "agenda") (:file "dblock") (:file "agenda-view") (:file "notify")
                          (:file "formatted-blocks") (:file "latex-fonts") (:file "latex-pictures") (:file "latex")
-                         (:file "latex-languages") (:file "export-settings") (:file "pictures") (:file "foreign-text")
+                         (:file "latex-languages") (:file "export-settings") (:file "keywords") (:file "pictures")
+                         (:file "foreign-text")
                          (:file "docx") (:file "docx-templates") (:file "docx-read") (:file "office-read")
                          (:file "odf-read") (:file "template-import") (:file "docx-import") (:file "latex-import")
                          (:file "refile") (:file "capture") (:file "prose")
@@ -269,6 +270,7 @@ the program's entry point."
                (:file "gutter")
                (:file "toggles")
                (:file "help")
+               (:file "describe-settings")
                (:file "man")
                (:file "man-pages")
                (:file "debug")

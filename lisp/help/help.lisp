@@ -45,6 +45,30 @@ longer than a line has a line of its own."
                                       (mapcar (lambda (line) (format nil "~va~a" indent "" line)) (rest lines))))
     (terpri stream)))
 
+(defun write-help-section (stream heading &key intro example rows (width 26))
+  "Write one section of a help text to STREAM, in the layout the commands that
+say what is written in a file share: HEADING on a line of its own; INTRO, a
+paragraph filled to *HELP-COLUMN* (WRITE-FILLED); EXAMPLE, lines set in as they
+are; then ROWS, a flat list of what is written and what it does, each written
+in a column WIDTH wide with its words filled beside it, later lines kept under
+them; what is written too long for the column has a line of its own, the
+words under the second column. Then a blank line.
+Any part may be NIL. The keys the words name are shown as keys."
+  (when heading (format stream "~a~%" heading))
+  (when (and heading (or intro example)) (terpri stream))
+  (when intro (write-filled stream "" intro))
+  (when example
+    (when intro (terpri stream))
+    (dolist (line (uiop:split-string example :separator '(#\Newline)))
+      (format stream "  ~a~%" line)))
+  (when (and rows (or intro example)) (terpri stream))
+  (loop for (written words) on rows by #'cddr
+        do (if (> (length written) width)
+               (progn (format stream "  ~a~%" written)
+                      (write-filled stream (make-string (+ width 3) :initial-element #\Space) words))
+               (write-filled stream (format nil "  ~va " width written) words :indent (+ width 3))))
+  (terpri stream))
+
 (defun write-documentation (stream doc &key (column *help-column*))
   "Write DOC, a docstring, to STREAM filled to COLUMN (WRITE-FILLED), its parts
 as TUATARA.DISPLAY:DOCSTRING-PARAGRAPHS finds them, as the completion popup

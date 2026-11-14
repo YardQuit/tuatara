@@ -849,6 +849,90 @@ takes the formula away."
                 (org-table-store-and-apply model lhs rhs)))
       (message "Not in a table"))))
 
+;;; What a table's formulas may say
+
+(defparameter *org-formula-functions*
+  '(("vsum(@2..@5)" "the sum; a range, or numbers apart by commas")
+    ("vprod(range)" "the product")
+    ("vcount(range)" "how many values it has")
+    ("vmean(range)" "the mean")
+    ("vmedian(range)" "the median")
+    ("vmax(range), max(range)" "the largest")
+    ("vmin(range), min(range)" "the smallest")
+    ("abs(x)" "without its sign")
+    ("round(x), round(x, 2)" "to a whole number, or to that many places")
+    ("floor(x), ceil(x)" "down and up to a whole number")
+    ("sqrt(x), exp(x)" "the square root; e to the power x")
+    ("ln(x), log10(x)" "the natural logarithm; the logarithm to base 10")
+    ("sin(x), cos(x), tan(x)" "x in degrees"))
+  "The functions a table formula may call, each as it is written and what
+it gives.")
+
+(defparameter *org-formula-flags*
+  '(("N" "a field that is no number counts as 0, rather than staying the text it is")
+    ("E" "an empty field in a range counts as 0, rather than being left out")
+    ("p20" "work decimal numbers out to 20 digits; 12 as standard")
+    ("n3" "show decimal numbers to 3 digits; 8 as standard")
+    ("f2" "show decimal numbers with 2 places after the point")
+    ("s3, e3" "show decimal numbers in scientific form, to 3 digits")
+    ("%.2f" "write the result as C's printf does: %d, %f, %e, %E, %g, %G, %s, with a width and flags (%5.1f%%)")
+    ("L, T, t, U" "not worked out: Emacs Lisp is never run, and times and durations are not yet; the field says so"))
+  "The flags written after ; in a table formula, each as it is written and what
+it does.")
+
+(define-command describe-table-formula-settings ()
+  "Show what a #+TBLFM: line under an Org table may hold: the places a
+formula fills, the references it takes, its operators, functions and flags,
+with small examples. The lines are filled to *HELP-COLUMN*."
+  (show-help
+   (with-output-to-string (s)
+     (write-help-section s "Formulas under a table"
+                         :intro "\\<org-mode>A #+TBLFM: line right under a table holds its formulas, apart by ::.
+                         \\[org-table-recalculate] works them all out, as does \\[org-ctrl-c-ctrl-c] on the line.
+                         =$1*2 typed in a field, then TAB, RET or \\[org-ctrl-c-ctrl-c], makes the formula of the
+                         column and works it out; := makes one for the field alone.
+                         \\[org-table-eval-formula] asks for one. The sums are Calc's: integers exact, decimal
+                         numbers to 12 digits shown to 8, * before /, and nothing in Emacs Lisp is run."
+                         :example "| 2 | 3 |   |
+| 4 | 5 |   |
+#+TBLFM: $3=$1+$2
+#+TBLFM: @3$3=vsum(@1$3..@2$3) :: $4=$1*10;%.1f")
+     (write-help-section s "What a formula fills"
+                         :rows '("$3=..." "the third column, in every row (columns count from 1)"
+                                 "$<=..., $>=..." "the first and the last column"
+                                 "@4$2=..." "one field: row 4, column 2"
+                                 "@2$2..@3$3=..." "a range of fields"
+                                 "@<, @>" "the first and the last row, in every column"
+                                 "@I, @II" "the row after the first, the second rule (a |---| line)")
+                         :width 20)
+     (write-help-section s "References"
+                         :rows '("$1" "column 1 of this row"
+                                 "@2" "row 2, in this column"
+                                 "@2$1" "the field in row 2, column 1"
+                                 "$-1, @-1" "the column or row before this one; $+1, @+1 the one after"
+                                 "$<, $>, @<, @>" "the first and last; $<< the second, @>> the one before the last"
+                                 "@I, @II" "the row after the first, the second rule of the table"
+                                 "@-I, @+II" "the row after the nearest rule before this row; after the second
+                                 rule after it"
+                                 "@#, $#" "the number of this row and of this column"
+                                 "@2..@4, $1..$3" "a range of fields, for the functions below")
+                         :width 20)
+     (write-help-section s "What a field holds"
+                         :intro "A number: 12, 1.5, 3. or 1e10. An empty field is 0, and in a range is left out
+                         (flag E counts it). Text that is no number stays the text; flag N makes it 0.")
+     (write-help-section s "Operators"
+                         :rows '("+ - * / ^" "the sum, difference, product and quotient; ^ raises to a power"
+                                 "%  \\" "the remainder; integer division"
+                                 "== != < > <= >= =" "give 1 for true and 0 for false; = is the same as =="
+                                 "&& || !" "and, or, not; a number that is not 0 is true"
+                                 "( )" "group; -x is the negative"))
+     (write-help-section s "Functions"
+                         :rows (loop for (written words) in *org-formula-functions* append (list written words))
+                         :width 26)
+     (write-help-section s "Flags after ; at the end of a formula"
+                         :rows (loop for (written words) in *org-formula-flags* append (list written words))
+                         :width 14))))
+
 (defun install-org-formulas ()
   "Bind Org's keys for table formulas: \\`C-c *' works them out, \\`C-c =' asks for one."
   (let ((keymap (mode-keymap 'org-mode)))

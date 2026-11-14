@@ -402,6 +402,24 @@ any, or a list of numbers."
   "True when PART of a rule's form is T, a number or a list of numbers."
   (or (eq part t) (integerp part) (and (consp part) (every #'integerp part))))
 
+(defparameter *org-rule-forms*
+  '(("diary-float" "(diary-float MONTH WEEKDAY N), the Nth WEEKDAY of the month (a negative N counts from the
+month's end): (diary-float t 1 1) is the first Monday of every month. MONTH is t, a number or a list of
+numbers; WEEKDAY 0 for Sunday to 6; N from 1 to 5; a fourth number may name a day of the month")
+    ("diary-cyclic" "(diary-cyclic N DATE), every N days, counting from the date given as year month day, or
+as month day year")
+    ("diary-block" "(diary-block FROM TO), every day from one date to another, each as three numbers")
+    ("diary-anniversary" "(diary-anniversary DATE), the day of the year the month and day say, as
+(diary-anniversary 10 5) or with its year")
+    ("diary-date" "(diary-date MONTH DAY YEAR), the days those match; t stands for any, and a list for
+several")
+    ("memq" "(memq (calendar-day-of-week date) '(1 2 3 4 5)), the weekdays listed, 0 for Sunday to 6")
+    ("and" "(and FORM FORM), the days all the forms take")
+    ("or" "(or FORM FORM), the days any of the forms takes"))
+  "The forms a date by rule may be, each its name and what it says. A date's
+three numbers are read as year month day when the first is more than 31, else
+as month day year.")
+
 (defun org-rule-from-data (data)
   "DATA, a rule's form as ORG-READ-RULE-DATA reads it, as an ORG-RULE with no
 time, or NIL when it is not one of those known: diary-float, diary-cyclic,
@@ -700,3 +718,74 @@ RULE takes no day near."
 
 (setf (documentation 'make-org-ts 'function)
       "An ORG-TS of the parts given by their keywords, each as ORG-TS says; ORG-TS-TEXT writes it.")
+
+;;; What a timestamp may hold
+
+(defparameter *org-timestamp-units*
+  '((#\h "hours") (#\d "days") (#\w "weeks") (#\m "months") (#\y "years"))
+  "The units a repeater, a warning or a delay counts in, each its letter and its name.")
+
+(define-command describe-timestamp-settings ()
+  "Show what a timestamp in an Org note may hold that Tuatara reads: the
+brackets that make it active or inactive, its times and ranges, repeaters,
+warnings and delays, the planning lines SCHEDULED, DEADLINE and CLOSED, and
+the dates by rule, with examples of each. The lines are filled to
+*HELP-COLUMN*."
+  (show-help
+   (with-output-to-string (s)
+     (write-help-section s "Timestamps"
+                         :intro "\\<org-mode>\\[org-time-stamp] writes one at point, \\[org-time-stamp-inactive] an
+                          inactive
+                         one, \\[org-schedule] and \\[org-deadline] the planning lines. The day's name is any
+                         word, or none."
+                         :example "<2026-10-05 Mon 09:00-10:00 +1w -3d>")
+     (write-help-section s "Active and inactive"
+                         :rows '("<2026-10-05 Mon>" "active: the agenda lists the entry on that day"
+                                 "[2026-10-05 Mon]" "inactive: a date in the text, not in the agenda"
+                                 "<2026-10-05>--<2026-10-09>" "a range of days, listed on each; both ends
+                                 active"
+                                 "<2026-10-05 Mon 09:00>" "a time of day, one or two digits for the hour"
+                                 "<2026-10-05 Mon 09:00-10:00>" "a range of times on the day")
+                         :width 30)
+     (write-help-section s "Repeaters"
+                         :intro "After the time, a sign, a number and a unit letter:"
+                         :rows (append
+                                '("+1w" "again a week on from the date it had, as often as it is done
+                                 (cumulate)"
+                                  "++1w" "a week on from the date it had until that is still to come: a task done
+                                  late goes on to its next date in the future (catch up)"
+                                  ".+1w" "a week on from the day it is done (restart)"
+                                  "+1w/2w" "a limit after a slash is accepted and not acted on")
+                                (list "units" (format nil "~{~a~^, ~}"
+                                                      (loop for (letter name) in *org-timestamp-units*
+                                                            collect (format nil "~c ~a" letter name)))))
+                         :width 14)
+     (write-help-section s "Warnings and delays"
+                         :rows '("-3d" "on a DEADLINE: the agenda lists it from 3 days before; with none,
+                                 *ORG-DEADLINE-WARNING-DAYS* say how many"
+                                 "--3d" "the same sign with two dashes, read alike"
+                                 "SCHEDULED -3d" "a delay: the agenda does not list the task until 3 days after
+                                 its date")
+                         :width 16)
+     (write-help-section s "Planning lines"
+                         :intro "On the line right under a heading, in any order, each a word, a colon and a
+                         timestamp:"
+                         :rows '("SCHEDULED:" "when to start; the agenda lists the entry that day, and as
+                                 overdue after it"
+                                 "DEADLINE:" "when it is due; listed ahead of it as its warning says"
+                                 "CLOSED:" "when it was done, an inactive timestamp set as the task is marked
+                                 done (*ORG-LOG-DONE*); the agenda lists it in log mode")
+                         :example "* TODO Report
+SCHEDULED: <2026-10-05 Mon> DEADLINE: <2026-10-09 Fri -2d>"
+                         :width 14)
+     (write-help-section s "Dates by rule"
+                         :intro "A timestamp <%%(FORM) 10:00> holds a rule that says which days, and an
+                         optional time of day or range. The rule is read as data and never run; only these
+                         forms are read."
+                         :rows (loop for (name words) in *org-rule-forms* append (list name words))
+                         :example "<%%(diary-float t 1 1) 10:00>"
+                         :width 20)
+     (write-help-section s "One time of a repeat"
+                         :intro "A log line - State \"CANCELLED\" for [2026-10-12 Mon] under the entry
+                         cancels that time of its repeat; - State \"MOVED\" for [2026-10-12 Mon] to
+                         [2026-10-14 Wed] moves it."))))

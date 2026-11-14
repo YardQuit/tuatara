@@ -11,6 +11,41 @@
 
 (in-package #:tuatara.defaults)
 
+(defparameter *org-capture-head-fields*
+  '(("name" "what the template is called when you choose it; its file's name when there is none")
+    ("key" "the character that chooses it; a file with none is no template")
+    ("file" "where the text is filed: a file, or *org-agenda-files* for the first of the files the agenda reads
+(that file, or agenda.org in the first directory or pattern's directory named)")
+    ("heading" "with file: under the heading of that name, at the end of what is under it; the heading is made at
+the file's end when it has none such")
+    ("outline" "with file: under the heading whose titles from the top are A then B, written A / B")
+    ("journal" "t files the text at the end of today's journal entry; a file is ignored")
+    ("clock-in" "t clocks the entry from when its capture begins")
+    ("clock-resume" "t, with clock-in, stops the clock when the entry is filed and sets the clock that ran before
+going again"))
+  "The lines a capture template's head may hold, each \"# name: value\": its
+name as written and what it sets.")
+
+(defparameter *org-capture-escapes*
+  '(("%?" "where point is left to write")
+    ("%i" "the text selected when capturing")
+    ("%U" "the time as an inactive timestamp: [2026-10-06 Tue 14:03]")
+    ("%u" "the day as an inactive timestamp: [2026-10-06 Tue]")
+    ("%T" "the time as an active timestamp: <2026-10-06 Tue 14:03>")
+    ("%t" "the day as an active timestamp: <2026-10-06 Tue>")
+    ("%a" "a link to where you captured from, as \\[org-store-link] makes it")
+    ("%^{Prompt}" "an answer typed to the question Prompt")
+    ("%^{Prompt|one|two}" "an answer chosen among those listed")
+    ("%^g" "tags asked for, offering those used in the target and the agenda")
+    ("%^t, %^T" "a date asked for as \\<org-mode>\\[org-time-stamp] asks it (fri 10:00, +3d, every week 10:00),
+     written as an
+active timestamp; several days chosen in the calendar make a timestamp each, a run of days a range")
+    ("%<%H:%M>" "the time as the pattern says, as format-time's % letters do")
+    ("%%" "a % itself"))
+  "The % placeholders a capture template's text may hold, each as it is
+written and what is put there. Any other % and the letter after it stay as
+they are.")
+
 (define-setting *capture-template-directories* nil
   "The directories your capture templates are in, a template a file.
 \\[org-capture] offers them with Tuatara's own (t, n, j, m).
@@ -18,50 +53,40 @@
 - nil, as standard: capture-templates/ in your configuration directory
   (~/.config/tuatara/capture-templates/, XDG_CONFIG_HOME's when it is set).
 
-One of yours with the key of one of Tuatara's takes its place. A file's head names it, then its
-text follows after # --:
-
-  # name: TODO for the agenda
-  # key: t
-  # file: *org-agenda-files*
-  # heading: Tasks
-  # --
-  * TODO %?  %^g
-  %U
-
-The key is the character that chooses it. Where the text is filed:
-  # file: FILE and # heading: HEADLINE  under the heading HEADLINE of FILE, at
-                                       the end of what is under it; the
-                                       heading made at the file's end when it
-                                       has none such
-
-  # file: FILE and # outline: A / B    under the heading of FILE whose titles
-                                       from the top are A then B (\\[org-refile]'s)
-  # file: FILE alone                   at FILE's end
-
-FILE written *org-agenda-files* is the first of the files the agenda reads:
-that file, or agenda.org in the first directory (or a pattern's directory) named.
-  # journal: t                         at the end of today's journal entry
-                                       (\\[journal-new-or-existing-entry])
-With # clock-in: t the entry is clocked from when its capture begins; with
-# clock-resume: t too, the clock stops when it is filed and the clock that ran
-before goes on. The text's headings (* ...) are put a level below the heading
-it goes under, with these filled in:
-  %?  where point is left to write    %i  the text selected when capturing
-  %U  [2026-10-06 Tue 14:03]          %u  [2026-10-06 Tue]
-  %T  <2026-10-06 Tue 14:03>          %t  <2026-10-06 Tue>
-  %a  a link to where you captured from (as \\[org-store-link] makes it)
-
-  %^{Prompt}       asked for          %^{Prompt|one|two}  chosen among
-  %^g  tags asked for, with the tags used in the target and the agenda
-
-  %^t, %^T  a date asked for as \\[org-time-stamp] asks it (fri 10:00, +3d,
-       every week 10:00), written as an active timestamp, <2026-10-30 Fri 10:00>;
-       several days chosen in the calendar, a timestamp each, a run a range
-  %<%H:%M>  the time as the pattern says (format-time's %-specifiers)
-  %%  a %
+One of yours with the key of one of Tuatara's takes its place.
+\\[describe-capture-template-settings] says what a template's file holds,
+where it files its text, and the % placeholders the text takes.
 \\[org-capture-template-copy] makes one of Tuatara's yours to change."
   :values (list-of directory))
+
+(define-command describe-capture-template-settings ()
+  "Show what a capture template's file holds: its head, where it files its
+text, and the % placeholders its text takes, with an example. The lines are
+filled to *HELP-COLUMN*."
+  (show-help
+   (with-output-to-string (s)
+     (write-help-section s "Capture templates"
+                         :intro "A template is a file in one of *CAPTURE-TEMPLATE-DIRECTORIES*. Its head, lines
+                         that begin # and a name, says what it is and where it files its text; the text follows
+                         after # --. \\[org-capture] offers the templates by their keys; a template of yours with
+                         the key of one of Tuatara's takes its place. \\[org-capture-template-copy] copies one of
+                         Tuatara's for you to change."
+                         :example "# name: TODO for the agenda
+# key: t
+# file: *org-agenda-files*
+# heading: Tasks
+# --
+* TODO %?  %^g
+%U")
+     (write-help-section s "The head"
+                         :rows (loop for (name words) in *org-capture-head-fields*
+                                     append (list (format nil "# ~a:" name) words))
+                         :width 16)
+     (write-help-section s "In the text"
+                         :intro "The text's headings are put a level below the heading it goes under, with
+                         these filled in:"
+                         :rows (loop for (written words) in *org-capture-escapes* append (list written words))
+                         :width 20))))
 
 (defparameter *built-in-capture-templates* (built-in-data-files "capture-templates/")
   "Tuatara's own capture templates, each (FILE-NAME TEXT): a TODO for the

@@ -341,16 +341,16 @@ it most plainly.
 #+name: fig-sexp-moves
 #+begin_example
   (defun average (numbers)
-  ^       ^       ^
-  |       |       C-M-f from here goes over (numbers)
-  |       C-M-f from here goes over the name, then the list
+  ^      ^       ^
+  |      |       C-M-f from here goes over (numbers)
+  |      C-M-f from here goes over the name, then the list
   C-M-d here goes in, just after the bracket
 
   (defun average (numbers)
     (/ (sum numbers) (length numbers)))
-        ^
-        C-M-u here goes out, back to the bracket before (/
-        C-M-f here goes over (sum numbers)
+       ^
+       C-M-u here goes out, back to the bracket before (/
+       C-M-f here goes over (sum numbers)
 #+end_example
 
 ~C-M-f~ and ~C-M-b~ (=forward-sexp=, =backward-sexp=) move over the next or the

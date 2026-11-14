@@ -419,6 +419,14 @@ other way round.
 If your terminal does not speak it, everything works, with one small delay
 after Escape while Tuatara waits to see what follows.
 
+AltGr with a letter works as Meta (chapter 8) only where the terminal tells
+Tuatara that AltGr is held. A terminal applies AltGr before Tuatara sees the
+key, so with =*altgr-as-meta*= on, Tuatara asks the terminal for every key
+pressed and let go, AltGr among them, by the same protocol. kitty and foot
+report them. In a terminal that does not, AltGr types what the keyboard gives,
+as before. In kitty the letter is the key's place on a US keyboard, as kitty
+reports no other; in foot it is the letter of the key in your first layout.
+
 #+table: settings *kitty-keyboard*
 
 *** Colours and pictures

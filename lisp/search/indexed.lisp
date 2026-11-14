@@ -553,10 +553,13 @@ following them costs nothing between changes.")
 (defun indexed-directories-watched ()
   "The directories under every directory kept read, to be watched on disk;
 the same list as before while no index was read again."
-  (let ((key (mapcar #'directory-index-directories *directory-indexes*)))
-    (unless (and (= (length key) (length (car *indexed-directories-watched*)))
-                 (every #'eq key (car *indexed-directories-watched*)))
-      (setf *indexed-directories-watched* (cons key (loop for list in key append list))))
+  (let ((kept (car *indexed-directories-watched*)))
+    (unless (and (= (length *directory-indexes*) (length kept))
+                 (loop for index in *directory-indexes*
+                       for directories in kept
+                       always (eq (directory-index-directories index) directories)))
+      (let ((key (mapcar #'directory-index-directories *directory-indexes*)))
+        (setf *indexed-directories-watched* (cons key (loop for list in key append list)))))
     (cdr *indexed-directories-watched*)))
 
 (defun indexed-directories-changed (changed)

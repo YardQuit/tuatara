@@ -92,9 +92,10 @@ instance, may hold =-*- mode: org -*-= to say that it is an Org file, or a
 block of lines near its end may set the width of a tab. Tuatara reads those
 settings when it opens the file, unless you turn off =*file-local-variables*=.
 You will meet this in files written for Emacs. It is of no use to you until
-you see it.
+you see it. ~M-x describe-file-local-settings~ says where those lines may
+stand, which settings are taken and what is left alone.
 
-#+table: commands find-file find-file-other-window find-file-other-frame find-file-safely open-path-at-point open-dropped-files show-file-name
+#+table: commands find-file find-file-other-window find-file-other-frame find-file-safely open-path-at-point open-dropped-files show-file-name describe-file-local-settings
 
 #+table: settings *last-used-first* *open-dropped-files-safely* *file-local-variables* *preview-files*
 

@@ -694,20 +694,24 @@ A part that tells of its changes is asked only after it did."
   (declare (ignore editor))
   (let* ((count (car *directories-followed-count*))
          (told (/= count *directories-followed-seen*))
-         (moved nil)
-         (wanted (loop for (want nil tells) in *directory-followers*
-                       for old = (assoc want *directories-followed*)
-                       collect (if (and old tells (not told))
-                                   old
-                                   (let ((new (ignoring-errors-reported ("asking which directories to follow")
-                                                (funcall want))))
-                                     (if (and old (or (eq new (cdr old)) (equal new (cdr old))))
-                                         old
-                                         (progn (setf moved t) (cons want new))))))))
+         (moved nil))
+    (unless (and (= (length *directory-followers*) (length *directories-followed*))
+                 (loop for follower in *directory-followers*
+                       for kept in *directories-followed*
+                       always (eq (first follower) (car kept))))
+      (setf *directories-followed* (loop for (want) in *directory-followers* collect (list want))
+            told t
+            moved t))
+    (loop for (want nil tells) in *directory-followers*
+          for kept in *directories-followed*
+          unless (and tells (not told))
+            do (let ((new (ignoring-errors-reported ("asking which directories to follow") (funcall want))))
+                 (unless (or (eq new (cdr kept)) (equal new (cdr kept)))
+                   (setf (cdr kept) new
+                         moved t))))
     (setf *directories-followed-seen* count)
-    (when (or moved (/= (length wanted) (length *directories-followed*)))
-      (setf *directories-followed* wanted)
-      (tuatara.io:watch-directories (loop for (nil . list) in wanted append list)))
+    (when moved
+      (tuatara.io:watch-directories (loop for (nil . list) in *directories-followed* append list)))
     (let ((changed (tuatara.io:take-directory-news)))
       (when changed
         (loop for (nil told) in *directory-followers*

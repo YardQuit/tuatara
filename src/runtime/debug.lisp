@@ -237,15 +237,19 @@ NIL while it waits for what comes next.")
   "The seconds the editor's thread may be busy with one piece of work before
 the calls under way in it are written to the error log (STDERR.LOG), once.")
 
-(defvar *editor-busy-wake* (sb-thread:make-semaphore :name "tuatara editor busy")
-  "Signalled as the editor's thread starts work, to wake the hang watch, which
-waits on it while the editor is at rest.")
+(defvar *hang-watch-wakes* '()
+  "The semaphores of the hang watches running (START-HANG-WATCH), each
+signalled as the editor's thread starts work, to wake its watch, which waits
+on it while the editor is at rest. Changed only by the editor's thread, as a
+watch starts and ends.")
 
 (defun note-editor-busy (busy)
   "Note that the editor's thread starts work (BUSY true) or waits again."
   (setf *editor-busy-since* (and busy (get-internal-real-time)))
-  (when (and busy (zerop (sb-thread:semaphore-count *editor-busy-wake*)))
-    (sb-thread:signal-semaphore *editor-busy-wake*)))
+  (when busy
+    (dolist (wake *hang-watch-wakes*)
+      (when (zerop (sb-thread:semaphore-count wake))
+        (sb-thread:signal-semaphore wake)))))
 
 (defun start-hang-watch (thread &key (while (constantly t)))
   "Watch THREAD, the editor's, from a thread of its own, as long as it lives and
@@ -253,32 +257,44 @@ WHILE, a function of no arguments, is true. Once it has been busy with one
 piece of work for *HANG-REPORT-SECONDS* (*EDITOR-BUSY-SINCE*), have it write
 the calls under way in it to the error output, so that a hang leaves a trace
 however it came about. At rest it sleeps until the editor starts work
-\(*EDITOR-BUSY-WAKE*), looking once a minute whether THREAD still lives. While
-the editor works, it looks once a second. Returns the watching thread."
-  (make-guarded-thread
-   (lambda ()
-     (let ((reported nil))
-       (loop (unless *editor-busy-since*
-               (sb-thread:wait-on-semaphore *editor-busy-wake* :timeout 60))
-             (sleep 1)
-             (unless (and (sb-thread:thread-alive-p thread) (funcall while)) (return))
-             (let ((since *editor-busy-since*))
-               (when (and since (not (eql since reported))
-                          (> (seconds-since since) *hang-report-seconds*))
-                 (setf reported since)
-                 (handler-case
-                     (sb-thread:interrupt-thread
-                      thread
-                      (lambda ()
-                        (let ((lines (backtrace-lines)))
-                          (format *error-output*
-                                  "~&Tuatara: the editor has been busy for ~d s; the calls under way:~%~{  ~a~%~}"
-                                  (round (seconds-since since)) lines)
-                          (finish-output *error-output*)
-                          (queue-debug-report :error (format nil "busy for ~d s:~{~%    ~a~}"
-                                                             (round (seconds-since since)) lines)))))
-                   (sb-thread:interrupt-thread-error () nil)))))))
-   :name "tuatara hang watch"))
+\(NOTE-EDITOR-BUSY), looking once a minute whether THREAD still lives. While
+the editor works, it looks once a second. Returns a function of no arguments
+that ends the watch at once, as a session ending does."
+  (let* ((wake (sb-thread:make-semaphore :name "tuatara editor busy"))
+         (ended nil)
+         (watch
+           (make-guarded-thread
+            (lambda ()
+              (let ((reported nil))
+                (loop (unless *editor-busy-since*
+                        (sb-thread:wait-on-semaphore wake :timeout 60))
+                      (unless ended
+                        (sb-thread:wait-on-semaphore wake :timeout 1))
+                      (when (or ended (not (sb-thread:thread-alive-p thread)) (not (funcall while)))
+                        (return))
+                      (let ((since *editor-busy-since*))
+                        (when (and since (not (eql since reported))
+                                   (> (seconds-since since) *hang-report-seconds*))
+                          (setf reported since)
+                          (handler-case
+                              (sb-thread:interrupt-thread
+                               thread
+                               (lambda ()
+                                 (let ((lines (backtrace-lines)))
+                                   (format *error-output*
+                                           "~&Tuatara: the editor has been busy for ~d s; the calls under way:~%~{  ~a~%~}"
+                                           (round (seconds-since since)) lines)
+                                   (finish-output *error-output*)
+                                   (queue-debug-report :error (format nil "busy for ~d s:~{~%    ~a~}"
+                                                                      (round (seconds-since since)) lines)))))
+                            (sb-thread:interrupt-thread-error () nil)))))))
+            :name "tuatara hang watch")))
+    (push wake *hang-watch-wakes*)
+    (lambda ()
+      (setf ended t
+            *hang-watch-wakes* (remove wake *hang-watch-wakes*))
+      (sb-thread:signal-semaphore wake)
+      (sb-thread:join-thread watch :default nil :timeout 5))))
 
 (defparameter *error-reports-per-second* 4
   "The most reports of one kind of failure made at one place (REPORTING-ERRORS)

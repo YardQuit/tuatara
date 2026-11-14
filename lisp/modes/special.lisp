@@ -1176,22 +1176,30 @@ when that is one), when given, else as \\[revert-buffer] makes it (its
     (when (and buffer (typep (buffer-major-mode buffer) mode))
       (refill-list buffer))))
 
+(defvar *shown-lists-seen* (make-array 8 :adjustable t :fill-pointer 0)
+  "The buffers KEEP-SHOWN-LISTS-CURRENT has looked at so far in its tick,
+emptied after it: the vector is kept from one tick to the next so that a tick
+makes nothing.")
+
 (defun keep-shown-lists-current (editor)
   "Tick function: make again each list kept current (KEEP-SHOWN-CURRENT) that a
 window of EDITOR shows and whose key has changed since it was filled; a list
 whose key is the same is left as it is, as is one a waiting question is about
 \(BUFFER-HELD-BY-QUESTION-P). Wants no tick of its own."
-  (let ((seen '()))
+  (let ((seen *shown-lists-seen*))
+    (setf (fill-pointer seen) 0)
     (do-frames-windows (window editor)
       (let ((buffer (and window (tuatara.display:window-buffer window))))
-        (when (and buffer (not (member buffer seen)) (not (buffer-held-by-question-p buffer)))
-          (push buffer seen)
+        (when (and buffer (not (find buffer seen)) (not (buffer-held-by-question-p buffer)))
+          (vector-push-extend buffer seen)
           (let ((kind (shown-list-kind buffer)))
             (when (and kind (not (equal (funcall (second kind) buffer)
                                         (tuatara.buffer:buffer-local buffer 'list-key))))
               (if (third kind)
                   (funcall (third kind) buffer window)
-                  (refill-list buffer))))))))
+                  (refill-list buffer)))))))
+    (fill seen nil)
+    (setf (fill-pointer seen) 0))
   nil)
 
 (defgeneric mode-before-quit (mode buffer)

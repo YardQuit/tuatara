@@ -34,8 +34,8 @@ after it with a dot (:markup.raw for :markup.raw.block).
 
 (define-setting *spellcheck-comment-faces* '(:comment)
   "In code, the faces of comments, whose words are checked (unless
-*SPELLCHECK-MODES* says :strings): those named after them with a dot too
-\(:comment.documentation).
+*SPELLCHECK-MODES* says :strings): those named after them with a dot too,
+as a language's documentation comments are.
 - a list of faces' names: :comment as standard."
   :values (list-of "a face's name"))
 

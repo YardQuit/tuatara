@@ -1410,6 +1410,66 @@ windows side by side, \"floated\" for an Org note's two pictures."
     (false (command #x55 (logior 4 1)))
     (true (command #x55 4))))
 
+(define-test (gtk altgr-letters-as-meta)
+  ;; AltGr with a letter key is Meta with the letter the key gives alone (on a Swedish layout
+  ;; AltGr-x gives », AltGr-e €); AltGr with a digit or sign is the input method's (AltGr-7 {,
+  ;; AltGr-2 @); the left Alt is Meta as always
+  (flet ((key (keyval state &optional first-level)
+           (let ((k (tuatara.frontend.gtk::gdk-command-key keyval state first-level)))
+             (and k (tuatara.frontend:key-spec k)))))
+    (let ((tuatara-user:*altgr-as-meta* t))
+      (is equal '(:meta #\x) (key #xbb 0 #x78))
+      (is equal '(:meta #\X) (key #x3e 1 #x78))
+      (is equal '(:meta #\e) (key #x20ac 0 #x65))
+      (is equal '(:ctrl :meta #\x) (key #xbb 4 #x78))
+      (false (key #x7b 0 #x37))
+      (false (key #x40 0 #x32))
+      (false (key #x5c 0 #x2b))
+      (is equal '(:meta #\x) (key #x78 8))
+      (is equal '(:ctrl #\x) (key #x78 4))
+      (false (key #x78 0))
+      (false (key #x58 1)))
+    (let ((tuatara-user:*altgr-as-meta* nil))
+      (false (key #xbb 0 #x78))
+      (false (key #x20ac 0 #x65))
+      (is equal '(:meta #\x) (key #x78 8))))
+  ;; the setting names the layouts that type their own letters with AltGr, which turn it off
+  (let ((words (documentation 'tuatara-user:*altgr-as-meta* 'variable)))
+    (dolist (layout '("Polish" "Czech" "Hungarian" "Romanian" "Croatian" "Lithuanian" "Neo"))
+      (true (search layout words)))
+    (false (search "no third sign" words))))
+
+(define-test (gtk altgr-level-read-from-the-event)
+  ;; GDK stood in for: the key event's level says AltGr (2 and up), and the keycode's key value
+  ;; with no modifier, in the event's layout, is the letter that goes with Meta
+  (let ((level 2) (asked '()))
+    (with-functions-replaced ((tuatara.gtk:gtk-event-controller-get-current-event
+                               (lambda (controller) (declare (ignore controller)) (sb-sys:int-sap 16)))
+                              (tuatara.gtk:gdk-key-event-get-level (lambda (event) (declare (ignore event)) level))
+                              (tuatara.gtk:gdk-event-get-display (lambda (event) (declare (ignore event)) (sb-sys:int-sap 32)))
+                              (tuatara.gtk:gdk-key-event-get-layout (lambda (event) (declare (ignore event)) 1))
+                              (tuatara.gtk:gdk-first-level-keyval
+                               (lambda (display keycode layout)
+                                 (declare (ignore display))
+                                 (push (list keycode layout) asked)
+                                 (case keycode (53 #x78) (16 #x37)))))
+      (flet ((key (keyval state keycode)
+               (let ((k (tuatara.frontend.gtk::gdk-command-key
+                         keyval state (tuatara.frontend.gtk::third-level-keyval (sb-sys:int-sap 8) keycode))))
+                 (and k (tuatara.frontend:key-spec k)))))
+        (let ((tuatara-user:*altgr-as-meta* t))
+          (is equal '(:meta #\x) (key #xbb 0 53))
+          (is equal '(53 1) (first asked))
+          (is equal '(:meta #\X) (key #x3e 1 53))
+          (false (key #x7b 0 16))
+          (setf level 0 asked '())
+          (false (key #x78 0 53))
+          (false asked))
+        (let ((tuatara-user:*altgr-as-meta* nil))
+          (setf level 2)
+          (false (key #xbb 0 53))
+          (false asked))))))
+
 (define-test (gtk picture-written-to-a-name-not-utf-8)
   ;; a file name the window gives GTK or Cairo reaches the system as it was read, raw bytes and all
   (tuatara.gtk:load-gtk-libraries)
