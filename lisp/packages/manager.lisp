@@ -16,7 +16,10 @@ first (*PACKAGE-ASK-BEFORE-LOADING*); the others are said to be up to date. A
 version that needs a newer Tuatara is passed over for the newest that fits,
 or the one loaded now kept; one signed by another than the source's first
 version, or unsigned when that was signed, is refused (\[package-trust-again]
-takes it); one that fails to load gives way to the version before it."
+takes it); one that fails to load gives way to the version before it. A new
+version of a package running now that lays out its structures otherwise
+cannot replace it in this session: it is kept as the version taken and loads
+at the next start, said."
   (update-packages (mapcar #'first *declared-packages*)))
 
 (defun update-packages (names)
@@ -79,12 +82,14 @@ entry remembered (KEY COMMIT TAG ACCEPTED) and where it is kept, as two values."
 
 (defun package-condition (name entry)
   "What is become of the package NAME this session, ENTRY what is remembered
-of it. It is one of: loaded, fetching, loading (compiled and loaded in the
-background), removed (not loaded though the init file names it), refused (it
+of it. It is one of: restart (loaded, with a newer version taken that loads
+at the next start, PACKAGE-AWAITS-RESTART-P), loaded, fetching, loading
+\(compiled and loaded in the background), removed (not loaded though the init file names it), refused (it
 uses names this Tuatara lacks), failed, waiting (for another, :after), later
 \(to load on a command, a mode or once started), unloaded, declined (not let
 load), kept or not fetched."
-  (cond ((package-loaded-p name) "loaded")
+  (cond ((package-awaits-restart-p name) "restart")
+        ((package-loaded-p name) "loaded")
         ((member name *fetching-packages* :test #'string=) "fetching")
         ((let ((job (cdr (assoc name *packages-in-hand* :test #'string=))))
            (and job (package-fetch-load job)))
@@ -118,7 +123,7 @@ http:// or git://."
 \(LIST-MARK-FACE) when it has one; else :list-dim for one not loaded, by its
 CONDITION, none for one loaded."
   (or (list-mark-face mark)
-      (unless (string= condition "loaded") :list-dim)))
+      (unless (member condition '("loaded" "restart") :test #'string=) :list-dim)))
 
 (defun declared-package-condition (name)
   "How the package NAME stands as the init file declares it (PACKAGE-CONDITION),
@@ -256,7 +261,8 @@ a second value, where the reading stopped, (LINE . WHY), or NIL."
            for name = (second form)
            collect (list name line inside
                          (let ((before (declared-package-condition name)))
-                           (if (member before '("loaded" "fetching" "loading" "later" "waiting") :test #'equal)
+                           (if (member before '("restart" "loaded" "fetching" "loading" "later" "waiting")
+                                       :test #'equal)
                                before
                                (handler-case
                                    (reporting-errors ("evaluating the package ~a" name)

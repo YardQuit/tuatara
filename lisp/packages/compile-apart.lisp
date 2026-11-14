@@ -141,7 +141,9 @@ of its own, this Tuatara run again (PACKAGE-COMPILER-COMMAND): it loads the
 packages loaded here so far, then this one, compiling what changed, as a
 load here would, so that its compile-time code never runs in the editor.
 JOB is the loading's: stopping it ends that process; its COMPILED turns true
-as a file of it begins compiling, said. True when it was all compiled so;
+as a file of it begins compiling, said. True when it was all compiled so,
+with the structures the package defines as a second value
+\(STRUCTURES-MADE-SINCE), or :UNKNOWN when the process did not say them;
 NIL when it failed there, as code of the package's that needs what only the
 editor has does, the last of what the process said kept in *Messages*, or
 when there is nothing to run it from (COMPILER-CORE). It
@@ -178,7 +180,7 @@ is refused for names this Tuatara lacks only as it loads in the editor
                       :job job :output :stream :error :output
                       :environment (package-child-environment request token))))
            (tuatara.runtime:job-check-stop)
-           (cond ((eql code 0) t)
+           (cond ((eql code 0) (values t (read-structures-file (structures-file request))))
                  (t (let ((words (format nil
                                          "The package ~a could not be compiled apart from the editor, and is compiled as it loads~@[: ~{~a~^ ~}~]"
                                          name
@@ -187,7 +189,104 @@ is refused for names this Tuatara lacks only as it loads in the editor
                       ;; *Messages* is the editor's
                       (defer-action (lambda () (log-message words))))
                     nil)))
-      (handler-case (delete-file request) (file-error () nil)))))
+      (dolist (made (list request (structures-file request)))
+        (handler-case (delete-file made) (file-error () nil))))))
+
+(defun structure-description (name)
+  "How the structure NAME is laid out, as strings, integers and lists of them:
+its length, how deep it stands among the structures it includes, which of its
+words hold Lisp objects, the names of the classes it stands on and, for each
+slot, its name, its place, the kind of value kept in it and its type. A
+structure can be defined again in a running Tuatara only as it was laid out
+before; one laid out otherwise needs a new start. NIL when NAME names no
+structure."
+  (let ((definition (sb-kernel:find-defstruct-description name nil))
+        (layout (sb-kernel:find-layout name)))
+    (when (and definition layout)
+      (with-standard-io-syntax
+        (let ((*package* (find-package :keyword)) (*print-readably* nil) (*print-pretty* nil))
+          (list (sb-kernel:layout-length layout)
+                (sb-kernel:layout-depthoid layout)
+                (sb-kernel:layout-bitmap layout)
+                (map 'list (lambda (above)
+                             (prin1-to-string (sb-kernel:classoid-name (sb-kernel:layout-classoid above))))
+                     (sb-kernel:layout-inherits layout))
+                (mapcar (lambda (slot)
+                          (list (symbol-name (sb-kernel:dsd-name slot)) (sb-kernel:dsd-index slot)
+                                (prin1-to-string (sb-kernel:dsd-raw-type slot))
+                                (prin1-to-string (sb-kernel:dsd-type slot))))
+                        (sb-kernel:dd-slots definition))))))))
+
+(defun structure-definitions ()
+  "A table from each symbol that names a structure in this Lisp to its definition."
+  (let ((table (make-hash-table :test 'eq)))
+    (do-all-symbols (symbol table)
+      (let ((definition (sb-kernel:find-defstruct-description symbol nil)))
+        (when definition (setf (gethash symbol table) definition))))))
+
+(defun structures-made-since (before)
+  "The structures defined, or defined again, since BEFORE (STRUCTURE-DEFINITIONS),
+each (PACKAGE NAME DESCRIPTION): the names of the symbol's package and of
+the symbol, and how it is laid out (STRUCTURE-DESCRIPTION)."
+  (let ((made '()))
+    (do-all-symbols (symbol made)
+      (let ((definition (sb-kernel:find-defstruct-description symbol nil)))
+        (when (and definition (symbol-package symbol) (not (eq definition (gethash symbol before))))
+          (pushnew (list (package-name (symbol-package symbol)) (symbol-name symbol) (structure-description symbol))
+                   made :test #'equal))))))
+
+(defun structures-file (request)
+  "The file a process compiling a package apart writes, beside its REQUEST, the
+structures the package defines in (STRUCTURES-MADE-SINCE), as JSON."
+  (concatenate 'string request ".structures"))
+
+(defun write-structures-file (file structures)
+  "Write STRUCTURES (STRUCTURES-MADE-SINCE), lists of strings, integers and
+lists, to FILE as JSON arrays, readable by you alone."
+  (labels ((arrays (value) (if (listp value) (map 'vector #'arrays value) value)))
+    (tuatara.io:write-private-file file (tuatara.text:json-write (arrays structures)))))
+
+(defun read-structures-file (file)
+  "The structures FILE says a package compiled apart defines
+\(WRITE-STRUCTURES-FILE), each (PACKAGE NAME DESCRIPTION), or :UNKNOWN when
+FILE is not there or holds anything but arrays of strings and integers. Only
+JSON is read from it, never Lisp: nothing is evaluated or interned."
+  (labels ((plain (value)
+             (typecase value
+               ((or string integer) value)
+               (simple-vector (map 'list #'plain value))
+               (t (return-from read-structures-file :unknown)))))
+    (let* ((text (ignoring-errors-reported ("reading ~a" file) (and (probe-file file) (tuatara.io:file-text file))))
+           (read (and text (handler-case (plain (tuatara.text:json-read text))
+                             (tuatara.text:json-error () :unknown)))))
+      (if (and (listp read)
+               (every (lambda (entry) (and (listp entry) (= (length entry) 3)
+                                           (stringp (first entry)) (stringp (second entry)) (listp (third entry))))
+                      read))
+          read
+          :unknown))))
+
+(defun structures-in-the-way (name structures)
+  "The names of the structures that keep a new version of the package NAME
+from loading in this running Tuatara, in lower case: those of STRUCTURES,
+what the new version defines (STRUCTURES-MADE-SINCE), that are laid out
+otherwise here (STRUCTURE-DESCRIPTION). When STRUCTURES is :UNKNOWN and NAME
+is loaded, every structure its own Lisp packages define, since any of them
+may have changed."
+  (if (eq structures :unknown)
+      (and (package-loaded-p name)
+           (let ((found '()))
+             (dolist (package (cdr (assoc name *package-code* :test #'string=)) found)
+               (when (package-name package)
+                 (do-symbols (symbol package)
+                   (when (and (eq (symbol-package symbol) package) (sb-kernel:find-defstruct-description symbol nil))
+                     (pushnew (string-downcase (symbol-name symbol)) found :test #'string=)))))))
+      (loop for (package-name symbol-name description) in structures
+            for package = (find-package package-name)
+            for symbol = (and package (find-symbol symbol-name package))
+            for here = (and symbol (structure-description symbol))
+            when (and here (not (equal here description)))
+              collect (string-downcase symbol-name))))
 
 (defun package-request-allowed-p (request token cache)
   "True when REQUEST, a file, is one the editor wrote for a process compiling
@@ -241,8 +340,10 @@ failed, why printed, 2 when the request was not taken."
                                                                        (load-package-entry (pathname directory) name
                                                                                            file))
                                          (error (e) (format t "~&~a was left out: ~a~%" name e))))
-                              (load-package-entry (pathname (getf plist :directory)) (getf plist :name)
-                                                  (getf plist :file)))
+                              (let ((before (structure-definitions)))
+                                (load-package-entry (pathname (getf plist :directory)) (getf plist :name)
+                                                    (getf plist :file))
+                                (write-structures-file (structures-file request) (structures-made-since before))))
                             0))
       (serious-condition (e)
         (format t "~&~a~%" e)

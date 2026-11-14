@@ -168,9 +168,11 @@ ones.
 The columns are the mark, the name, the version (=directory= for a directory of
 your disk), the first letters of the commit, what became of the package this
 session, who signs its source's versions, and the source. The state is one of
-=loaded=, =fetching=, =failed=, =refused=, =declined=, =kept=, =unloaded=,
-=removed= and =not fetched=. A package that is not loaded is drawn in the
-faint colour, as in the figure. =declined= means you said no at the question.
+=loaded=, =restart=, =fetching=, =failed=, =refused=, =declined=, =kept=,
+=unloaded=, =removed= and =not fetched=. A package that is not loaded is drawn
+in the faint colour, as in the figure. =restart= means the package runs, and a
+newer version is fetched that loads when you next start Tuatara (see
+Updating). =declined= means you said no at the question.
 =refused= means its code uses a name this Tuatara does not have, because the
 package is newer than your Tuatara or a newer Tuatara renamed something. A
 refused package is never run, and the reason shows beside the list where the
@@ -233,8 +235,9 @@ newest commit, or the tag, branch or commit you named), fetches what is new in
 the background and, when it is a different commit from the one you have, asks
 the question of the first load again. Packages that are already up to date
 are said to be so. When several were fetched, the echo row says once they are
-all done, and names any that are not loaded. Directories of your own disk are
-left alone, since you change those yourself.
+all done, and names any that are not loaded and any that load their new
+version at the next start. Directories of your own disk are left alone, since
+you change those yourself.
 
 ~M-x package-update-marked~, or ~f~ in the package manager, does the same for
 only the packages you marked, or for the one on the line.
@@ -250,6 +253,29 @@ Tuatara keeps the version it took and the one before it, each with its
 compiled files. When a new version fails to load, because it cannot be
 compiled or uses a name your Tuatara lacks, the one before it is loaded in its
 place, and a message tells you so once.
+
+Some new versions cannot replace the one running. A package that keeps its
+data in structures, and changes how one of them is laid out (a field added,
+renamed or taken out), would leave what the running version made unreadable.
+Tuatara compiles each new version apart from the editor first and compares
+its structures with those in use. When one differs, nothing of the new
+version is loaded: the version you have goes on working, the new one is kept
+as the version taken, and the echo row says, for example, "The package
+palimpsest 22e9a41 is fetched; restart Tuatara to use it". The package manager
+shows =restart= for it, and the next start loads the new version. Running
+~M-x package-update~ again before then says the same, not that the package is
+up to date. A slot whose type changed counts as laid out otherwise too. When
+the new version cannot even be compiled apart, Tuatara cannot see its
+structures, so a package that defines any waits for a restart all the same.
+If that version then fails to load at the start, the one before it is loaded
+in its place, as above.
+
+A new version can also fail part of the way through loading over the one
+running, after some of its code is in. Tuatara then takes nothing out, since
+that would take the running version's code with it. The echo row says the
+session now runs parts of two versions and asks you to restart, the package
+manager shows =restart=, and the version before it is the one the next start
+loads.
 
 #+begin_try Try it, updating everything
 1. Run ~M-x package-update~. The echo row says it is fetching.

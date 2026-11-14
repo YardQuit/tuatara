@@ -1033,22 +1033,51 @@ that counts, so \\1 is still the first group you write.")
   "The names of your own patterns being put in, innermost first, so that one
 that names itself, by way of others or not, is refused.")
 
+(defparameter *own-named-pattern-most* 65536
+  "The most characters one of your own named patterns may stand for once the
+named patterns in it are put in: one naming others over and over, each twice
+\([[:b:]] for [[:a:]][[:a:]], [[:c:]] for [[:b:]][[:b:]], ...), doubles at each
+step, and is refused before it can hold the editor up; so is one whose repeats
+make it as large ((?:x){1000} counts a thousand x).")
+
+(defvar *own-named-patterns-put-in* nil
+  "While one of your own named patterns is put in (NAMED-PATTERN), a list
+holding how many characters the own patterns within it have stood for so far.")
+
 (defun named-pattern-p (name)
   "True when NAME names a pattern, [[:NAME:]]: one of *NAMED-PATTERNS* or your own."
   (or (assoc name *named-patterns* :test #'string=)
       (nth-value 1 (gethash name **own-named-patterns**))))
 
+(defun own-named-pattern-p (name)
+  "True when NAME names a pattern of your own (DEFINE-NAMED-PATTERN), whether the
+init file defined it or it was saved."
+  (nth-value 1 (gethash name **own-named-patterns**)))
+
+(defun forget-own-named-pattern (name)
+  "Take away the pattern of your own NAME names, so that [[:NAME:]] stands for
+nothing, and forget the regexes compiled with it."
+  (remhash name **own-named-patterns**)
+  (forget-compiled-regexes))
+
 (defun named-pattern (name)
   "The pattern [[:NAME:]] stands for, as cl-ppcre reads it, or NIL when NAME
 names none: one of *NAMED-PATTERNS*, or your own (DEFINE-NAMED-PATTERN) read
-as every pattern is (ENGINE-PATTERN)."
+as every pattern is (ENGINE-PATTERN). One of your own that stands for more
+than *OWN-NAMED-PATTERN-MOST* characters, its repeats counted (REPEATED-SIZE)
+and the own patterns in it as they are put in, is refused, so that putting it
+in stops early."
   (or (third (assoc name *named-patterns* :test #'string=))
       (let ((own (gethash name **own-named-patterns**)))
         (when own
           (when (member name *named-patterns-expanding* :test #'string=)
             (refuse-pattern "invalid: [[:~a:]] names itself" name))
-          (let ((*named-patterns-expanding* (cons name *named-patterns-expanding*)))
-            (engine-pattern (cdr own)))))))
+          (let* ((*named-patterns-expanding* (cons name *named-patterns-expanding*))
+                 (*own-named-patterns-put-in* (or *own-named-patterns-put-in* (list 0)))
+                 (text (engine-pattern (cdr own))))
+            (when (> (incf (car *own-named-patterns-put-in*) (repeated-size text)) *own-named-pattern-most*)
+              (refuse-pattern "invalid: [[:~a:]] stands for more than ~:d characters" name *own-named-pattern-most*))
+            text)))))
 
 (defun filter-tree (tree)
   "TREE, a cl-ppcre parse tree, each mark of a filter (*FILTER-MARK*) made

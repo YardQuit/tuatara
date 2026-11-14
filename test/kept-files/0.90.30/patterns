@@ -1,0 +1,6 @@
+# tuatara patterns 1
+# Patterns saved under a name, [[:name:]] in every search, the latest first. A
+# tab ends each field: the name, regex or literal, the pattern and what it
+# finds (\\, \n and \r stand for \, a newline and a return).
+invoice	regex	INV-[0-9]+	an invoice number
+draft	literal	[draft]	

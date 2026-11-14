@@ -262,6 +262,7 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (install-jobs)
     (install-files)
     (install-narrowing)
+    (install-list-marks)
     (install-recent-files)
     (install-auto-save)
     (install-session)
@@ -371,6 +372,8 @@ so that \\`C-c' shows, and runs, what the buffer at hand can do in every mode
     (after-init-step "Debug mode" (lambda () (if *debug-mode* (switch-debug-mode t) (tuatara.runtime:set-debug nil))))
     ;; after the init file, which may say which to make
     (after-init-step "Making the scratch buffers" #'ensure-scratch-buffers)
+    ;; the patterns saved under a name, but those the init file names itself
+    (after-init-step "Naming the saved patterns" #'define-saved-patterns)
     ;; the keys of modes the init file's packages brought, under C-c too
     (after-init-step "Putting the modes' keys under C-c" #'mirror-context-keys)
     ;; the list of recent files loses the files no longer there, unless the init file said not to

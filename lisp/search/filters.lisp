@@ -70,16 +70,16 @@ expression, or for literal text one made the first time it is asked for."
                   (tuatara.syntax:compile-pattern (matcher-pattern matcher)
                                                   :regex nil :case-fold (matcher-fold matcher)))))))
 
-(defun make-search-filter (string &key (regex t) where test part hide matcher)
+(defun make-search-filter (string &key (regex t) where test part hide matcher (fold :as-typed))
   "A SEARCH-FILTER for STRING, a regular expression when REGEX is true, else
 literal text, nothing in it special; case ignored when it has no capital
-letter, as a search ignores it. MATCHER, when given, is how it is found
+letter, as a search ignores it, or as FOLD says when it is T or NIL. MATCHER, when given, is how it is found
 \(SEARCH-MATCHER, made for it already); else one is made. WHERE names the
 part of each entry it looks at; TEST and PART how and what of a record's line
 it tries; HIDE true to leave what it does not match. Returns NIL and why when
 the pattern does not compile."
   (let* ((line (make-search-line :pattern string))
-         (fold (search-line-fold line regex)))
+         (fold (if (eq fold :as-typed) (search-line-fold line regex) fold)))
     (multiple-value-bind (matcher why)
         (or matcher (make-pattern-matcher (search-line-pattern line) :regex regex :fold fold))
       (if matcher
@@ -137,7 +137,7 @@ the filter being typed at the search prompt, or NIL. SOURCE is the whole list (a
 LIST-SOURCE) while filters narrow it. SHOWN is the bits of the entries shown, or
 NIL for all. JOB is the filters being worked out in the background. The rest is
 what the list says of itself (SET-SEARCH-FILTERING): TEXT, NOUNS, HEADING,
-EMPTY-HEADINGS, DECORATION and SEARCHES. For a file of records, LINES is how
+EMPTY-HEADINGS, DECORATION, SEARCHES, PARTS and LIGHT-PART. For a file of records, LINES is how
 many header lines it has, always shown: 0 for none. There SOURCE is the version
 of its text the filters were worked out for, SHOWN the runs of lines shown and
 TOTAL how many records it has, once known. While JOB works the filters out,
@@ -156,6 +156,10 @@ holds the filters whose job waits for typing to pause."
   (empty-headings t :documentation "True when a heading with nothing under it stays while filters narrow the list.")
   (decoration nil :documentation "A function true of a line's entry that goes with its section's heading, or NIL.")
   (searches nil :documentation "True when the list's searches narrow it.")
+  (parts nil :documentation "The names of the parts of an entry a filter may look at alone, or NIL.")
+  (light-part nil
+              :documentation "A function of a part's name and a regular expression giving the expression
+that lights that part's matches in an entry opened, or NIL.")
   (lines nil
          :documentation "For a file of records whose lines the filters hide, how many header
 lines it has (0 for none); NIL for a list of entries.")
@@ -186,7 +190,8 @@ entries called records, for a buffer whose mode says so (FILTERS-HIDE-LINES-P)."
                   (list-filtering-nouns filtering) "records")))
         (setf (tuatara.buffer:buffer-local buffer 'list-filtering) filtering))))
 
-(defun set-search-filtering (buffer &key text (nouns "entries") heading (empty-headings t) decoration searches)
+(defun set-search-filtering (buffer &key text (nouns "entries") heading (empty-headings t) decoration searches parts
+                                        light-part)
   "Say how BUFFER, a list made by RENDER-PIECES, is narrowed by search filters
 \(\\[search-filter-regex]). TEXT is a function of an entry and the name of a part
 of it (NIL for all). It gives more of the entry to match than its line, as a
@@ -199,11 +204,22 @@ DECORATION is a function of an entry, true of a line that goes with the heading
 above it (a time grid's line under a day). Such a line is never matched nor
 counted, and is shown while that heading is. With SEARCHES,
 \\[regex-search-forward] and \\[regex-search-backward] there narrow the list
-too. Returns BUFFER."
+too. PARTS names the parts of an entry a filter may look at alone (the
+headers of a message), each a string or (NAME . WORDS), WORDS shown beside
+NAME when one is asked for: \\[search-filter-show-records] and
+\\[search-filter-hide-records] offer them in place of a table's columns, and
+TEXT is then called with the part's name, giving that part's text, or NIL
+for an entry without it, which the filter does not match. LIGHT-PART, a
+function of a part's name and a regular expression, gives the expression
+that lights the matches of a filter on that part in an entry opened
+\(LIGHT-SEARCH-FILTERS), its own groups written (?:...), none that count;
+without it such a filter lights nothing. Returns
+BUFFER."
   (let ((filtering (list-filtering-made buffer)))
     (setf (list-filtering-text filtering) text (list-filtering-nouns filtering) nouns
           (list-filtering-heading filtering) heading (list-filtering-empty-headings filtering) empty-headings
-          (list-filtering-decoration filtering) decoration (list-filtering-searches filtering) searches))
+          (list-filtering-decoration filtering) decoration (list-filtering-searches filtering) searches
+          (list-filtering-parts filtering) parts (list-filtering-light-part filtering) light-part))
   buffer)
 
 (defun search-filters-list-p (buffer &optional searches)
@@ -1756,36 +1772,95 @@ list of filters here is for: the whole list is shown again."
                (message "~d filter~:p taken away: ~:[the whole list is~;every record is~] shown"
                         count (filters-lines-p filtered)))))))
 
+(defun add-search-filter (buffer pattern &key (regex t) part hide (ignore-case :as-typed))
+  "Narrow BUFFER, a list or a file of records, by PATTERN, kept with its other
+filters as one typed at the search prompt is (\\[search-filter-regex]): a
+regular expression when REGEX is true, else literal text; case ignored when
+it has no capital letter, or as IGNORE-CASE says when it is T or NIL. With PART, one of the parts the list names
+\(SET-SEARCH-FILTERING's PARTS), it looks at that part of each entry alone;
+with HIDE, it leaves the entries it does not match. Returns the filter, or
+NIL and why when the pattern cannot be used."
+  (multiple-value-bind (filter why) (make-search-filter pattern :regex regex :where part :part part :hide hide
+                                                                :fold ignore-case)
+    (when filter
+      (keep-new-filter buffer filter))
+    (values filter why)))
+
+(defun keep-new-filter (buffer filter)
+  "Narrow BUFFER, a list or a file of records, by FILTER, kept after its other filters."
+  (setf (list-filtering-typing (list-filtering-made buffer)) filter)
+  (refilter buffer)
+  (keep-typed-filter buffer))
+
+(defun read-list-part (list prompt)
+  "Ask with PROMPT for one of the parts LIST names (SET-SEARCH-FILTERING's
+PARTS), each with the words the list gives of it beside it, or the whole
+entry: its name, NIL for the whole entry."
+  (values (read-offered-field (mapcar (lambda (part)
+                                        (if (consp part) (list (car part) (car part) (cdr part)) (list part part nil)))
+                                      (list-filtering-parts (list-filtering list)))
+                              nil prompt :words #'identity)))
+
+(defun refilter-search-filters (buffer)
+  "Work BUFFER's search filters out again over the whole list, from the first,
+as when the text a list gives of its entries changed (a label put on): the
+entries they leave now are shown, in the background where that takes time."
+  (let ((filtering (list-filtering buffer)))
+    (when (and filtering (list-filtering-filters filtering))
+      (dolist (filter (list-filtering-filters filtering))
+        (setf (search-filter-source filter) nil (search-filter-kept filter) nil))
+      (refilter buffer))))
+
+(defun entries-left-by-filters (list)
+  "The entries of LIST, a list made with its entries, that its search filters
+leave, in order, an entry shown on several lines once: those in sections
+folded too, as folding hides an entry from sight but not from the filters.
+T when no filter narrows it, and :WORKING while they are still worked out."
+  (let* ((filtering (list-filtering list))
+         (last (and filtering (car (last (list-filtering-filters filtering)))))
+         (source (and filtering (list-filtering-source filtering))))
+    (cond ((null last) t)
+          ((or (null source) (not (eq (search-filter-source last) source)) (null (search-filter-kept last))) :working)
+          (t (let ((entries (list-source-entries source)) (bits (search-filter-kept last)))
+               (loop for i from 0 below (length entries)
+                     when (and (= 1 (sbit bits i)) (entry-start-p entries i)
+                               (not (heading-entry-p filtering (svref entries i))))
+                       collect (svref entries i)))))))
+
 (defun filter-records-by (command hide)
   "Narrow the list or file of records here by a filter asked for as
-READ-LINE-FILTER asks (a column first in a file of records), kept with the others; with
-HIDE, one that leaves what it does not match. COMMAND names the command in
-messages."
+READ-LINE-FILTER asks (a column first in a file of records, a part of the
+entries in a list that names them), kept with the others; with HIDE, one that
+leaves what it does not match. COMMAND names the command in messages."
   (let ((buffer (current-buffer)))
     (if (not (search-filterable-p buffer))
         (say-unfilterable (format nil "~(~a~) was not run" command))
         (let* ((filtering (list-filtering-made buffer))
                (words (format nil "~:[show~;hide~] ~a" hide (list-filtering-nouns filtering))))
-          (multiple-value-bind (pattern regex matcher what column)
-              (if (and (not (filters-lines-p buffer)) (list-table-columns buffer))
-                  ;; a table: a column asked for first, its cell tried alone
-                  (multiple-value-bind (column title) (read-list-column buffer "Filter by the column: ")
-                    (multiple-value-bind (pattern regex)
-                        (read-pattern (format nil "~a~@[ whose ~a holds~]" words title))
-                      (values pattern regex nil title column)))
-                  (multiple-value-bind (pattern regex matcher what)
-                      (read-line-filter buffer words 0 (tuatara.buffer:buffer-size buffer))
-                    (values pattern regex matcher what nil)))
+          (multiple-value-bind (pattern regex matcher what where)
+              (cond ((and (not (filters-lines-p buffer)) (list-filtering-parts filtering))
+                     ;; a part of each entry asked for first, its text tried alone
+                     (let ((part (read-list-part buffer "Filter by: ")))
+                       (multiple-value-bind (pattern regex)
+                           (read-pattern (format nil "~a~@[ whose ~a holds~]" words part))
+                         (values pattern regex nil part part))))
+                    ((and (not (filters-lines-p buffer)) (list-table-columns buffer))
+                     ;; a table: a column asked for first, its cell tried alone
+                     (multiple-value-bind (column title) (read-list-column buffer "Filter by the column: ")
+                       (multiple-value-bind (pattern regex)
+                           (read-pattern (format nil "~a~@[ whose ~a holds~]" words title))
+                         (values pattern regex nil title (and column (list :column column buffer))))))
+                    (t (multiple-value-bind (pattern regex matcher what)
+                           (read-line-filter buffer words 0 (tuatara.buffer:buffer-size buffer))
+                         (values pattern regex matcher what nil))))
             (if (zerop (length pattern))
                 (message "No pattern: ~(~a~) was not run" command)
                 (multiple-value-bind (filter why)
                     (make-search-filter pattern :regex regex :test (and what matcher) :part what :hide hide
-                                                :where (and column (list :column column buffer)))
+                                                :where where)
                   (if (null filter)
                       (message "~a: ~(~a~) was not run" (string-capitalize why :end 1) command)
-                      (progn (setf (list-filtering-typing filtering) filter)
-                             (refilter buffer)
-                             (keep-typed-filter buffer))))))))))
+                      (keep-new-filter buffer filter)))))))))
 
 (define-command search-filter-show-records ()
   "Show only the records whose line a regular expression matches, hiding the
@@ -1919,21 +1994,28 @@ as it is, and so is what a set ([...]) or \\Q...\\E holds."
 of a search are lit after it ends (\\[search-toggle-highlight] takes them
 away and back): all of them at once, each ignoring case as it does, its
 groups its own (\\1 its first). Those that hide what they match, and those
-that look at one column of a record or of a table, light nothing. An empty
-\\[regex-search-forward] \\<search>\\[search-repeat-forward] then goes to them."
-  (let ((filters (remove-if (lambda (filter) (or (search-filter-hide filter) (search-filter-test filter)
-                                                    (consp (search-filter-where filter))))
-                            (and list (search-filters list))))
-        (groups 0))
+that look at one column of a record or of a table, light nothing; one that
+looks at a part of the entries lights what the list's LIGHT-PART gives
+\(SET-SEARCH-FILTERING), or nothing. An empty \\[regex-search-forward]
+\\<search>\\[search-repeat-forward] then goes to them."
+  (let* ((light-part (and list (list-filtering list) (list-filtering-light-part (list-filtering list))))
+         (filters (remove-if (lambda (filter)
+                               (let ((where (search-filter-where filter)))
+                                 (or (search-filter-hide filter) (search-filter-test filter) (consp where)
+                                     (and where (null light-part)))))
+                             (and list (search-filters list))))
+         (groups 0))
     (when filters
       (let* ((string (format nil "~{~a~^|~}"
                              (mapcar (lambda (filter)
-                                       (let ((pattern (search-filter-string filter)))
+                                       (let* ((pattern (search-filter-string filter))
+                                              (regex (if (search-filter-regex-p filter)
+                                                         (prog1 (shift-group-references pattern groups)
+                                                           (incf groups (tuatara.syntax:pattern-group-count pattern)))
+                                                         (search-quote pattern t :parsed nil)))
+                                              (where (search-filter-where filter)))
                                          (format nil "(?~:[-~;~]i:~a)" (search-filter-fold filter)
-                                                 (if (search-filter-regex-p filter)
-                                                     (prog1 (shift-group-references pattern groups)
-                                                       (incf groups (tuatara.syntax:pattern-group-count pattern)))
-                                                     (search-quote pattern t :parsed nil)))))
+                                                 (if where (funcall light-part where regex) regex))))
                                      filters)))
              (state (make-search-state 0 t t nil nil buffer)))
         (setf (search-state-string state) string

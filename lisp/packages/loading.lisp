@@ -160,12 +160,14 @@ checked (LOAD-PACKAGE-FILE); NIL when a file is loaded by itself.")
   "What is gathered while the package NAME loads: the Lisp packages there
 before it, the names its files use without defining them (NEEDS), and the
 files loaded, each (FILE . WRITE-DATE) (SOURCES); REFUSAL is the file its
-refusal is kept in (BESIDE-FASL)."
+refusal is kept in (BESIDE-FASL). BEGUN turns true as the first of its
+compiled files begins to load."
   (name "" :read-only t :documentation "The name of the package being checked.")
   (refusal nil :read-only t :documentation "The file the package's refusal is kept in.")
   (before (list-all-packages) :read-only t :documentation "The Lisp packages there before the package began to load.")
   (needs '() :documentation "The names the package's files use without defining them.")
-  (sources '() :documentation "The package's files loaded, each (FILE . WRITE-DATE)."))
+  (sources '() :documentation "The package's files loaded, each (FILE . WRITE-DATE).")
+  (begun nil :documentation "True once a compiled file of the package has begun to load."))
 
 (define-condition package-lacks-names (error)
   ((name :initarg :name :reader package-lacks-names-name)
@@ -280,6 +282,21 @@ or by a file of DIRECTORY."
         (unuse-package package user))
       (delete-package package))))
 
+(defun take-out-failed-load (check)
+  "Take out what of the package CHECK is about loaded before its loading
+failed, was stopped or was refused (FORGET-PACKAGE-CODE), and return true,
+when no version of it ran before. When one did, nothing is taken out, since
+that would take the running version's code with it, and NIL is returned:
+the running version goes on whole when nothing of the new one had begun to
+load, else the package is marked as running parts of both (*PACKAGES-MIXED*)."
+  (let ((name (package-check-name check)))
+    (cond ((not (package-loaded-p name))
+           (forget-package-code (package-check-own check) (package-directory-native))
+           t)
+          ((package-check-begun check)
+           (pushnew name *packages-mixed* :test #'string=)
+           nil))))
+
 (defun refuse-package (check needed)
   "Refuse the package CHECK is about, for the names NEEDED (NEEDED-NAME) it
 uses that are not there: its files and those names kept to refuse it again
@@ -298,8 +315,8 @@ names the editor has may be missing: the editor refuses it as it loads."
                                                  (list :sources (package-check-sources check) :needs needed))))
     (tuatara.runtime:debug-report :package "~a refused, its code using names this Tuatara lacks: ~{~a~^, ~}"
                                   (package-check-name check) words)
-    (forget-package-code own (package-directory-native))
-    (setf *loaded-packages* (remove (package-check-name check) *loaded-packages* :test #'string=))
+    (when (take-out-failed-load check)
+      (setf *loaded-packages* (remove (package-check-name check) *loaded-packages* :test #'string=)))
     (error 'package-lacks-names :name (package-check-name check) :names words)))
 
 (defun refuse-as-before (check)
@@ -383,6 +400,22 @@ functions left behind until Tuatara starts again."))
 
 (setf (documentation 'package-load-stopped-name 'function) "The name of the package stopped as it loaded.")
 
+(define-condition package-needs-restart (error)
+  ((name :initarg :name :reader package-needs-restart-name)
+   (structures :initarg :structures :reader package-needs-restart-structures))
+  (:report (lambda (condition stream)
+             (format stream "The new version of the package ~a loads at the next start: its structures ~{~a~^, ~} ~
+                             are laid out otherwise than in the version running now"
+                     (package-needs-restart-name condition) (package-needs-restart-structures condition))))
+  (:documentation "Signalled when a new version of the package NAME cannot be loaded over the
+one running: it defines STRUCTURES, a list of their names, laid out otherwise.
+Nothing of it is loaded, the version running now goes on, and the new one is
+loaded at the next start."))
+
+(setf (documentation 'package-needs-restart-name 'function) "The name of the package that loads at the next start."
+      (documentation 'package-needs-restart-structures 'function)
+      "The names of the structures the new version of the package lays out otherwise.")
+
 (defun load-checked-file (file check)
   "Compile FILE when it has changed since (COMPILE-PACKAGE-FILE) and load it.
 With CHECK, the names its code uses without defining them are added to it,
@@ -413,6 +446,7 @@ the loading was asked to stop (*PACKAGE-LOAD-STOP*)."
         (setf (package-check-needs check) (union needed (package-check-needs check) :test #'equal)))
       (let ((*package* (find-package :tuatara-user))
             (*package-directory* (make-pathname :name nil :type nil :version nil :defaults file)))
+        (when check (setf (package-check-begun check) t))
         (load fasl)))))
 
 (defun tuatara-user:load-package-file (name)
@@ -452,7 +486,7 @@ editor instead."
           ;; failed or stopped between its files: what of it loaded taken out again
           (let ((loaded nil))
             (unwind-protect (progn (load-checked-file file check) (setf loaded t))
-              (unless loaded (forget-package-code (package-check-own check) (package-directory-native)))))
+              (unless loaded (take-out-failed-load check))))
           (let ((missing (remove-if #'needed-name-present-p (package-check-needs check))))
             (when missing (refuse-package check missing)))
           (let* ((name (package-check-name check))

@@ -78,6 +78,8 @@ state, data or cache; PATH within it, a directory's ending in /; CLASS :KEPT,
      ("box" nil () nil nil nil "2026-11-04"))
     (tuatara.defaults::*grammar-answers*
      ("yaml" . t) ("nix" . nil))
+    (tuatara.defaults::*saved-patterns*
+     ("invoice" :regex "INV-[0-9]+" "an invoice number") ("draft" :literal "[draft]" ""))
     (tuatara.defaults::*user-grammar-sums*
      ("mylang" . "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")))
   "For each list kept between sessions (its variable), the entries its sample

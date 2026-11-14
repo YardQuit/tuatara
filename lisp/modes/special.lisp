@@ -342,6 +342,7 @@ first marked first."
 of the one it had, or with NIL none."
   (let ((table (or (list-mark-table list)
                    (setf (tuatara.buffer:buffer-local list 'list-marks) (make-hash-table :test 'equal)))))
+    (note-marks-changed list)
     (if mark
         (setf (gethash key table) (cons mark (incf *list-mark-order*)))
         (remhash key table))))
@@ -350,6 +351,7 @@ of the one it had, or with NIL none."
   "Keep only the marks of LIST on entries still listed, KEYS being theirs."
   (let ((table (list-mark-table list)))
     (when (and table (plusp (hash-table-count table)))
+      (note-marks-changed list)
       (let ((listed (make-hash-table :test 'equal)))
         (dolist (key keys) (setf (gethash key listed) t))
         (maphash (lambda (key value)
@@ -436,6 +438,7 @@ marked now.")
   "Take every mark off the entries of LIST and draw it again."
   (let ((table (list-mark-table list)))
     (when table (clrhash table)))
+  (note-marks-changed list)
   (redraw-list list))
 
 (defun list-acted-on (list)
@@ -520,6 +523,54 @@ the order shown."
     (dolist (key keys) (setf (gethash key wanted) t))
     (remove-if-not (lambda (entry) (gethash (entry-mark-key list entry) wanted))
                    (coerce (tuatara.buffer:buffer-local list 'list-entries #()) 'list))))
+
+;;; How many are marked, in the mode line
+
+(defgeneric list-mark-counts (mode list)
+  (:documentation "How many entries of LIST, a buffer in major mode MODE, are marked (>) and
+how many are marked for deletion (D), as two values; both 0 for a buffer that
+has no marks.")
+  (:method (mode list) (declare (ignore mode list)) (values 0 0))
+  (:method ((mode marked-list-mode) list)
+    "Counted from the list's table of marks (LIST-MARK-TABLE)."
+    (let ((table (list-mark-table list)) (marked 0) (deletion 0))
+      (when table
+        (maphash (lambda (key value)
+                   (declare (ignore key))
+                   (if (eq (car value) :deletion) (incf deletion) (incf marked)))
+                 table))
+      (values marked deletion))))
+
+(defun note-marks-changed (list)
+  "Say that the marks of LIST have changed, so that the mode line counts them
+again (LIST-MARKS-MODE-LINE) the next time it is drawn. Whatever puts or takes
+marks calls this."
+  (setf (tuatara.buffer:buffer-local list 'list-marks-text) nil))
+
+(defun list-marks-text (list)
+  "What the mode line says of the marks of LIST: a list of the text and its
+face, \"3 marked, 1 for deletion\", or :NONE when no entry is marked. Counted
+once after the marks change (NOTE-MARKS-CHANGED), then kept."
+  (or (tuatara.buffer:buffer-local list 'list-marks-text)
+      (setf (tuatara.buffer:buffer-local list 'list-marks-text)
+            (multiple-value-bind (marked deletion) (list-mark-counts (buffer-major-mode list) list)
+              (if (and (zerop marked) (zerop deletion))
+                  :none
+                  (list (cond ((zerop deletion) (format nil " ~d marked " marked))
+                              ((zerop marked) (format nil " ~d for deletion " deletion))
+                              (t (format nil " ~d marked, ~d for deletion " marked deletion)))
+                        :list-marked))))))
+
+(defun list-marks-mode-line (editor list)
+  "Mode line function, just before the buffer's name: how many entries of a
+list are marked (>) and marked for deletion (D), while any are."
+  (declare (ignore editor))
+  (let ((text (list-marks-text list)))
+    (and (consp text) text)))
+
+(defun install-list-marks ()
+  "Have the mode line of every list with marks say how many entries are marked."
+  (pushnew 'list-marks-mode-line *mode-line-name-functions*))
 
 ;;; Deleting and opening entries
 

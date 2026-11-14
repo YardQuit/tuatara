@@ -490,6 +490,86 @@ question as PATTERN/REPLACEMENT."
             (is = 400 (length matches) "every date at ~a" sizes)
             (true (every (lambda (m) (= 29 (- (second m) (first m)))) matches) "each whole at ~a" sizes)))))))
 
+(define-test (search-constructs saved-patterns)
+  ;; patterns saved under a name with M-x save-named-pattern, each with its kind, kept between sessions
+  (let ((saved tuatara.defaults::*saved-patterns*))
+    (flet ((forget (name)
+             (tuatara.defaults::state-list-drop saved (list name))
+             (remhash name tuatara.syntax::**own-named-patterns**)
+             (tuatara.syntax::forget-compiled-regexes)))
+      (unwind-protect
+           (progn
+             ;; literal text, its regex characters only themselves
+             (run-keys (list "M-x s a v e - n a m e d - p a t t e r n RET M-r a . b [ d r a f t ] RET"
+                             "d o t t e d RET a SPC d o t RET"))
+             (is equal '("a.b[draft]") (construct-finds "[[:dotted:]]" "axbd a.b[draft] a.b"))
+             ;; a regular expression
+             (run-keys (list "M-x s a v e - n a m e d - p a t t e r n RET k e a [ 0 - 9 ] + RET"
+                             "k e a n o RET RET"))
+             (is equal '("kea12" "kea3") (construct-finds "[[:keano:]]" "kea12 kea kea3"))
+             (is equal '(("keano" :regex "kea[0-9]+" "") ("dotted" :literal "a.b[draft]" "a dot"))
+                 (tuatara.defaults::state-list-entries saved))
+             ;; read again in the next session, as its start does, in the background
+             (dolist (name '("dotted" "keano")) (remhash name tuatara.syntax::**own-named-patterns**))
+             (let ((job (tuatara.defaults::define-saved-patterns)))
+               (tuatara.runtime:wait-until (lambda () (not (tuatara.runtime:job-running-p job))) 10))
+             (is equal '("a.b[draft]") (construct-finds "[[:dotted:]]" "axbd[draft] a.b[draft]"))
+             ;; Tuatara's own names refused; forgotten, it stands for nothing
+             (run-keys (list "M-x s a v e - n a m e d - p a t t e r n RET x RET i p v 4 RET"))
+             (false (tuatara.defaults::state-list-find saved "ipv4"))
+             (run-keys (list "M-x f o r g e t - n a m e d - p a t t e r n RET d o t t e d RET"))
+             (false (tuatara.syntax::named-pattern-p "dotted"))
+             (false (tuatara.defaults::state-list-find saved "dotted")))
+        (forget "dotted")
+        (forget "keano")))))
+
+(define-test (search-constructs saved-patterns-leave-init-names)
+  ;; a name the init file gives a pattern: not saved over, and forgetting a saved one of that name keeps it
+  (let ((saved tuatara.defaults::*saved-patterns*))
+    (unwind-protect
+         (progn
+           (tuatara-user:define-named-pattern "initkea" "kea" "kea")
+           (run-keys (list "M-x s a v e - n a m e d - p a t t e r n RET t u i RET i n i t k e a RET"))
+           (false (tuatara.defaults::state-list-find saved "initkea"))
+           (is equal '("kea") (construct-finds "[[:initkea:]]" "tui kea"))
+           (tuatara.defaults::state-list-put saved (list (list "initkea" :regex "tui" "")))
+           (run-keys (list "M-x f o r g e t - n a m e d - p a t t e r n RET i n i t k e a RET"))
+           (false (tuatara.defaults::state-list-find saved "initkea"))
+           (is equal '("kea") (construct-finds "[[:initkea:]]" "tui kea")))
+      (tuatara.defaults::state-list-drop saved (list "initkea"))
+      (remhash "initkea" tuatara.syntax::**own-named-patterns**)
+      (tuatara.syntax::forget-compiled-regexes))))
+
+(define-test (search-constructs own-named-patterns-held-in-size)
+  ;; patterns of your own naming others twice over: refused once they stand for too much, at once
+  (let ((names (loop for i from 1 to 30 collect (format nil "twice~d" i))) (refused nil)
+        (start (get-internal-real-time)))
+    (unwind-protect
+         (progn
+           (tuatara-user:define-named-pattern "twice1" "a" "ab")
+           (loop for (inner outer) on names
+                 while outer
+                 do (handler-case
+                        (tuatara-user:define-named-pattern outer "twice" (format nil "[[:~a:]][[:~a:]]" inner inner))
+                      (error (e) (setf refused (list outer (princ-to-string e))) (loop-finish))))
+           (true refused)
+           (true (search "stands for more than" (second refused)))
+           (true (< (- (get-internal-real-time) start) (* 5 internal-time-units-per-second)))
+           ;; those before it still found
+           (is equal '("abab") (construct-finds "[[:twice2:]]" "x abab"))
+           ;; repeats counted: a short pattern repeated a thousand times a thousand times, refused at once
+           (let ((begun (get-internal-real-time)))
+             (true (handler-case (progn (tuatara-user:define-named-pattern "twicerep" "x" "(?:(?:[[:twice2:]]){1000}){1000}")
+                                        nil)
+                     (error () t)))
+             (true (< (- (get-internal-real-time) begun) internal-time-units-per-second)))
+           (false (tuatara.syntax::named-pattern-p "twicerep"))
+           ;; a search naming one past the limit is refused, not left to run
+           (let ((last (first refused)))
+             (false (tuatara.syntax::named-pattern-p last))))
+      (dolist (name (cons "twicerep" names)) (remhash name tuatara.syntax::**own-named-patterns**))
+      (tuatara.syntax::forget-compiled-regexes))))
+
 (define-test (search-constructs own-named-patterns)
   ;; patterns of your own, as an init file defines them: found as Tuatara's are, in a
   ;; search of the text and in a string alike

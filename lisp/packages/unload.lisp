@@ -22,6 +22,7 @@ ends."
     (forget-package-code own directory)
     (setf *package-code* (alist-without name *package-code*)
           *loaded-packages* (remove name *loaded-packages* :test #'string=)
+          *packages-mixed* (remove name *packages-mixed* :test #'string=)
           *loaded-package-directories* (remove name *loaded-package-directories* :key #'first :test #'string=))
     (setf *package-needs* (alist-without name *package-needs*))
     (pushnew name *unloaded-packages* :test #'string=)

@@ -371,6 +371,9 @@ name the list says how many entries are marked in other directories, so you are
 never surprised, and the question that a command asks counts all of them.
 ~U~ takes away every mark in every directory.
 
+The mode line counts the marks too, in every directory: "3 marked, 1 for
+deletion", while any file is marked.
+
 ~K~ takes the lines of the marked entries out of the list. The files stay as
 they are, and only the list shows fewer lines. It is a way to cross off what
 you have dealt with and look at what is left. ~r~ brings the lines back.

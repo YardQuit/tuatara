@@ -118,6 +118,16 @@ pattern for a line break works in a file with CRLF line ends. Inside brackets,
 A pattern that is only an edge, such as =^$= for an empty line, is a match too.
 Searching for it goes from one empty line to the next.
 
+A pattern you use often can be kept under a name. ~M-x save-named-pattern~
+asks for the pattern, a regex or, after ~M-r~, plain text, then a name of small
+letters and digits, then a few words on what it finds. From then on
+=[[:name:]]= stands for it in any regex you search for, in this session and
+the next, as Tuatara's own =[[:ipv4:]]= and =[[:date:]]= do. A pattern saved
+as plain text finds only those characters, its dots and brackets too.
+~M-x forget-named-pattern~ takes one away again. The patterns are kept in
+the file =patterns= of your state directory; a pattern your init file names
+with =define-named-pattern= wins over one saved under the same name.
+
 *** Starting from the word under the cursor
 
 Put the cursor on a word and press ~C-s~, then ~M-.~. The word is added to the
@@ -185,7 +195,7 @@ is in use. The thorough form of replacing is described in the next section.
    ~M-p~: the pattern you used before comes back. Press ~C-g~.
 #+end_try
 
-#+table: commands regex-search-forward regex-search-backward literal-search-forward literal-search-backward search-repeat-forward search-repeat-backward search-toggle-regex search-insert-symbol search-exit search-abort search-next-match search-previous-match search-toggle-highlight regex-search-forward-thorough regex-search-backward-thorough
+#+table: commands regex-search-forward regex-search-backward literal-search-forward literal-search-backward search-repeat-forward search-repeat-backward search-toggle-regex search-insert-symbol search-exit search-abort search-next-match search-previous-match search-toggle-highlight regex-search-forward-thorough regex-search-backward-thorough save-named-pattern forget-named-pattern
 
 #+table: settings *show-completion-count* *typing-pause*
 
@@ -304,7 +314,9 @@ CSV. The modes that count are named in =*line-record-modes*=. In these, the
 first line of a CSV is a header and is always shown. ~C-x / f~ shows only the
 records whose one column matches a pattern, and ~C-x / h~ hides them. These ask
 which column first. The lists and the data chapters describe columns in
-full.
+full. A list whose entries have named parts, as a mailbox's messages have
+headers, offers those parts in place of its columns: the filter then looks at
+that part of each entry alone, and an entry without it is no match.
 
 Two keys delete instead of hide. ~C-x / k~ keeps the records that match and
 deletes the others. ~C-x / d~ deletes the ones that match. Both can be undone

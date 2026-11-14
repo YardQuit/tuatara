@@ -94,6 +94,10 @@ off the line and moves down, and ~U~ takes every mark off. ~t~ swaps the two
 states: what was marked becomes unmarked and the other way round. That is a
 quick way to say "everything except these".
 
+While any entry is marked, the mode line of the list says how many, for
+example "3 marked, 1 for deletion". It changes with each mark you put or take
+off, and goes when none is left. Every list with marks does this, rimu too.
+
 ~d~ puts a =D= on a buffer instead. It means "kill this one". Nothing is killed
 until you press ~x~, which kills every buffer marked with =D=. It is the same
 two-step as in a directory listing: first mark, then do it. Buffers with unsaved

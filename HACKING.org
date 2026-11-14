@@ -432,6 +432,12 @@ package most often needs:
 - Files kept :: a file written for keeping (a report, a copy taken out) is
   made with =write-new-file=: read-only (0400) from the moment it is
   created, never written over a file or a link already there.
+  =call-with-free-file= makes a new file under a name not taken (=(2)=,
+  =(3)= added as a copy's name is) and hands its descriptor to the package
+  to write, as an export of many items into one file does.
+  =append-to-file= adds a line to a file in one write, so that sessions
+  side by side never cut into each other's lines (a journal), and
+  =call-with-state-lock= holds a file's lock while it is rewritten.
   =write-private-copy= makes a private copy of a file in the cache.
   =copy-file-checked= copies a file and checks the copy's SHA-256
   against the original's.
@@ -473,6 +479,9 @@ package most often needs:
   =selected-lines= gives the region; =csv-field-spans=, =csv-value-bounds=
   and =csv-field-value= read fields as Tuatara's CSV mode does, and
   =csv-header-names= gives the names of a CSV buffer's columns.
+- Several answers :: =read-several= asks for several choices apart by
+  commas, each completed in turn from those offered, new ones typed, as
+  bookmark categories and a mailbox's labels are asked for.
 - The selection and changing a buffer :: =selected-region= gives the text
   selected, or NIL when none is; =check-writable= refuses, in Tuatara's own
   words, to change a read-only buffer.
@@ -487,9 +496,14 @@ package most often needs:
 - Lists narrowed by a search :: any list made with =render-pieces= and its
   entries is narrowed by =C-x / s= (=search-filter-regex=), the filters
   stacking; =set-search-filtering= gives more text of each entry to match
-  than its line (matched in the background), names a list's headings, and
-  has =C-s= narrow the list. =search-filters= and =light-search-filters= give
-  the filters kept and light their matches where an entry is opened.
+  than its line (matched in the background), names a list's headings and the
+  parts of its entries =C-x / f= offers (a message's headers), and has =C-s=
+  narrow the list. =add-search-filter= adds a filter the package made (on a
+  part, or one that hides what it matches); =search-filters= and
+  =light-search-filters= give the filters kept and light their matches where
+  an entry is opened; =entries-left-by-filters= gives the entries the
+  filters leave, folded ones too, and =refilter-search-filters= works the
+  filters out again after the text a list gives of its entries changed.
 - The entry on a list's line, beside it :: a method of =preview-entry= for
   the list's mode gives the buffer showing an entry, and the preview
   follows the cursor in a window beside the list, as rimu's does;

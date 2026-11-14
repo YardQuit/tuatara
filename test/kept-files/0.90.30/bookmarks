@@ -1,0 +1,8 @@
+# tuatara bookmarks 1
+# Bookmarks, the latest set or gone to first, one a line. A tab ends each
+# field: the octet, the name, the file's path, the text after the place, the
+# categories with a comma between them, and safe for a file opened safely
+# (\\, \n and \r stand for \, a newline and a return).
+120	Findings	/cases/report.org	* Findings	work,court	safe
+0	Unmapped	/mnt/server-not-mapped/evidence/disk.img			safe
+7	Plain	/notes/plain.txt	text\nafter

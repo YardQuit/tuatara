@@ -10,6 +10,7 @@
   (:documentation "The search and regex interface, the tree-sitter binding, parsing in the
 background, colouring and moving by syntax.")
   (:export #:url-pattern #:search-forward #:search-backward #:search-all #:case-fold-p #:*serial-window* #:*parallel-piece*
+           #:named-pattern-p #:own-named-pattern-p #:forget-own-named-pattern
            #:compile-regex #:compile-pattern #:*regex-thorough* #:regex-search-forward #:regex-search-backward
            #:regex-search-all
            #:literal-pattern-p #:regex-case-fold-p #:map-regex-matches #:matched-text #:map-slice-matches #:make-decoder

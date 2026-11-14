@@ -82,7 +82,7 @@ elsewhere.")
    #:remove-file-if-there #:environment-without #:duplicate-fd #:path-directory-and-name #:owner-name #:owner-group-name
    #:user-font-directories
    ;; new names, and what a program shut in came to
-   #:random-name #:numbered-name #:create-free-file #:copy-to-free-name
+   #:random-name #:numbered-name #:create-free-file #:copy-to-free-name #:call-with-free-file #:append-to-file
    ;; files read whole, zip archives
    #:fd-octets #:crc32 #:zip-octets #:zip-entries #:zip-entry-octets #:zip-locked-p #:inflate #:deflate #:zip-error
    #:*zip-largest-entry* #:*zip-largest-ratio*

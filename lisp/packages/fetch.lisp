@@ -436,35 +436,70 @@ starts meanwhile.")
 (defvar *package-job-deciding* nil
   "The fetch or check whose version is being decided on (PACKAGE-FETCHED), or NIL.")
 
+(defun package-version-words (commit tag)
+  "A version of a package as it is said: TAG, or the first seven characters of COMMIT."
+  (or tag (subseq commit 0 (min 7 (length commit)))))
+
+(defun package-awaits-restart-p (name)
+  "True when the package NAME runs in this session from another version than
+the one taken for it (*FETCHED-PACKAGES*), which loads at the next start, or
+runs parts of two versions (*PACKAGES-MIXED*), which only a new start mends."
+  (let ((declared (declared-package name))
+        (loaded (second (assoc name *loaded-package-directories* :test #'string=))))
+    (and (package-loaded-p name)
+         (or (and (member name *packages-mixed* :test #'string=) t)
+             (and declared loaded
+                  (let* ((where (package-where (second declared)))
+                         (entry (fetched-package (package-key name where (third declared))))
+                         (directory (and entry (fourth entry) (package-directory-of name where entry))))
+                    (and directory (string/= loaded (tuatara.io:native directory)))))))))
+
 (defun load-version (name where directory file before &optional then)
   "Load the package NAME from DIRECTORY, a version of WHERE. When it fails and
 BEFORE, what was remembered of the version taken before it (as
 *FETCHED-PACKAGES* has it), names one that is kept, that one is remembered
 again as the one taken, and said. It is loaded in its place once who signed it
-is checked against the trust in force now (START-PACKAGE-CHECK). Gives :TAKEN
-and the file loaded, :PREVIOUS when the version before it is being checked, or
-NIL. When THEN is given, a function of them, it is called with them once the
+is checked against the trust in force now (START-PACKAGE-CHECK). A version
+that cannot be loaded over the one running (PACKAGE-NEEDS-RESTART) is no
+failure: it stays the one taken, loaded at the next start. One that failed
+part of the way over the version running (*PACKAGES-MIXED*) leaves parts of
+both running: the version before it is remembered again as the one taken,
+loaded at the next start, and you are told to restart. Gives :TAKEN and the
+file loaded, :RESTART for one loaded at the next start, said when THEN is
+not given, :MIXED for one that failed part of the way, :PREVIOUS when the
+version before it is being checked, or NIL. When THEN is given, a function of them, it is called with them once the
 package has loaded, which may be later, in the background
 \(LOAD-PACKAGE-DIRECTORY). A loading stopped on purpose falls back on nothing.
 It returns what THEN returns. Without THEN it returns them, or NIL
 when it loads later."
   (load-package-directory
    directory name file
-   (lambda (loaded &optional stopped)
+   (lambda (loaded &optional how)
      (multiple-value-call (or then #'values)
-       (if loaded
-           (values :taken loaded)
-           (let ((back (and before (not stopped) (package-directory-of name where before))))
-             (when (and back (probe-file back))
-               (state-list-put *fetched-packages* (list before))
-               (message "The package ~a could not be loaded (~a): the version before it, ~a, is loaded in its place ~
-                         once who signed it is checked"
-                        name (cdr (assoc name *package-failures* :test #'string=))
-                        (or (third before) (subseq (second before) 0 (min 7 (length (second before))))))
-               (when *package-job-deciding*
-                 (let-package-go *package-job-deciding*))
-               (start-package-check name where nil file (first before) before :quiet t)
-               :previous)))))))
+       (cond
+         (loaded (values :taken loaded))
+         ((eq how :restart)
+          (unless then (say-package-needs-restart name))
+          :restart)
+         ((member name *packages-mixed* :test #'string=)
+          (when before (state-list-put *fetched-packages* (list before)))
+          (message "The new version of the package ~a failed part of the way as it loaded (~a): this session now ~
+                    runs parts of two versions, so restart Tuatara~@[; the version before it, ~a, loads then~]"
+                   name (cdr (assoc name *package-failures* :test #'string=))
+                   (and before (package-version-words (second before) (third before))))
+          :mixed)
+         (t
+          (let ((back (and before (not how) (package-directory-of name where before))))
+            (when (and back (probe-file back))
+              (state-list-put *fetched-packages* (list before))
+              (message "The package ~a could not be loaded (~a): the version before it, ~a, is loaded in its place ~
+                        once who signed it is checked"
+                       name (cdr (assoc name *package-failures* :test #'string=))
+                       (package-version-words (second before) (third before)))
+              (when *package-job-deciding*
+                (let-package-go *package-job-deciding*))
+              (start-package-check name where nil file (first before) before :quiet t)
+              :previous))))))))
 
 (defun refuse-package-version (name where words &optional remember)
   "Refuse the version of the package NAME fetched from WHERE, WORDS saying
@@ -496,7 +531,8 @@ one it needs (FETCH-PACKAGE), and SIGNATURE who signed it
 \(START-PACKAGE-LOAD) has LOAD, the function loading it, and THEN, called
 with the file it was loaded by and the error that ended it once it has
 loaded; meanwhile LOADED and FAILURE keep those, and COMPILED is true once a
-file of it is compiled."
+file of it is compiled. CHECKING is true for a check of who signed a version
+kept (START-PACKAGE-CHECK), which fetches nothing."
   (name nil :documentation "The name of the package PACKAGE-FETCH fetches.")
   (where nil :documentation "Where the package of PACKAGE-FETCH is fetched from.")
   (version nil :documentation "The version of the package asked for.")
@@ -516,16 +552,27 @@ file of it is compiled."
 that ended it.")
   (loaded nil :documentation "The file the package was loaded by, kept for THEN.")
   (failure nil :documentation "The error that ended the load of the package, kept for THEN.")
-  (compiled nil :documentation "True once a file of the package is compiled."))
+  (compiled nil :documentation "True once a file of the package is compiled.")
+  (checking nil
+            :documentation "True for a check of who signed a version kept, with nothing fetched
+\(START-PACKAGE-CHECK)."))
 
 (tuatara.runtime:define-job-words package-fetch
-    :doing (if (package-fetch-load job) "Compiling and loading a package" "Fetching a package")
-    :verb (if (package-fetch-load job) "load the package" "fetch the package")
+    :doing (cond ((package-fetch-load job) "Compiling and loading a package")
+                 ((package-fetch-checking job) "Checking who signed a package")
+                 (t "Fetching a package"))
+    :verb (cond ((package-fetch-load job) "load the package")
+                ((package-fetch-checking job) "check the package")
+                (t "fetch the package"))
     :description (format nil
-                         "~:[Fetching~;Compiling and loading~] the package ~a"
-                         (package-fetch-load job)
+                         "~a the package ~a"
+                         (cond ((package-fetch-load job) "Compiling and loading")
+                               ((package-fetch-checking job) "Checking who signed")
+                               (t "Fetching"))
                          (package-fetch-name job))
-    :left-words (if (package-fetch-load job) "the package not loaded" "the package not fetched")
+    :left-words (cond ((package-fetch-load job) "the package not loaded")
+                      ((package-fetch-checking job) "the package not checked")
+                      (t "the package not fetched"))
     :at-exit :quiet)
 
 (defmethod tuatara.runtime:job-holds-queue-p ((job package-fetch))
@@ -562,14 +609,18 @@ is said to be done once what is doing now has said its own (SAY-PACKAGE-UPDATE-D
       (defer-action (lambda () (say-package-update-done round))))))
 
 (defun say-package-update-done (names)
-  "Say that the update of the packages called NAMES is done, and which of them
-are not loaded, *Messages* holding why."
-  (let ((missing (remove-if #'package-loaded-p names)))
+  "Say that the update of the packages called NAMES is done, which of them
+are not loaded, *Messages* holding why, and which load the new version taken
+at the next start (PACKAGE-AWAITS-RESTART-P)."
+  (let ((missing (remove-if #'package-loaded-p names))
+        (restart (remove-if-not #'package-awaits-restart-p names)))
     (if missing
         (message "The package update is done: ~d of ~d loaded; not loaded: ~{~a~^, ~} (\\[view-echo-area-messages] ~
-                  says why)"
-                 (- (length names) (length missing)) (length names) missing)
-        (message "The package update is done: the ~d packages are loaded" (length names)))))
+                  says why)~@[; restart Tuatara to use the new ~{~a~^, ~}~]"
+                 (- (length names) (length missing)) (length names) missing restart)
+        (message "The package update is done: the ~d packages are loaded~@[; restart Tuatara to use the new ~
+                  ~{~a~^, ~}~]"
+                 (length names) restart))))
 
 (defun start-package-job (job work thread &key quiet)
   "Start JOB, a fetch or check of a package, in the background on a thread
@@ -596,7 +647,9 @@ LOAD is run, the editor waiting between two commands all the while it runs
 \(CALL-WITH-EDITOR-HELD), so that no command runs with the package part loaded,
 nor compiles any of it there (*PACKAGE-COMPILING* :REFUSED). When it could not
 be compiled apart, what is left to compile is compiled as it loads, the editor
-waiting for that too. The package is held in hand meanwhile
+waiting for that too. A package loaded already whose new version lays out a
+structure otherwise (STRUCTURES-IN-THE-WAY) is not loaded at all: the error
+that ends it is a PACKAGE-NEEDS-RESTART. The package is held in hand meanwhile
 \(*PACKAGES-IN-HAND*), taken over from the fetch or check deciding on it. While
 another fetch, check or loading holds it, nothing starts, said
 \(TAKE-PACKAGE-IN-HAND). Once it has loaded, THEN is called on the editor's
@@ -616,15 +669,19 @@ purpose. Returns the job, or NIL."
          (multiple-value-bind (loaded failure)
              (handler-case
                  (reporting-errors ("loading the package ~a" name)
-                                   (let ((apart (and compile (funcall compile job))))
+                                   (multiple-value-bind (apart structures) (and compile (funcall compile job))
                                      (tuatara.runtime:job-check-stop)
-                                     (let ((stop (list nil)))
-                                       (call-with-editor-held (lambda () (let ((*package-compiling*
-                                                                                (if apart :refused nil))
-                                                                               (*package-load-stop* stop))
-                                                                           (funcall load)))
-                                                              :words (format nil "Loading the package ~a" name)
-                                                              :stop (lambda () (setf (car stop) t))))))
+                                     (let ((stop (list nil))
+                                           (in-the-way (structures-in-the-way name (if apart structures :unknown))))
+                                       (if in-the-way
+                                           (values nil (make-condition 'package-needs-restart
+                                                                       :name name :structures in-the-way))
+                                           (call-with-editor-held (lambda () (let ((*package-compiling*
+                                                                                    (if apart :refused nil))
+                                                                                   (*package-load-stop* stop))
+                                                                               (funcall load)))
+                                                                  :words (format nil "Loading the package ~a" name)
+                                                                  :stop (lambda () (setf (car stop) t)))))))
                (error (e) (values nil e)))
            (setf (package-fetch-loaded job) loaded
                  (package-fetch-failure job) failure)))
@@ -693,7 +750,8 @@ it)."
   (let ((job (make-package-fetch name where version file key)))
     (setf (package-fetch-directory job) (package-directory-for where name (second entry))
           (package-fetch-commit job) (second entry)
-          (package-fetch-tag job) (third entry))
+          (package-fetch-tag job) (third entry)
+          (package-fetch-checking job) t)
     (when (start-package-job
            job
            (lambda (job)
@@ -779,11 +837,15 @@ is loaded, and older versions are then deleted (PRUNE-PACKAGE-VERSIONS)."
                         (previous (list (package-fetch-key job) previous previous-tag t)))
                   (lambda (outcome &optional loaded)
                     (declare (ignore loaded))
-                    (when (eq outcome :taken)
-                      (funcall trust)
-                      (when (package-loaded-p name)
-                        (message "The package ~a~@[ ~a~] is loaded~@[ (~a needs Tuatara ~a or later)~]"
-                                 name (or tag (and passed (subseq commit 0 7))) (first passed) (second passed))))
+                    (case outcome
+                      (:taken
+                       (funcall trust)
+                       (when (package-loaded-p name)
+                         (message "The package ~a~@[ ~a~] is loaded~@[ (~a needs Tuatara ~a or later)~]"
+                                  name (or tag (and passed (subseq commit 0 7))) (first passed) (second passed))))
+                      (:restart
+                       (funcall trust)
+                       (say-package-needs-restart name (package-version-words commit tag))))
                     (prune-package-versions name where)))))
 
 (defun package-fetched-accepted (job had verdict words remember)
@@ -805,7 +867,9 @@ REMEMBER are what PACKAGE-TRUST-VERDICT said of its signer."
            (funcall trust)
            (unless (equal (seventh had) signer)
              (state-list-put *fetched-packages* (list (list key commit tag t (fifth had) (sixth had) signer))))
-           (message "The package ~a is up to date~@[ (~a)~]" name tag))
+           (if (package-awaits-restart-p name)
+               (say-package-needs-restart name (package-version-words commit tag))
+               (message "The package ~a is up to date~@[ (~a)~]" name tag)))
           ((and accepted-same (not (eq verdict :ask)))
            (funcall load))
           (accepted-same

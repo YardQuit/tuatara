@@ -187,6 +187,107 @@ the list."
                                                (tuatara.defaults::make-search-filter "green" :where :colour) "x" "x"))
       (tuatara.buffer:kill-buffer buffer))))
 
+;;; Parts of the entries, as a mailbox's list names its headers
+
+(defparameter *filter-test-parts*
+  '(("apple" ("colour" . "red") ("taste" . "a.b sweet")) ("banana" ("colour" . "yellow") ("taste" . "axb"))
+    ("cherry" ("colour" . "red")) ("carrot" ("colour" . "orange")) ("leek" ("colour" . "green")))
+  "What the test list gives of each food's parts: its colour, and some their taste.")
+
+(defun filter-test-part (entry where)
+  "The text of the part WHERE of ENTRY, a food of the test list, or NIL."
+  (cdr (assoc where (cdr (assoc entry *filter-test-parts* :test #'equal)) :test #'equal)))
+
+(define-test (search-filters parts-of-entries)
+  ;; a list naming its entries' parts is filtered by one: asked for first, its text tried alone
+  (flet ((session (keys)
+           (multiple-value-bind (f editor list)
+               (filtered-session (list (lambda ()
+                                         (tuatara:set-search-filtering (tuatara.command:current-buffer)
+                                                                       :heading #'consp :text #'filter-test-part
+                                                                       :nouns "foods" :parts '("colour" "taste")
+                                                                       :light-part (lambda (part regex)
+                                                                                     (format nil "~a=(?:~a)" part regex))))
+                                       keys #'wait-for-filter-jobs :tick))
+             (declare (ignore editor))
+             (values list f))))
+    (multiple-value-bind (list f) (session "C-x / f c o l o u r RET ^ r e d $ RET")
+      (is equal '("Foods" "Fruit" "apple" "cherry") (shown-lines list))
+      (is equal '("colour: ^red$") (mapcar #'tuatara.defaults::search-filter-words (tuatara:search-filters list)))
+      (true (tuatara.frontend.fake:fake-frame-showing f "Filter by:"))
+      ;; lit as the list says that part's matches are lit
+      (let ((other (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "lit") :text "colour=red")))
+        (tuatara:light-search-filters list other)
+        (is string= "(?i:colour=(?:^red$))"
+            (tuatara.defaults::search-state-string (car tuatara.defaults::*search-lit*)))
+        (setf tuatara.defaults::*search-lit* nil tuatara.defaults::*search-lit-shown* nil)
+        (tuatara.buffer:kill-buffer other)))
+    ;; what a part holds is the only text tried: the line's words are not
+    (is equal '("Foods") (shown-lines (session "C-x / f c o l o u r RET a p p l e RET")))
+    ;; an entry without the part is no match; hidden by the inverse filter, those without it stay
+    (is equal '("Foods" "Fruit" "apple" "banana") (shown-lines (session "C-x / f t a s t e RET . RET")))
+    (is equal '("Foods" "Fruit" "cherry" "Vegetables" "carrot" "leek")
+        (shown-lines (session "C-x / h t a s t e RET . RET")))
+    ;; a regular expression by default; literal text with M-r, its dot only a dot
+    (is equal '("Foods" "Fruit" "apple" "banana") (shown-lines (session "C-x / f t a s t e RET a . b RET")))
+    (is equal '("Foods" "Fruit" "apple") (shown-lines (session "C-x / f t a s t e RET M-r a . b RET")))
+    (is equal '("Foods") (shown-lines (session "C-x / f t a s t e RET M-r [ a RET"))))
+  ;; a part offered with the words the list gives of it; case kept or ignored when the package says so
+  (multiple-value-bind (f editor list)
+      (filtered-session (list (lambda ()
+                                (tuatara:set-search-filtering (tuatara.command:current-buffer)
+                                                              :heading #'consp :text #'filter-test-part :nouns "foods"
+                                                              :parts '(("colour" . "what colour it is"))))
+                              "C-x / f")
+                        :text #'filter-test-part)
+    (declare (ignore editor list))
+    (true (tuatara.frontend.fake:fake-frame-showing f "what colour it is")))
+  (multiple-value-bind (f editor list)
+      (filtered-session (list (lambda () (tuatara:add-search-filter (tuatara.command:current-buffer) "RED" :part "colour"
+                                                                                                         :ignore-case t))
+                              #'wait-for-filter-jobs :tick)
+                        :text #'filter-test-part)
+    (declare (ignore f editor))
+    (is equal '("Foods" "Fruit" "apple" "cherry") (shown-lines list)))
+  (multiple-value-bind (f editor list)
+      (filtered-session (list (lambda () (tuatara:add-search-filter (tuatara.command:current-buffer) "red" :part "colour"
+                                                                                                         :ignore-case nil))
+                              #'wait-for-filter-jobs :tick)
+                        :text (lambda (entry where)
+                                (let ((colour (filter-test-part entry where))) (and colour (string-upcase colour)))))
+    (declare (ignore f editor))
+    (is equal '("Foods") (shown-lines list)))
+  ;; the entries the filters leave, and the filters worked out again when the text changed
+  (let ((colours (list (cons "leek" "green"))) (before nil))
+    (multiple-value-bind (f editor list)
+        (filtered-session (list (lambda () (true (eq t (tuatara:entries-left-by-filters (tuatara.command:current-buffer)))))
+                                (lambda () (tuatara:add-search-filter (tuatara.command:current-buffer) "green" :part "colour"))
+                                #'wait-for-filter-jobs :tick
+                                (lambda ()
+                                  (setf before (tuatara:entries-left-by-filters (tuatara.command:current-buffer)))
+                                  (push (cons "apple" "green") colours)
+                                  (tuatara:refilter-search-filters (tuatara.command:current-buffer)))
+                                #'wait-for-filter-jobs :tick)
+                          :text (lambda (entry where) (and (equal where "colour") (cdr (assoc entry colours :test #'equal)))))
+      (declare (ignore f editor))
+      (is equal '("leek") before)
+      (is equal '("apple" "leek") (tuatara:entries-left-by-filters list))
+      (is equal '("Foods" "Fruit" "apple" "Vegetables" "leek") (shown-lines list))))
+  ;; a package adds a filter it made, kept with those typed, on a part and inverse too
+  (multiple-value-bind (f editor list)
+      (filtered-session (list "C-x / s r RET"
+                              (lambda ()
+                                (true (tuatara:add-search-filter (tuatara.command:current-buffer) "red" :part "colour"
+                                                                                                      :hide t)))
+                              #'wait-for-filter-jobs :tick)
+                        :text #'filter-test-part)
+    (declare (ignore f editor))
+    (is equal '("r" "red") (filter-strings list))
+    (is equal '("Foods" "Vegetables" "carrot") (shown-lines list))
+    (multiple-value-bind (filter why) (tuatara:add-search-filter list "(")
+      (false filter)
+      (true (stringp why)))))
+
 (define-test (search-filters failing-text-reported)
   ;; an entry whose more text fails is not matched, and debug mode keeps the failure in its log
   (let* ((buffer (tuatara.buffer:make-buffer (tuatara.buffer:unique-buffer-name "filter failing")))

@@ -292,7 +292,7 @@ redefine any of it.
 
 * Status
 
-Version 0.90.29, a pre-release: in daily use by its author, its parts tested
+Version 0.90.30, a pre-release: in daily use by its author, its parts tested
 (=tools/test.sh=, about 225,000 checks), its interfaces still changing until
 1.0.0, the first stable release.
 

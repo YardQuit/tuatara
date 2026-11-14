@@ -151,14 +151,15 @@ takes). :ARGUMENTS is what its form says, as ORG-READ-RULE reads them. :HOUR,
     tuatara.command:*buffers-asked-about* read-date tuatara.dates:read-date-text read-path read-file-path
     read-directory-path read-native-path read-new-native-path read-whole-number tuatara.command:wait-interruptibly
     tuatara.command:wait-until-interruptibly tuatara.command:first-line tuatara.text:one-line read-decimal-number
-    read-fraction fraction-p
+    read-fraction fraction-p read-several pattern-regex
     ;; telling what has just happened, on the desktop and in *Notifications*
     notify
     ;; lists and text made by a command
     set-made-text render-pieces render-table-list pieces-text collecting-pieces table-cell table-heading-pieces
     table-row-pieces list-entry-at tuatara.terminal-emulator:ansi-pieces set-search-filtering search-filters
     search-filter-p search-filter-string search-filter-where search-filter-match-p light-search-filters
-    search-filter-regex search-filter-list search-filter-remove-all marked-list-mode sectioned-list-mode
+    search-filter-regex search-filter-list search-filter-remove-all add-search-filter entries-left-by-filters
+    refilter-search-filters marked-list-mode sectioned-list-mode
     sectioned-pieces entry-member entry-mark keep-list-marks list-acted-on list-mark-sign list-mark-face list-question
     list-toggle-section quit-window list-entries-of list-entry-noun delete-entries visit-entry list-visit
     list-visit-other list-execute list-delete-marked entry-list-keys list-step-entry list-next-entry list-previous-entry
@@ -192,6 +193,7 @@ takes). :ARGUMENTS is what its form says, as ORG-READ-RULE reads them. :HOUR,
     tuatara.io:binary-head-p tuatara.io:read-fd-start tuatara.io:read-fd-octets tuatara.io:write-octets
     tuatara.io:file-system-error tuatara.io:copy-regular-file tuatara.io:write-new-file tuatara.io:make-directory
     tuatara.io:remove-file tuatara.io:delete-tree tuatara.io:random-name tuatara.io:copy-to-free-name
+    tuatara.io:call-with-free-file tuatara.io:append-to-file tuatara.io:call-with-state-lock
     tuatara.io:fit-name tuatara.io:percent-decoded tuatara.io:file-text tuatara.io:ensure-directories
     ;; evidence, and the places nothing is written in
     tuatara.io:writing-refusal tuatara.io:writing-refused copy-file-checked tuatara.io:percent-decoded-octets file-kind
@@ -253,7 +255,7 @@ takes). :ARGUMENTS is what its form says, as ORG-READ-RULE reads them. :HOUR,
     tuatara.frontend:image-pixels write-private-copy attachment-file-name
     ;; rimu, the file manager
     rimu-mode *rimu-keymap* rimu-chosen-paths rimu-paths-marked-anywhere rimu-paths-marked-apart *rimu-master-mark*
-    rimu-mark-master rimu-chosen rimu-marks rimu-take-out rimu-mark-and-go-on rimu-each-line rimu-show-paths
+    rimu-mark-master rimu-chosen rimu-marks rimu-unmark-paths rimu-take-out rimu-mark-and-go-on rimu-each-line rimu-show-paths
     rimu-show-file rimu-leads-to rimu-list-p rimu-list-directory rimu-path rimu-set-column
     ;; delimited data, regular expressions, and lines changed all at once
     csv-mode tsv-mode filter-lines filter-line-matcher mode-record-fields make-record-fields csv-delimiter csv-fields

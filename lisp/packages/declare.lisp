@@ -297,6 +297,11 @@ entry for each name, the latest."
   "Forget why the package NAME was not fetched or loaded."
   (setf *package-failures* (alist-without name *package-failures*)))
 
+(defvar *packages-mixed* '()
+  "The names of the packages whose new version failed part of the way as it
+loaded over the one running this session: parts of both run, and only a new
+start runs one whole.")
+
 (defvar *refused-packages* '()
   "The names of the packages refused this session for using names this
 Tuatara lacks; why is in *PACKAGE-FAILURES*.")
@@ -471,12 +476,19 @@ once; :APART, here in a process compiling it apart from the editor
 not at all, an error, while the editor waits for the loading of what was
 compiled apart (START-PACKAGE-LOAD).")
 
+(defun say-package-needs-restart (name &optional version)
+  "Say that the version of the package NAME taken, VERSION (its tag or the
+start of its commit) when given, is fetched and loads at the next start, the
+version running now going on until then."
+  (message "The package ~a~@[ ~a~] is fetched; restart Tuatara to use it" name version))
+
 (defun package-load-ended (name where start loaded failure)
   "What follows the loading of the package NAME from WHERE, begun at START
 \(internal real time): when it loaded (LOADED, the file it was loaded by),
 PACKAGE-LOADED, and the milliseconds it took said in *Messages*; when FAILURE,
 the error that ended it, said on the echo row too, the package not counted as
-loaded. Returns LOADED, or NIL when it failed."
+loaded. A PACKAGE-NEEDS-RESTART is no failure: the version running goes on,
+said in *Messages* alone. Returns LOADED, or NIL when it failed."
   (flet ((failed (e)
            (note-package-failure name (princ-to-string e))
            (if (typep e '(or package-lacks-names package-load-stopped))
@@ -484,8 +496,12 @@ loaded. Returns LOADED, or NIL when it failed."
                       (message "~a" e))
                (message "Loading package ~a...failed: ~a" name e))
            nil))
-    (if failure
-        (failed failure)
+    (cond
+      ((typep failure 'package-needs-restart)
+       (log-message (princ-to-string failure))
+       nil)
+      (failure (failed failure))
+      (t
         (handler-case
             (reporting-errors ("ending the loading of the package ~a" name)
                               (package-loaded name)
@@ -493,7 +509,7 @@ loaded. Returns LOADED, or NIL when it failed."
                                 (when *start-package-times* (push (cons name ms) (cdr *start-package-times*)))
                                 (log-message (format nil "Loading package ~a from ~a...done (~d ms)" name where ms)))
                               loaded)
-          (error (e) (failed e))))))
+          (error (e) (failed e)))))))
 
 (defun load-in-background-p ()
   "True when a package loaded now is compiled and loaded in the background
@@ -507,8 +523,9 @@ loaded."
 timed: said in *Messages*, WHERE being where it is loaded from, with the
 milliseconds it took; a failure said on the echo row too, the package not
 counted as loaded (PACKAGE-LOAD-ENDED). THEN, a function, is called with the
-file loaded, or NIL when it failed, and true as a second argument when it
-was stopped on purpose; what it returns is returned. While the editor's
+file loaded, or NIL when it failed, and as a second argument :STOPPED when it
+was stopped on purpose, :RESTART when it loads only at the next start
+\(PACKAGE-NEEDS-RESTART), else NIL; what it returns is returned. While the editor's
 session runs (LOAD-IN-BACKGROUND-P) the package is loaded in the background
 \(START-PACKAGE-LOAD). COMPILE, a function of the job, compiles it first
 apart from the editor, which goes on with your keys meanwhile; LOAD then
@@ -522,10 +539,15 @@ returned is returned, or NIL."
     (if (load-in-background-p)
         (progn (start-package-load name where load compile
                                    (lambda (loaded failure compiled stopped)
-                                     (let ((loaded (package-load-ended name where start loaded failure)))
-                                       (when (and loaded compiled (not given))
-                                         (message "The package ~a is compiled and loaded" name))
-                                       (if given (funcall then loaded stopped) (funcall then loaded)))))
+                                     (let ((loaded (package-load-ended name where start loaded failure))
+                                           (restart (typep failure 'package-needs-restart)))
+                                       (cond (given)
+                                             ((and loaded compiled)
+                                              (message "The package ~a is compiled and loaded" name))
+                                             (restart (say-package-needs-restart name)))
+                                       (if given
+                                           (funcall then loaded (cond (stopped :stopped) (restart :restart)))
+                                           (funcall then loaded)))))
                nil)
         (multiple-value-bind (loaded failure) (handler-case (reporting-errors ("loading the package ~a" name)
                                                                               (funcall load))

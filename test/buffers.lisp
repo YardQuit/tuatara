@@ -912,3 +912,33 @@ at the top shows it, without its line end."
          (false (eq :sections (first group)))
          (true (member "a.txt" group :key #'tuatara.buffer:buffer-name :test #'string=))
          (true (member "c.txt" group :key #'tuatara.buffer:buffer-name :test #'string=)))))))
+
+(defun rows-showing-p (frontend text)
+  "True when a row of FRONTEND's last frame holds TEXT."
+  (loop for row below (length (tuatara.frontend.fake::fake-screen frontend))
+          thereis (search text (tuatara.frontend.fake:fake-screen-line frontend row))))
+
+(define-modal-test (buffers mode-line-counts-the-marks)
+  ;; the mode line says how many entries are marked, and how many for deletion, while any are
+  (let ((f (fresh-list-session "C-x C-b m" :width 100)))
+    (true (rows-showing-p f " 1 marked ")))
+  (let ((f (fresh-list-session "C-x C-b m d" :width 100)))
+    (true (rows-showing-p f " 1 marked, 1 for deletion ")))
+  (let ((f (fresh-list-session "C-x C-b d" :width 100)))
+    (true (rows-showing-p f " 1 for deletion "))
+    (false (rows-showing-p f " marked")))
+  (let ((f (fresh-list-session "C-x C-b m U" :width 100)))
+    (false (rows-showing-p f " 1 marked ")))
+  (let ((f (fresh-list-session "C-x C-b" :width 100)))
+    (false (rows-showing-p f " marked"))))
+
+(define-modal-test (buffers mode-line-count-costs-nothing-unchanged)
+  ;; the count is made when marks change, not at each drawing of the mode line
+  (fresh-list-session "C-x C-b m" :width 100)
+  (let ((list (tuatara.buffer:find-buffer "*Buffers*")))
+    (tuatara.defaults::list-marks-mode-line nil list)
+    (let ((consed (loop repeat 5
+                        minimize (let ((before (tuatara.bench::bytes-consed)))
+                                   (dotimes (i 1000) (tuatara.defaults::list-marks-mode-line nil list))
+                                   (- (tuatara.bench::bytes-consed) before)))))
+      (true (< consed 1024) "~:d octets for a thousand mode lines" consed))))

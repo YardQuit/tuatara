@@ -2082,6 +2082,22 @@ told by the directory opened."
              (funcall function))
         (sb-posix:close fd)))))
 
+(defun append-to-file (path contents)
+  "Write CONTENTS, a string (in UTF-8) or octets, at the end of the file at
+PATH in one write, the file made readable and written by you alone when it is
+not there, never through a link: a line added this way by several sessions
+at once is never cut into another's (O_APPEND). Refused (WRITING-REFUSED)
+where nothing may be written, told by the directory opened."
+  (let ((octets (if (stringp contents) (tuatara.text:string-octets contents) contents)))
+    (call-with-parent (native path)
+                      (lambda (dirfd own)
+                        (let ((fd (openat-octets dirfd own (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-append
+                                                                   +o-nofollow+ +o-cloexec+)
+                                                 #o600)))
+                          (unwind-protect (write-octets fd octets :path (native path))
+                            (sb-posix:close fd))))
+                      :writing "append to")))
+
 (defvar *saved-program* nil
   "The path of the saved Tuatara program this process runs as, or NIL when it
 runs from the sources inside Steel Bank Common Lisp (SBCL): what

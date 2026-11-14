@@ -1665,3 +1665,236 @@ entry file of a package of a source nothing names, kept in it."
         (let ((kept (fetching words)))
           (is eq :kept (first kept) "~a" words)
           (true (probe-file (second kept))))))))
+
+(defun structure-package-version (dir version code)
+  "Commit to the git repository DIR, made when it is not one yet, a version of
+the package structpkg, VERSION its name, which sets *PACKAGE-TEST-VERSION* to
+VERSION and then runs CODE, text such as \"(defstruct box a b)\", in its own
+Lisp package structpkg. Returns the commit."
+  (flet ((git (&rest arguments) (apply #'git-output dir arguments)))
+    (unless (probe-file (merge-pathnames ".git/" dir))
+      (git "init" "-q" "-b" "main")
+      (git "config" "user.name" "Test")
+      (git "config" "user.email" "test@example.invalid")
+      (git "config" "commit.gpgsign" "false")
+      (git "config" "uploadpack.allowFilter" "true"))
+    (alexandria:write-string-into-file
+     (format nil "(defpackage #:structpkg (:use #:cl))~%(in-package #:structpkg)~%~
+                  (defparameter tuatara-user::*package-test-version* ~s)~%~a~%"
+             version code)
+     (ensure-directories-exist (merge-pathnames "structpkg/structpkg.lisp" dir)) :if-exists :supersede)
+    (git "add" ".")
+    (git "commit" "-q" "-m" version)
+    (string-trim '(#\Newline) (git "rev-parse" "HEAD"))))
+
+(defmacro with-structure-package ((dir where) &body body)
+  "Run BODY with DIR a new directory for STRUCTURE-PACKAGE-VERSION and WHERE its
+file:// address, nothing asked before loading; the package structpkg and all
+that was kept of it forgotten afterwards."
+  `(with-test-directory (,dir)
+     (let ((,where (format nil "file://~a" (string-right-trim "/" (namestring ,dir))))
+           (tuatara.defaults::*package-sources* '())
+           (tuatara-user:*package-ask-before-loading* nil)
+           (*until-bound* *package-until-bound*))
+       (unwind-protect (progn ,@body)
+         (when (find-package "STRUCTPKG")
+           (tuatara.packages::forget-package-code (list (find-package "STRUCTPKG"))))
+         (setf tuatara.packages::*loaded-package-directories*
+               (remove "structpkg" tuatara.packages::*loaded-package-directories* :key #'first :test #'string=))
+         (setf tuatara.packages::*packages-mixed* '())
+         (tuatara.defaults::state-list-drop tuatara.packages::*package-trust* (list ,where))
+         (forget-test-packages ,dir)))))
+
+(defun structpkg-call (name &rest arguments)
+  "Call the function NAME of the Lisp package structpkg with ARGUMENTS."
+  (apply (find-symbol name "STRUCTPKG") arguments))
+
+(defun forget-structpkg-as-at-a-start ()
+  "Take the package structpkg out of this session as a new start would have
+it: its code, its version's setting and that it was loaded."
+  (when (find-package "STRUCTPKG")
+    (tuatara.packages::forget-package-code (list (find-package "STRUCTPKG"))))
+  (makunbound 'tuatara-user::*package-test-version*)
+  (setf tuatara.packages::*loaded-packages* (remove "structpkg" tuatara.packages::*loaded-packages* :test #'string=)
+        tuatara.packages::*package-failures* '()
+        tuatara.packages::*packages-mixed* '()
+        tuatara.packages::*loaded-package-directories*
+        (remove "structpkg" tuatara.packages::*loaded-package-directories* :key #'first :test #'string=)))
+
+(defun package-messages-said (text)
+  "True once no package is being fetched, checked or loaded any more and a
+message said TEXT since the step before began (SAID-IN-SESSION)."
+  (and (packages-settled-p) (said-in-session text)))
+
+(define-test (packages new-structures-load-at-the-next-start)
+  ;; a new version laying out a structure otherwise is not loaded over the one running: it is
+  ;; kept as the version taken, said to need a restart, said so again by the next update rather
+  ;; than "up to date", and loaded at the next start
+  (with-structure-package (dir where)
+    (let ((one (structure-package-version dir "one" "(defstruct box a b)"))
+          (two nil) (box nil))
+      (let ((f (auto-save-session
+                (list (list :until (lambda ()
+                                     (tuatara-user:load-package "structpkg" :source where :version "latest")
+                                     t))
+                      (list :until (lambda () (equal "one" (package-test-version))))
+                      (list :until (lambda ()
+                                     (setf box (structpkg-call "MAKE-BOX" :a 1)
+                                           two (structure-package-version dir "two" "(defstruct box a b c)"))))
+                      "M-x p a c k a g e - u p d a t e RET"
+                      (list :until (lambda () (package-messages-said "restart Tuatara")))
+                      "M-x p a c k a g e - u p d a t e RET"
+                      (list :until (lambda () (package-messages-said "restart Tuatara"))))
+                :width 200)))
+        (is equal "one" (package-test-version))
+        (is = 1 (structpkg-call "BOX-A" box) "what the running version made still works")
+        (true (tuatara.frontend.fake:fake-frame-showing
+               f (format nil "The package structpkg ~a is fetched; restart Tuatara to use it" (subseq two 0 7))))
+        (false (tuatara.frontend.fake:fake-frame-showing f "could not be loaded"))
+        (false (tuatara.frontend.fake:fake-frame-showing f "is up to date"))
+        (let ((entry (tuatara.packages::package-state "structpkg" where "latest")))
+          (is equal two (second entry) "the version taken is remembered")
+          (true (fourth entry))
+          (is equal one (fifth entry)))
+        (true (probe-file (tuatara.packages::package-directory-for where "structpkg" two)) "its files are kept")
+        (true (probe-file (tuatara.packages::package-directory-for where "structpkg" one)))
+        (is string= "restart" (tuatara.packages::declared-package-condition "structpkg")))
+      ;; the next start: nothing of it loaded yet, it loads the version taken
+      (forget-structpkg-as-at-a-start)
+      (tuatara-user:load-package "structpkg" :source where :version "latest")
+      (is equal "two" (package-test-version))
+      (is = 3 (structpkg-call "BOX-C" (structpkg-call "MAKE-BOX" :c 3))))))
+
+(define-test (packages same-structures-loaded-at-once)
+  ;; a new version whose structures are laid out as before is loaded over the one running
+  (with-structure-package (dir where)
+    (structure-package-version dir "one" "(defstruct box a b)")
+    (let ((f (auto-save-session
+              (list (list :until (lambda () (tuatara-user:load-package "structpkg" :source where :version "latest") t))
+                    (list :until (lambda () (equal "one" (package-test-version))))
+                    (list :until (lambda () (structure-package-version dir "two" "(defstruct box a b)")))
+                    "M-x p a c k a g e - u p d a t e RET"
+                    (list :until (lambda () (equal "two" (package-test-version)))))
+              :width 200)))
+      (false (tuatara.frontend.fake:fake-frame-showing f "restart Tuatara"))
+      (is string= "loaded" (tuatara.packages::declared-package-condition "structpkg")))))
+
+(define-test (packages check-named-as-a-check)
+  ;; a check of who signed a version kept says so in the list of jobs and the log, never "Fetching"
+  (let ((check (tuatara.packages::make-package-fetch "kept" "https://example.invalid/kept" nil nil nil))
+        (fetch (tuatara.packages::make-package-fetch "new" "https://example.invalid/new" nil nil nil)))
+    (setf (tuatara.packages::package-fetch-checking check) t)
+    (is string= "Checking who signed the package kept" (tuatara.runtime:job-description check))
+    (is string= "Fetching the package new" (tuatara.runtime:job-description fetch))))
+
+(defun structpkg-updated (dir where one two)
+  "Run a session that loads structpkg from WHERE, ONE the code of its first
+version, then commits TWO, the code of the next, to DIR and runs
+\\[package-update], until the echo row says the update ended: loaded, to
+restart, or fallen back. Returns the fake frame and the two commits."
+  (let* ((first (structure-package-version dir "one" one)) (second nil)
+         (f (auto-save-session
+             (list (list :until (lambda ()
+                                  (tuatara-user:load-package "structpkg" :source where :version "latest")
+                                  t))
+                   (list :until (lambda () (equal "one" (package-test-version))))
+                   (list :until (lambda () (setf second (structure-package-version dir "two" two))))
+                   "M-x p a c k a g e - u p d a t e RET"
+                   (list :until (lambda () (or (package-messages-said "restart Tuatara")
+                                               (package-messages-said "is loaded")
+                                               (package-messages-said "could not be loaded")))))
+             :width 200)))
+    (values f first second)))
+
+(define-test (packages retyped-structure-loads-at-the-next-start)
+  ;; a slot's type changed alone, the slots and their kinds as before, is a new layout too
+  (with-structure-package (dir where)
+    (multiple-value-bind (f one two)
+        (structpkg-updated dir where "(defstruct box a (b 0 :type fixnum))" "(defstruct box a (b 0 :type integer))")
+      (declare (ignore one))
+      (is equal "one" (package-test-version))
+      (true (tuatara.frontend.fake:fake-frame-showing
+             f (format nil "The package structpkg ~a is fetched; restart Tuatara to use it" (subseq two 0 7))))
+      (false (tuatara.frontend.fake:fake-frame-showing f "could not be loaded")))))
+
+(define-test (packages broken-version-falls-back)
+  ;; a new version that cannot be compiled, defining no structure, gives way to the version before it
+  (with-structure-package (dir where)
+    (multiple-value-bind (f one two)
+        (structpkg-updated dir where "(defvar *works* t)" "(defun broken (")
+      (declare (ignore two))
+      (declare (ignore f))
+      (true (said-in-session (format nil "the version before it, ~a, is loaded in its place" (subseq one 0 7))))
+      (is equal one (second (tuatara.packages::package-state "structpkg" where "latest"))))))
+
+(define-test (packages broken-structures-fall-back-at-the-next-start)
+  ;; a new version that cannot even be compiled apart, of a package defining structures, waits for
+  ;; a restart, as any of them may have changed; failing then, it gives way to the version before it
+  (with-structure-package (dir where)
+    (multiple-value-bind (f one two)
+        (structpkg-updated dir where "(defstruct box a b)"
+                           "(defstruct box a b) (error \"The second version is broken.\")")
+      (true (tuatara.frontend.fake:fake-frame-showing
+             f (format nil "The package structpkg ~a is fetched; restart Tuatara to use it" (subseq two 0 7))))
+      (is equal two (second (tuatara.packages::package-state "structpkg" where "latest")))
+      (let ((f (auto-save-session
+                (list (list :until (lambda ()
+                                     (forget-structpkg-as-at-a-start)
+                                     (tuatara-user:load-package "structpkg" :source where :version "latest")
+                                     t))
+                      (list :until (lambda () (equal "one" (package-test-version))))))))
+        (declare (ignore f))
+        (true (said-in-session "could not be loaded"))
+        (is equal one (second (tuatara.packages::package-state "structpkg" where "latest")))))))
+
+(define-test (packages restart-version-refused-at-the-next-start)
+  ;; a version waiting for a restart whose signer the trust in force no longer takes is refused
+  ;; at the next start, not loaded unchecked
+  (with-structure-package (dir where)
+    (multiple-value-bind (f one two) (structpkg-updated dir where "(defstruct box a b)" "(defstruct box a b c)")
+      (declare (ignore one two))
+      (true (tuatara.frontend.fake:fake-frame-showing f "restart Tuatara"))
+      (tuatara.defaults::state-list-put tuatara.packages::*package-trust*
+                                        (list (list where "0123456789ABCDEF0123456789ABCDEF01234567" "Someone" nil)))
+      (let ((f (auto-save-session
+                (list (list :until (lambda ()
+                                     (forget-structpkg-as-at-a-start)
+                                     (tuatara-user:load-package "structpkg" :source where :version "latest")
+                                     t))
+                      (list :until (lambda () (package-messages-said "is refused")))))))
+        (declare (ignore f))
+        (true (said-in-session "is refused"))
+        (false (package-test-version))))))
+
+(define-test (packages structures-file-read-as-data)
+  ;; what a package's code may write beside its compiling is read as JSON of strings and integers
+  ;; alone: Lisp in it is no list of structures, and no symbol of it is interned
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "compile-x.request.structures" dir))))
+      (alexandria:write-string-into-file "((\"STRUCTPKG\" \"BOX\" (tuatara-sneaky-name)))" file)
+      (is eq :unknown (tuatara.packages::read-structures-file file))
+      (false (find-symbol "TUATARA-SNEAKY-NAME" :cl-user))
+      (alexandria:write-string-into-file "[[\"STRUCTPKG\", \"BOX\", [2, 1, -1, [\"T\"], []]]]" file
+                                         :if-exists :supersede)
+      (is equal '(("STRUCTPKG" "BOX" (2 1 -1 ("T") ()))) (tuatara.packages::read-structures-file file))
+      (alexandria:write-string-into-file "[[\"STRUCTPKG\", \"BOX\", [2.5, true]]]" file :if-exists :supersede)
+      (is eq :unknown (tuatara.packages::read-structures-file file)))))
+
+(define-test (packages failed-part-way-keeps-the-running-code)
+  ;; a new version failing part of the way over the one running takes none of the running code
+  ;; out: the session runs parts of both, you are told to restart, the package manager says
+  ;; restart, the version before is the one taken, and a later update never says up to date
+  (with-structure-package (dir where)
+    (multiple-value-bind (f one two)
+        (structpkg-updated dir where "(defun answer () 1)"
+                           "(defun answer () 2) (error \"The second version fails part of the way.\")")
+      (declare (ignore f two))
+      (true (said-in-session "runs parts of two versions, so restart Tuatara"))
+      (is = 2 (structpkg-call "ANSWER") "the running code is still there")
+      (is string= "restart" (tuatara.packages::declared-package-condition "structpkg"))
+      (is equal one (second (tuatara.packages::package-state "structpkg" where "latest")))
+      (auto-save-session
+       (list "M-x p a c k a g e - u p d a t e RET"
+             (list :until (lambda () (package-messages-said "restart Tuatara"))))
+       :width 200)
+      (false (said-in-session "up to date")))))

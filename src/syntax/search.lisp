@@ -934,6 +934,22 @@ it (which would then pass over their spaces and take # for a note)."
          (cl-ppcre::*extended-mode-p* nil))
      ,@body))
 
+(defun repeated-size (text)
+  "How large TEXT, a pattern as cl-ppcre reads it, is once its repeats are
+counted: each character once, what a repeat {N} or {N,M} holds N or M times,
+and what + or * holds twice, so that a short pattern repeating itself a
+thousand times a thousand times is seen as the million copies it stands for.
+The length of TEXT when it cannot be read."
+  (labels ((size (tree)
+             (cond ((stringp tree) (length tree))
+                   ((and (consp tree) (member (first tree) '(:greedy-repetition :non-greedy-repetition)))
+                    (destructuring-bind (low high inner) (rest tree)
+                      (* (max 1 (or high (* 2 (max 1 low)))) (size inner))))
+                   ((consp tree) (max 1 (reduce #'+ (rest tree) :key #'size)))
+                   (t 1))))
+    (handler-case (size (with-pattern-syntax (cl-ppcre:parse-string text)))
+      (error () (length text)))))
+
 (defun tuatara-user:define-named-pattern (name words pattern)
   "Make [[:NAME:]] stand for PATTERN in every search, as [[:ipv4:]] does:
 NAME, small letters, then digits too; WORDS, what it finds, for you to read;

@@ -35,9 +35,42 @@ put back.
 \(RIMU-MARK-KEY) to its mark, #\\> marked, #\\D marked for deletion, or
 another character a command gives (RIMU-MARK-AND-GO-ON), as RIMU-MARK-MASTER marks
 masters M. Marks stay with their files while the list goes to other
-directories, so that files of several can be marked and acted on together."
+directories, so that files of several can be marked and acted on together.
+The table is for reading: change marks through RIMU-UNMARK-PATHS and the
+other commands, which keep the mode line's count right."
   (or (tuatara.buffer:buffer-local buffer 'rimu-marks)
       (setf (tuatara.buffer:buffer-local buffer 'rimu-marks) (make-hash-table :test 'equal))))
+
+(defmethod list-mark-counts ((mode rimu-mode) buffer)
+  "The files marked > and D in any directory the list has been in."
+  (let ((marked 0) (deletion 0))
+    (maphash (lambda (key mark)
+               (declare (ignore key))
+               (case mark (#\> (incf marked)) (#\D (incf deletion))))
+             (rimu-marks buffer))
+    (values marked deletion)))
+
+(defun rimu-put-mark (buffer key mark)
+  "Give the file known by KEY (RIMU-MARK-KEY) MARK in the marks of the rimu list
+BUFFER, or no mark with NIL; returns true when it had one."
+  (note-marks-changed buffer)
+  (if mark
+      (progn (setf (gethash key (rimu-marks buffer)) mark) nil)
+      (remhash key (rimu-marks buffer))))
+
+(defun rimu-unmark-paths (buffer paths &key only-mark)
+  "Take the marks off the files PATHS (full native names) in the rimu list
+BUFFER, as for those marked ONLY-MARK (a character such as #\\>) when given,
+and refresh the count of marks the mode line shows. The list's lines are not
+drawn again; read the directory again or call RIMU-UPDATE for that."
+  (dolist (path paths)
+    (when (or (null only-mark) (eql (gethash path (rimu-marks buffer)) only-mark))
+      (rimu-put-mark buffer path nil))))
+
+(defun rimu-clear-marks (buffer)
+  "Take every mark off the files of the rimu list BUFFER."
+  (note-marks-changed buffer)
+  (clrhash (rimu-marks buffer)))
 
 (defun rimu-mark-key (directory entry)
   "The key of the mark of ENTRY of DIRECTORY in a list's marks (RIMU-MARKS):
@@ -65,9 +98,7 @@ whole list it is narrowed from shows the mark too (RIMU-LAY-OUT-MARKED)."
   (let ((entry (list-line-entry buffer line)))
     (when (rimu-markable-p entry)
       (let ((key (rimu-mark-key (tuatara.buffer:buffer-local buffer 'rimu-directory) entry)))
-        (if mark
-            (setf (gethash key (rimu-marks buffer)) mark)
-            (remhash key (rimu-marks buffer))))
+        (rimu-put-mark buffer key mark))
       (rimu-show-mark buffer line mark)
       (when (list-filters-on-p buffer)
         (setf (tuatara.buffer:buffer-local buffer 'rimu-marks-changed) t))
@@ -123,11 +154,9 @@ the list then laid out again in the background, as it is while search
 filters narrow it."
   (if (and (<= (length changes) *rimu-marks-shown-by-line*) (not (list-filters-on-p buffer)))
       (loop for (line nil mark) in changes do (rimu-set-mark buffer line mark))
-      (let ((marks (rimu-marks buffer))
-            (directory (tuatara.buffer:buffer-local buffer 'rimu-directory)))
+      (let ((directory (tuatara.buffer:buffer-local buffer 'rimu-directory)))
         (loop for (nil entry mark) in changes
-              for key = (rimu-mark-key directory entry)
-              do (if mark (setf (gethash key marks) mark) (remhash key marks)))
+              do (rimu-put-mark buffer (rimu-mark-key directory entry) mark))
         (rimu-update buffer))))
 
 (defmethod unmark-entries ((mode rimu-mode) buffer)
@@ -138,14 +167,14 @@ how many are marked in other directories goes too."
          (directory (tuatara.buffer:buffer-local buffer 'rimu-directory))
          (found (rimu-found-p buffer)))
     (if (loop for key being the hash-keys of marks thereis (not (rimu-mark-here-p key directory found)))
-        (progn (clrhash marks)
+        (progn (rimu-clear-marks buffer)
                (rimu-update buffer))
         (let ((changes '()))
           (rimu-each-line buffer (lambda (line entry)
                                    (when (gethash (rimu-mark-key directory entry) marks)
                                      (push (list line entry nil) changes))))
           (rimu-set-marks buffer changes)
-          (clrhash marks)))
+          (rimu-clear-marks buffer)))
     count))
 
 (defmethod swap-entry-marks ((mode rimu-mode) buffer)
@@ -236,7 +265,7 @@ does listing another directory."
         (message "No file on this line")
         (progn
           (dolist (entry chosen)
-            (remhash (rimu-mark-key (tuatara.buffer:buffer-local buffer 'rimu-directory) entry) (rimu-marks buffer)))
+            (rimu-put-mark buffer (rimu-mark-key (tuatara.buffer:buffer-local buffer 'rimu-directory) entry) nil))
           (rimu-take-out buffer chosen)
           (message "~d line~:p taken out of the list; \\<rimu-mode>\\[revert-buffer] shows ~:*~[~;it~:;them~] again"
                    (length chosen))))))
@@ -568,7 +597,7 @@ marks of what went, and read the lists touched again."
             (elsewhere nil))
         (dolist (pair done)
           (let ((key (tuatara.io:native (car pair))))
-            (when (and (remhash key (rimu-marks list)) (not (rimu-mark-here-p key directory found)))
+            (when (and (rimu-put-mark list key nil) (not (rimu-mark-here-p key directory found)))
               (setf elsewhere t))))
         ;; the line saying how many are marked elsewhere, laid out again (a read of its directory below comes after)
         (when elsewhere (rimu-update list :wait nil))))
@@ -954,7 +983,7 @@ is refused. Buffers visiting it follow it. \\<rimu-mode>\\[rimu-edit-names] rena
                    ((tuatara.io:path-stamp to :follow nil) (message "~a is there already" new))
                    (t (reporting-errors ("renaming ~a" from)
                         (rename-path-following from to)
-                        (remhash (tuatara.io:native from) (rimu-marks buffer))
+                        (rimu-put-mark buffer (tuatara.io:native from) nil)
                         (rimu-update buffer :reread t :point-on (tuatara.text:string-octets new))
                         (message "Renamed to ~a" new)))))))))
 
@@ -1204,9 +1233,9 @@ TO), full names."
          (moving (loop for (from . to) in done
                        for key = (tuatara.io:native from)
                        for mark = (gethash key marks)
-                       do (remhash key marks)
+                       do (rimu-put-mark list key nil)
                        when mark collect (cons (tuatara.io:native to) mark))))
-    (loop for (key . mark) in moving do (setf (gethash key marks) mark))))
+    (loop for (key . mark) in moving do (rimu-put-mark list key mark))))
 
 (define-command rimu-names-finish ()
   "Rename the entries whose line changed, and go back to the list: all or,

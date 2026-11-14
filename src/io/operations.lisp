@@ -425,10 +425,19 @@ true car first (the copy then holds part of it)."
   (let ((in (open-for-reading from t :accept '(:regular) :operation "copy")))
     (unwind-protect
          (let ((stamp (regular-fd-stamp in (native from))))
-           (multiple-value-bind (out path) (create-free-file directory (lambda (n) (numbered-name name n)))
-             (unwind-protect (and (copy-open-contents in stamp out path :cancel cancel) path)
-               (sb-posix:close out))))
+           (call-with-free-file directory name
+                                (lambda (out path) (and (copy-open-contents in stamp out path :cancel cancel) path))))
       (sb-posix:close in))))
+
+(defun call-with-free-file (directory name function)
+  "Make a new file in DIRECTORY called NAME, or where that is taken NAME with
+\(2), (3) and so on before its ending, as COPY-TO-FREE-NAME names its copies
+\(CREATE-FREE-FILE: never over anything there, readable by you alone), and
+call FUNCTION with a file descriptor (FD) writing it and its path, the
+descriptor closed after however FUNCTION ends. Returns what FUNCTION returns."
+  (multiple-value-bind (out path) (create-free-file directory (lambda (n) (numbered-name name n)))
+    (unwind-protect (funcall function out path)
+      (sb-posix:close out))))
 
 (define-setting *directory-tree-depth-limit* 200
   "The most directories, one inside another, that copying, moving or deleting a

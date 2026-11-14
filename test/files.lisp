@@ -752,6 +752,18 @@ second value."
       (sb-posix:symlink "/nonexistent/tuatara-test-target" (namestring (merge-pathnames "link.txt" dir)))
       (is string= (tuatara.io:path-join directory "link (2).txt")
           (tuatara.io:copy-to-free-name from directory "link.txt"))
+      ;; a new file written through its descriptor, under a name free, as a copy is named
+      (is string= (tuatara.io:path-join directory "report (4).eml")
+          (tuatara.io:call-with-free-file directory "report.eml"
+                                          (lambda (fd path)
+                                            (tuatara.io:write-octets fd (tuatara.text:string-octets "written") :path path)
+                                            path)))
+      (is string= "written" (file-text (merge-pathnames "report (4).eml" dir)))
+      ;; lines added at the end, the file made when it is not there
+      (let ((journal (tuatara.io:path-join directory "journal")))
+        (tuatara.io:append-to-file journal (format nil "one~%"))
+        (tuatara.io:append-to-file journal (format nil "two~%"))
+        (is string= (format nil "one~%two~%") (file-text journal)))
       ;; a name taken only where USABLE says it may be, its number given back
       (multiple-value-bind (fd path n)
           (tuatara.io:create-free-file directory (lambda (n) (format nil "slot-~d" n)) :usable (lambda (n) (> n 2)))

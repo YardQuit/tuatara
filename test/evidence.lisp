@@ -164,6 +164,8 @@ cases/2026-0001/work/ (WORK), each bound to its native name ending in /."
         (true (refused (tuatara.io:copy-regular-file outside (concatenate 'string evidence "in.txt"))))
         (true (refused (tuatara.io:copy-path-tree outside (concatenate 'string evidence "in.txt"))))
         (true (refused (tuatara.io:copy-to-free-name outside evidence "in.txt")))
+        (true (refused (tuatara.io:call-with-free-file evidence "in.mbox" (lambda (fd path) (list fd path)))))
+        (true (refused (tuatara.io:append-to-file (concatenate 'string evidence "journal") "x")))
         (true (refused (tuatara.io:rename-path a (concatenate 'string work "a.txt"))))
         (true (refused (tuatara.io:rename-path outside (concatenate 'string evidence "out.txt"))))
         (true (refused (tuatara.io:move-path a (concatenate 'string work "a.txt"))))
