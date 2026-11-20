@@ -859,14 +859,14 @@ POLICY-REFUSAL, why DECODER's program is not to be run (MAGICK-POLICY-OVERLAYS).
                  (and pixels (/ pixels 1d6)) (octets-words memory) (octets-words *picture-memory*)))
         (policy-refusal (format nil "~a: ~a" (first (getf decoder :program)) policy-refusal))))
 
-(defun picture-arguments (decoder kind width height &key head enlarge density)
-  "The arguments DECODER's program is run with to draw a picture of KIND no
-larger than WIDTH by HEIGHT pixels (as DECODE-IMAGE takes ENLARGE and
-DENSITY), HEAD its first octets, giving a JPEG's own size: its :PROGRAM's
-keywords given (DECODER-ARGUMENTS)."
+(defun picture-arguments (decoder kind width height &key head enlarge density (frame 0))
+  "The arguments DECODER's program is run with to draw picture FRAME (from 0)
+of a file of KIND no larger than WIDTH by HEIGHT pixels (as DECODE-IMAGE
+takes ENLARGE and DENSITY), HEAD its first octets, giving a JPEG's own size:
+its :PROGRAM's keywords given (DECODER-ARGUMENTS)."
   (decoder-arguments
    (rest (getf decoder :program))
-   (list :input (list (format nil "~a:-[0]" (cdr (assoc kind *image-formats*))))
+   (list :input (list (format nil "~a:-[~d]" (cdr (assoc kind *image-formats*)) frame))
          :size (list (format nil "~dx~d~:[>~;~]" (max 1 width) (max 1 height) enlarge))
          :density (and density (list "-density" (princ-to-string density)))
          :jpeg-hint (and (eq kind :jpeg) (getf decoder :jpeg-hint)
@@ -897,9 +897,10 @@ TUATARA.IO:SANDBOX-RUN gives them."
               :file-limit (max tuatara.io:*sandbox-file-limit* (+ (* 1024 1024) (or octets 0)))
               (and (getf decoder :sandbox) (funcall (getf decoder :sandbox) :memory memory :overlays overlays)))))))
 
-(defun decode-image (fd kind width height &key cancel density enlarge)
+(defun decode-image (fd kind width height &key cancel density enlarge (frame 0))
   "The picture in the image open as file descriptor (FD), of KIND
-\(TUATARA.IO:OCTETS-KIND's keyword), turned into pixels in the sandbox, no
+\(TUATARA.IO:OCTETS-KIND's keyword), the first or the one FRAME counts from 0
+\(a TIFF's page, an animation's frame), turned into pixels in the sandbox, no
 larger than WIDTH by HEIGHT pixels (with ENLARGE, as large as fits in them,
 its proportions kept, a smaller one made larger), as two values: the picture (a
 TUATARA.FRONTEND:IMAGE), NIL when it could not be made; and notes about it
@@ -929,7 +930,7 @@ its car turns true; NIL, NIL then. DENSITY, dots an inch, draws a drawing
           (when refusal (done nil (format nil ", not shown: ~a" refusal))))
         (multiple-value-bind (output outcome said)
             (run-picture-decoder decoder fd (picture-arguments decoder kind width height :head head :enlarge enlarge
-                                                                                          :density density)
+                                                                                          :density density :frame frame)
                                  width height :cancel cancel :seconds seconds :memory memory :octets octets
                                               :overlays (first policy))
           (case outcome

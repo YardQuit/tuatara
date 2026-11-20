@@ -57,6 +57,13 @@ never changed by them (a CSV, a log).")
     (declare (ignore buffer))
     (and mode (intersection *line-record-modes* (mode-precedence mode)) t)))
 
+(defgeneric mode-link-search (mode buffer search)
+  (:documentation "Go to what SEARCH, the part after :: of a link to a file
+\([[file:notes.org::A heading]]), names in BUFFER, that file visited in
+major mode MODE; true when it is found. A text is searched as an Org link
+searches it; an image's view shows the picture inside it a search of
+picture 2 names."))
+
 (defgeneric record-header-lines (mode buffer)
   (:documentation "How many lines at the top of BUFFER, a file of records in major mode MODE,
 are its header unless \\[list-toggle-header] says otherwise (a CSV's one).")

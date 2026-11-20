@@ -8,14 +8,17 @@
 ;;;; save. hex-mode opens its octets, safely; O opens it in the desktop's
 ;;;; program. An SVG image is a text: it is visited as one, its picture in
 ;;;; rimu's preview. Where pictures are not shown, the buffer says what the
-;;;; image is.
+;;;; image is. A file keeping more pictures than the one shown (a TIFF's
+;;;; pages, inner-pictures.lisp) shows the others with n and p.
 
 (in-package #:tuatara.defaults)
 
 (define-major-mode image-view-mode special-mode
   "An image file shown as its picture, drawn in the sandbox: read only,
-nothing to save. \\[hex-mode] opens its octets, safely; \\<image-view-mode>\\[open-externally] opens it in the
-desktop's program; \\`q' closes."
+nothing to save. \\<image-view-mode>\\[image-view-next-picture] and
+\\[image-view-previous-picture] show the next and previous picture the file
+keeps inside it (a TIFF's pages); \\[hex-mode] opens its octets, safely;
+\\[open-externally] opens it in the desktop's program; \\`q' closes."
   :lighter "Image" :interactive nil)
 
 (defmethod mode-wraps-p ((mode image-view-mode))
@@ -34,10 +37,17 @@ this large, its proportions kept, and shown smaller to fit its window.")
 
 (define-record (image-view (:constructor make-image-view (path kind words)) (:copier nil))
   "What an image's buffer knows: the image file's PATH, its KIND (as
-TUATARA.IO:OCTETS-KIND tells it) and that in WORDS."
+TUATARA.IO:OCTETS-KIND tells it) and that in WORDS; the PICTURES it keeps
+inside it, once read, and the INDEX of the one shown; its drawing JOB; the
+picture WANTED by a link before the pictures were read."
   (path nil :documentation "The path of the image file of IMAGE-VIEW.")
   (kind nil :documentation "The kind of IMAGE-VIEW's file, as TUATARA.IO:OCTETS-KIND tells it.")
-  (words nil :documentation "The kind of IMAGE-VIEW's file in words."))
+  (words nil :documentation "The kind of IMAGE-VIEW's file in words.")
+  (pictures :unread :documentation "The INNER-PICTURE records of IMAGE-VIEW's file, NIL for one picture only, or
+:UNREAD before its first drawing.")
+  (index 0 :documentation "The index from 0 among its pictures of the picture IMAGE-VIEW shows.")
+  (job nil :documentation "The IMAGE-DRAW-JOB drawing IMAGE-VIEW's picture now, or NIL.")
+  (wanted nil :documentation "The index of the picture a link asked IMAGE-VIEW for before its pictures were read."))
 
 (defun image-view-of (buffer)
   "The IMAGE-VIEW of BUFFER, or NIL when it shows no image file."
@@ -46,14 +56,26 @@ TUATARA.IO:OCTETS-KIND tells it) and that in WORDS."
 (define-record (image-draw-job (:include drawing-job) (:constructor make-image-draw-job (buffer view path))
                                (:copier nil))
   "VIEW's image, the file at PATH, being drawn for BUFFER, a drawing job:
-RESULT, once done, (IMAGE . NOTES) as DECODE-IMAGE gives them."
-  (view nil :documentation "The IMAGE-VIEW whose image IMAGE-DRAW-JOB draws."))
+RESULT, once done, (IMAGE . NOTES) as DECODE-IMAGE gives them; PICTURES,
+those the file keeps, when they were read with it."
+  (view nil :documentation "The IMAGE-VIEW whose image IMAGE-DRAW-JOB draws.")
+  (pictures :unread :documentation "The pictures IMAGE-DRAW-JOB read the file to keep, or :UNREAD."))
 
 (defmethod tuatara.runtime:job-take-in ((job image-draw-job))
-  "Give the image's buffer its picture (IMAGE-VIEW-SHOW), or say why there is none."
-  (let ((buffer (tuatara.runtime:job-buffer job)))
-    (when (image-view-of buffer)
-      (image-view-show buffer (image-draw-job-view job)
+  "Give the image's buffer its picture (IMAGE-VIEW-SHOW), or say why there is
+none; a drawing given up for another picture is let go."
+  (let* ((buffer (tuatara.runtime:job-buffer job))
+         (view (image-draw-job-view job)))
+    (when (and (image-view-of buffer) (eq job (image-view-job view)))
+      (setf (image-view-job view) nil)
+      (unless (eq (image-draw-job-pictures job) :unread)
+        (setf (image-view-pictures view) (image-draw-job-pictures job)))
+      (let ((wanted (shiftf (image-view-wanted view) nil)))
+        (when (and wanted (plusp wanted))
+          (if (< wanted (length (image-view-pictures view)))
+              (return-from tuatara.runtime:job-take-in (image-view-start buffer view wanted))
+              (message "~a keeps no picture ~d" (tuatara.io:native-file-name (image-view-path view)) (1+ wanted)))))
+      (image-view-show buffer view
                        (or (case (tuatara.runtime:job-status job)
                              (:done (drawing-job-result job))
                              (:stopped (cons nil (list (cons ", not shown: stopped" :comment)))))
@@ -69,15 +91,77 @@ SVG); else NIL."
     (and kind (not (eq kind :svg)) (assoc kind *image-formats*)
          (values kind words))))
 
-(defun image-view-start (buffer view)
-  "Start drawing VIEW's image, BUFFER's, in the background."
-  (start-drawing-job (make-image-draw-job buffer view (image-view-path view))
-                     (lambda (fd cancel)
-                       (multiple-value-bind (image notes)
-                           (decode-image fd (image-view-kind view) *image-view-largest* *image-view-largest*
-                                         :cancel cancel)
-                         (cons image notes)))
-                     :name "tuatara image view"))
+(defun image-view-start (buffer view &optional (index (image-view-index view)))
+  "Start drawing picture INDEX (from 0) of VIEW's image, BUFFER's, in the
+background, its drawing of another stopped; the pictures it keeps inside it
+read with the first."
+  (let ((old (image-view-job view))
+        (job (make-image-draw-job buffer view (image-view-path view)))
+        (kind (image-view-kind view))
+        (pictures (image-view-pictures view))
+        (largest *image-view-largest*))
+    (when old (setf (car (tuatara.runtime:job-cancel old)) t))
+    (setf (image-view-index view) index
+          (image-view-job view) job)
+    (start-drawing-job job
+                       (lambda (fd cancel)
+                         (when (eq pictures :unread)
+                           (setf pictures (inner-pictures fd (tuatara.io:read-fd-start fd "the picture"
+                                                                                       (tuatara.io:fd-size fd) 4096)
+                                                          kind)
+                                 (image-draw-job-pictures job) pictures))
+                         (multiple-value-bind (image notes)
+                             (if pictures
+                                 (inner-picture-image fd kind (nth index pictures) largest largest :cancel cancel)
+                                 (decode-image fd kind largest largest :cancel cancel))
+                           (cons image notes)))
+                       :name "tuatara image view")))
+
+(defun image-view-header-words (view)
+  "What the header line of VIEW's buffer says: the file's kind, and which of
+the pictures inside it is shown, when it keeps more than one."
+  (let ((pictures (image-view-pictures view))
+        (index (image-view-index view)))
+    (if (and (consp pictures) (< index (length pictures)))
+        (format nil "~a; picture ~d of ~d: ~a" (image-view-words view) (1+ index) (length pictures)
+                (inner-picture-words (nth index pictures)))
+        (image-view-words view))))
+
+(defun image-view-step (count)
+  "Show the picture COUNT on from the one shown in the image's view of the
+current buffer, among those its file keeps inside it, round from the last to
+the first."
+  (let* ((buffer (current-buffer))
+         (view (image-view-of buffer))
+         (pictures (and view (image-view-pictures view))))
+    (cond ((null view) (message "Not an image's view"))
+          ((eq pictures :unread) (message "The pictures inside it are still being read"))
+          ((null pictures) (message "~a keeps no other picture" (tuatara.io:native-file-name (image-view-path view))))
+          (t (image-view-start buffer view (mod (+ (image-view-index view) count) (length pictures)))))))
+
+(define-command image-view-next-picture ()
+  "Show the next picture the image file shown keeps inside it (a TIFF's next
+page), after the last the first: the header line names which is shown."
+  (image-view-step 1))
+
+(define-command image-view-previous-picture ()
+  "Show the previous picture the image file shown keeps inside it (a TIFF's
+page before), before the first the last: the header line names which is
+shown."
+  (image-view-step -1))
+
+(defmethod mode-link-search ((mode image-view-mode) buffer search)
+  "Show the picture inside the image that SEARCH names (picture 2, as
+\\[show-file-metadata] links to it); once its pictures are read, when they
+are being read."
+  (let* ((view (image-view-of buffer))
+         (pictures (and view (image-view-pictures view)))
+         (index (and view (inner-picture-search-index search (if (listp pictures)
+                                                                 (max 1 (length pictures))
+                                                                 most-positive-fixnum)))))
+    (cond ((null index) nil)
+          ((eq pictures :unread) (setf (image-view-wanted view) index) t)
+          (t (image-view-start buffer view index) t))))
 
 (defun image-view-visit (path show)
   "Show the image file at PATH as its picture, with SHOW, a function of the
@@ -113,7 +197,7 @@ nothing to draw it with, which is said)."
 it in its header. With no picture, or where pictures are not shown, the
 file's octets in its place, and why (FILE-VIEW-FALL-TO-OCTETS)."
   (destructuring-bind (image . notes) result
-    (let ((words (format nil "~a~{~a~}" (image-view-words view) (mapcar #'car notes))))
+    (let ((words (format nil "~a~{~a~}" (image-view-header-words view) (mapcar #'car notes))))
       (cond ((null image)
              ;; its text shown, no picture on its way, while the octets are opened
              (setf (tuatara.buffer:buffer-local buffer :picture-pending) nil
@@ -129,8 +213,11 @@ file's octets in its place, and why (FILE-VIEW-FALL-TO-OCTETS)."
   (setf *image-views* (remove buffer *image-views*)))
 
 (defun install-image-view ()
-  "Have image files visited shown as their pictures, and bind O there."
+  "Have image files visited shown as their pictures, and bind O there, n and
+p to step through the pictures inside one."
   (define-key *image-view-keymap* "O" 'open-externally)
+  (define-key *image-view-keymap* "n" 'image-view-next-picture)
+  (define-key *image-view-keymap* "p" 'image-view-previous-picture)
   (pushnew 'image-view-visit *file-views*)
   (pushnew 'image-view-visit *sandboxed-file-views*)
   (pushnew 'stop-decoding *keyboard-quit-functions*)

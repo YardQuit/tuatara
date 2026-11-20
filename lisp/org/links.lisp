@@ -370,8 +370,7 @@ safely when PARSE's buffer was opened safely."
                 (other (visit-path file :safe (tuatara.io:safe-visit-p buffer))))
            (show-buffer other)
            (when (and search (plusp (length search)))
-             (let ((other-parse (org-parse-now other)))
-               (when other-parse (org-search-target other-parse search))))))
+             (mode-link-search (buffer-major-mode other) other search))))
         ((string= type "id") (org-follow-id parse path))
         ((and (string= type "denote") (uiop:string-prefix-p "query-filenames:" path))
          (follow-denote-files-link (subseq path (length "query-filenames:"))))
@@ -381,6 +380,13 @@ safely when PARSE's buffer was opened safely."
         ((string= type "denote") (org-follow-denote path (tuatara.io:safe-visit-p buffer)))
         ((org-link-address type path) (open-address (org-link-address type path)))
         (t (message "Links of type ~a are not followed yet: ~a" type raw))))))
+
+(defmethod mode-link-search (mode buffer search)
+  "Go to the headline, custom ID, target or name SEARCH names, as Org finds
+one (ORG-SEARCH-TARGET)."
+  (declare (ignore mode))
+  (let ((parse (org-parse-now buffer)))
+    (and parse (org-search-target parse search))))
 
 (define-command org-open-at-point ()
   "Follow the link point is on (\\`C-c C-o'):

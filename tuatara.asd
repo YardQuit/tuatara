@@ -102,7 +102,7 @@ and the frontend interface. Depends on nothing under lisp/ or frontends/."
                          (:file "differences") (:file "merging") (:file "places") (:file "file-places")
                          (:file "bookmarks") (:file "file-local") (:file "next-place")))
                (:module "viewers" :serial t :components
-                        ((:file "hex") (:file "decode") (:file "pdf-view") (:file "image-view")
+                        ((:file "hex") (:file "decode") (:file "inner-pictures") (:file "pdf-view") (:file "image-view")
                          (:file "inline-pictures") (:file "office-view") (:file "pdf-reader") (:file "synctex")
                          (:file "metadata")))
                (:module "calendar" :serial t :components ((:file "calendar")))

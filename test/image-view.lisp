@@ -8,10 +8,12 @@
 drawn in the sandbox, read only; M-x hex-mode opens its octets, safely; where pictures are not shown
 the buffer says what it is. An SVG image is visited as its text; a safe visit opens the octets.")
 
-(defun image-session (file keys &key cell-pixels (width 120) (height 30))
+(defun image-session (file keys &key cell-pixels (width 120) (height 30) settle)
   "Visit FILE with C-x C-f in an editor session and, once its picture is drawn
 in the background, type KEYS; CELL-PIXELS has the frontend show pictures.
-Returns the frontend and the editor."
+With SETTLE, a function, it is called with the buffer shown after the keys,
+and the session waits again for what is drawn. Returns the frontend and the
+editor."
   (let ((f (tuatara.frontend.fake:make-fake-frontend :width width :height height :cell-pixels cell-pixels))
         (start (get-internal-real-time)))
     (let ((scratch (tuatara.buffer:find-buffer "*scratch*")))
@@ -20,10 +22,20 @@ Returns the frontend and the editor."
     (tuatara.frontend.fake:fake-queue-keys f (format nil "C-x C-f C-a C-k ~a RET" (rimu-typed (namestring file))))
     (labels ((busy ()
                (some #'tuatara.defaults::image-draw-job-p tuatara.runtime:*jobs*))
-             (check ()
+             (wait (then)
                (if (and (busy) (< (- (get-internal-real-time) start) (* 20 internal-time-units-per-second)))
-                   (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f #'check))
-                   (when keys (tuatara.frontend.fake:fake-queue-keys f keys)))))
+                   (progn (sleep 0.02) (tuatara.frontend.fake:fake-queue-action f (lambda () (wait then))))
+                   (funcall then)))
+             (check ()
+               (wait (lambda ()
+                       (when keys (tuatara.frontend.fake:fake-queue-keys f keys))
+                       (when settle
+                         (tuatara.frontend.fake:fake-queue-action
+                          f (lambda ()
+                              (funcall settle (tuatara.display:window-buffer
+                                               (tuatara.command:editor-window tuatara.command:*editor*)))
+                              (setf start (get-internal-real-time))
+                              (wait (constantly nil)))))))))
       (tuatara.frontend.fake:fake-queue-action f #'check))
     (values f (tuatara.command:run-editor f :setup #'tuatara.defaults:install-defaults
                                             :buffer (tuatara.buffer:find-buffer "*scratch*")))))
@@ -593,3 +605,55 @@ else ~a; fi" pixel)
       (let ((damaged (said "printf 'corrupt \\033[31mdata\\n' >&2; printf 'P7\\nWIDTH 1\\nHEIGHT 1\\nDEPTH 3\\nMAXVAL 255\\nTUPLTYPE RGB\\nENDHDR\\n\\001\\002\\003'")))
         (false (find (code-char 27) damaged) "~s" damaged)
         (true (search "damaged: corrupt ^[[31mdata" damaged) "~s" damaged)))))
+
+(define-test (image-view pictures-inside)
+  ;; a TIFF's pages: n and p step through them, the header naming the one shown; a link's picture 3 shows the third
+  (with-test-directory (dir)
+    (let ((file (merge-pathnames "pages.tif" dir)))
+      (three-page-tiff file)
+      (image-forget)
+      (multiple-value-bind (f editor) (image-session file "n" :cell-pixels '(10 20) :width 160 :settle #'identity)
+        (let ((view (tuatara.defaults::image-view-of
+                     (tuatara.display:window-buffer (tuatara.command:editor-window editor)))))
+          (true (tuatara.frontend.fake:fake-frame-showing f "picture 1 of 3: page 1 of 3, 64 × 48"))
+          (true (tuatara.frontend.fake:fake-frame-showing f "picture 2 of 3: page 2 of 3, 32 × 24"))
+          (is = 3 (length (tuatara.defaults::image-view-pictures view)))))
+      ;; before the first, the last
+      (image-forget)
+      (multiple-value-bind (f editor) (image-session file "p" :cell-pixels '(10 20) :width 160 :settle #'identity)
+        (declare (ignore editor))
+        (true (tuatara.frontend.fake:fake-frame-showing f "picture 3 of 3: page 3 of 3, 64 × 48")))
+      ;; a link to the third, as M-x show-file-metadata writes it
+      (image-forget)
+      (let ((found '()))
+        (multiple-value-bind (f editor)
+            (image-session file nil :cell-pixels '(10 20) :width 160
+                                    :settle (lambda (buffer)
+                                              (dolist (search '("picture 3" "a heading" "picture 4"))
+                                                (push (tuatara.defaults::mode-link-search
+                                                       (tuatara.defaults::buffer-major-mode buffer) buffer search)
+                                                      found))))
+          (declare (ignore editor))
+          (is equal '(nil nil t) found)
+          (true (tuatara.frontend.fake:fake-frame-showing f "picture 3 of 3")))))))
+
+(define-test (image-view pictures-inside-bounded)
+  ;; a TIFF whose directories lead round to one already read is read once round; one picture is none inside
+  (flet ((tiff (&rest directories)
+           ;; little-endian, each directory (offset width next) of one entry, the file 64 octets
+           (let ((o (make-array 64 :element-type '(unsigned-byte 8) :initial-element 0)))
+             (replace o (list 73 73 42 0 8 0 0 0))
+             (loop for (at width next) in directories
+                   do (replace o (list 1 0 0 1 3 0 1 0 0 0 width 0 0 0) :start1 at)
+                      (replace o (list (ldb (byte 8 0) next) (ldb (byte 8 8) next) 0 0) :start1 (+ at 14)))
+             o)))
+    (flet ((pictures (octets)
+             (tuatara.io:call-with-memory-file "tuatara-test" octets
+                                               (lambda (fd) (tuatara.defaults::inner-pictures fd octets :tiff)))))
+      (is equal '(5 7) (mapcar #'tuatara.defaults::inner-picture-width (pictures (tiff '(8 5 28) '(28 7 8)))))
+      (false (pictures (tiff '(8 5 8))))
+      (false (pictures (tiff '(8 5 4000))))
+      (is = 2 (length (pictures (tiff '(8 5 28) '(28 7 60)))))
+      (is equal 2 (tuatara.defaults::inner-picture-search-index "picture 3" 3))
+      (false (tuatara.defaults::inner-picture-search-index "picture 4" 3))
+      (false (tuatara.defaults::inner-picture-search-index "picture 0" 3)))))

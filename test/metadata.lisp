@@ -1255,3 +1255,28 @@ OPERANDS FROM END), and how many it counted, as two values."
     (is equal "none" (tuatara.defaults::info-field info "Page labels"))
     (is = 1 (count-if (lambda (field) (uiop:string-prefix-p "Pages:" field)) (tuatara.defaults::info-fields info)))
     (true (search "Pages: 9" (first (tuatara.defaults::info-fields info))))))
+
+(defun three-page-tiff (path)
+  "Write a TIFF of three pages to PATH, with ImageMagick: 64 × 48 blue, 32 ×
+24 purple, and the first again with a white square in its corner."
+  (uiop:run-program (list "magick" "-size" "64x48" "xc:#336699" "(" "-size" "32x24" "xc:#993366" ")"
+                          "(" "-size" "64x48" "xc:#336699" "-fill" "white" "-draw" "rectangle 0,0 20,20" ")"
+                          "-compress" "none" (namestring path))))
+
+(define-test (metadata pictures-inside)
+  ;; a TIFF's pages listed, each compared with the first, with a link that shows it
+  (with-test-directory (dir)
+    (let ((file (merge-pathnames "pages.tif" dir)))
+      (three-page-tiff file)
+      (let ((note (metadata-of (namestring file))))
+        (note-has note "* Pictures inside")
+        (note-has note "- Picture 1 :: page 1 of 3, 64 × 48; its directory at octet")
+        (note-has note "the picture a viewer shows")
+        (note-has note "- Picture 2 :: page 2 of 3, 32 × 24")
+        (note-has note "differs from the picture shown in 100% of it")
+        (note-has note "differs from the picture shown in 14% of it")
+        (note-has note (format nil "[[file:~a::picture 3][show it]]" (namestring file)))))
+    ;; one page: no section
+    (let ((file (merge-pathnames "one.tif" dir)))
+      (uiop:run-program (list "magick" "-size" "8x8" "xc:#336699" (namestring file)))
+      (false (search "Pictures inside" (metadata-of (namestring file)))))))

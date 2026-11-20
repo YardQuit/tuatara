@@ -415,6 +415,23 @@ it can reach neither the network nor your other files. A picture from a
 stranger can therefore be looked at without worry. Chapter 12 explains the
 sandbox.
 
+*** Pictures inside a picture
+
+Some picture files hold more than one picture. A TIFF can have several pages:
+a scanner writes each sheet as a page, GIMP saves each layer as one, and many
+programs add a smaller copy or a mask. A viewer shows the first page only, so
+the others are easy to miss.
+
+When the file holds more than one, the line above the picture says which one
+you see, for example =picture 1 of 3: page 1 of 3, 64 × 48=. ~n~ shows the
+next and ~p~ the previous; after the last comes the first again. Each is drawn
+in the background, as the first was.
+
+~M-x show-file-metadata~ lists them all under =Pictures inside=, as the
+section "What a file says of itself" below describes.
+
+#+table: commands image-view-next-picture image-view-previous-picture
+
 *** Pictures in a terminal
 
 In its own window Tuatara always shows pictures. In a terminal it depends on
@@ -644,6 +661,10 @@ of file:
 
 - a photo: the camera and its settings, the times, the place if it was
   stored, and whether a small preview picture is kept inside;
+- a picture file holding more than one picture, such as a TIFF of several
+  pages: each picture with its size and where it lies in the file, and
+  whether it looks the same as the one a viewer shows or how much of it
+  differs;
 - a PDF: the title, the author, the programs that made it, the dates, and
   how many times it was saved;
 - a Word, Excel or PowerPoint file: the author, the last person to save it,
@@ -651,6 +672,14 @@ of file:
 - a sound or video file: its tags, such as the title and artist, and its
   times;
 - an encrypted file: which keys it was encrypted for.
+
+Under =Pictures inside= each line ends in a link, =show it=. ~RET~ on it
+opens the picture file with that picture shown. A page that differs from the
+first, or a smaller copy that does not match the large picture, is often the
+one worth a look: it may show the picture as it was before someone changed
+it. To compare, both are drawn small, at most 256 pixels across, and a pixel
+counts as different only when its colour differs clearly, so that the loss of
+saving a picture again does not count.
 
 There are everyday reasons to look. Before you put a photo of your house on
 the internet, check whether it carries the place it was taken. Before you send

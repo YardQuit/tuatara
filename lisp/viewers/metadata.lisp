@@ -1214,7 +1214,9 @@ it was modified, changed, accessed and born, its SHA-256 sum, its extended
 attributes). It shows what it keeps of itself too: a photograph's EXIF
 (camera, times, settings, GPS position, its thumbnail), XMP and its edit
 history, a PNG's text, a PDF's document information and saves, an MP3's tags,
-a video's times and place, and an Office document's account of itself. It
+a video's times and place, an Office document's account of itself, and the
+pictures a picture file keeps besides the one shown (a TIFF's pages), each
+compared with it and shown by \\`RET' on its link. It
 shows an encrypted file's keys and passphrases as well (whose the keys are
 looked up in your keyring as *metadata-look-up-key-owners* says). Read by
 Tuatara alone in the background, nothing run and its access time left alone.
@@ -1245,7 +1247,9 @@ gpg, when it looks up keys, is given your keyring alone, not the file."
 
 (defun install-metadata ()
   "Have M-x show-file-metadata read pictures, PDFs, sound and video, and Office and
-OpenDocument files, and bind \\`g i' to it in lists of directories."
+OpenDocument files, and the pictures a picture file keeps inside it, and
+bind \\`g i' to it in lists of directories."
   (define-key *rimu-keymap* "g i" 'show-file-metadata)
+  (pushnew 'inner-pictures-metadata *file-metadata-functions*)
   (pushnew 'office-metadata *file-metadata-functions*)
   (pushnew 'built-in-metadata *file-metadata-functions*))
