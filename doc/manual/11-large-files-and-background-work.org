@@ -363,6 +363,12 @@ two new empty files, which leaves nothing behind, and keeps the answer until
 you quit. An older XFS made without reflink shares nothing, so there it saves
 as on ext4.
 
+Tuatara works on any file system. It works best on one that shares blocks
+between files: btrfs, XFS, bcachefs or ZFS. On those, a copy it keeps of a large
+file that another program changes, and the scratch files of work on a large
+buffer, take no time and no space. Elsewhere they are whole copies, kept in
+Tuatara's cache directory when it has room.
+
 On the others, ext4 among them, a new file means writing every part of it
 again. Changing one line of a 10 GB file then costs about a minute of writing.
 It happens in the background and you can go on working, but the disk is busy

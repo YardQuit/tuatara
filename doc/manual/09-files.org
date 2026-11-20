@@ -1014,7 +1014,13 @@ described in chapter 12: read-only, with nothing in them acted on. It holds
 for every file in that command. ~--hex~ opens them in the hex view instead of as
 text. A single =-= reads what another program sends: =ls | tuatara -= shows the
 output in a buffer called =*stdin*=. After =--=, every word is a file, so
-=tuatara -- -odd.txt= opens a file named =-odd.txt=.
+=tuatara -- -odd.txt= opens a file named =-odd.txt=. Options may stand anywhere
+before =--=. ~--safe~ and ~--hex~ hold for every file of the call.
+
+~tuatara --tutor~ starts in the tutor, chapter 8. ~tuatara -Q~, or ~--no-init~,
+starts without the init file and so without packages. What Tuatara keeps
+between sessions is kept apart for that run, and the real files are neither
+read nor changed. Use it to see how Tuatara behaves with none of your settings.
 
 In bash, pressing ~TAB~ after =tuatara -= completes the options, and after an
 option that takes a file, or after a plain word, the file names. The

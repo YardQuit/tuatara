@@ -59,6 +59,9 @@ read the rest. It always starts. You can open the file and mend it.
 To open the file, press ~C-x C-f~, type =~/.config/tuatara/init.lisp= and
 press ~RET~.
 
+To start once without the file, and without packages, run =tuatara -Q= (or
+=--no-init=). What Tuatara keeps between sessions is kept apart for that run.
+
 #+begin_try Try it, with the init file
 1. Press ~C-x C-f~, type =~/.config/tuatara/init.lisp= and press ~RET~.
 2. Press ~g g~ (non-modal: ~M-<~), then ~C-s~, type =fill-column= and press
@@ -512,6 +515,26 @@ text, =comment= the comments, =blue= and =green= and so on. The palette says
 what each role is. In the example only =ground= changes, from navy to black,
 and everything drawn on the ground follows. After =define-theme=, ~M-x
 load-theme~ lists =my-ao= with the others.
+
+*** The desktop and the window's title bar
+
+The AppImage, one file with nothing installed, puts itself in the desktop's
+applications with =--install-desktop=. It copies itself to
+=~/.local/bin/tuatara= and adds Tuatara, with its icon and in "Open With" for
+text files. Beside it goes "Tuatara (client)", which opens files in a window of
+the daemon (chapter 18), or in an editor of its own when no daemon runs.
+=tuatara --remove-desktop= takes both away. =tuatara --generate-autostart= has
+the desktop start the daemon as you log in. Nothing starts it unless you do.
+
+The window's title bar is in GTK's light style unless asked otherwise. =--dark=
+before the rest shows it dark, as in =./Tuatara-x86_64.AppImage --dark --gui
+FILE=, and =--install-desktop --dark= starts it so from the desktop's
+applications. Programs started from Tuatara are shown dark too. The editor's own
+colours are its theme's.
+
+A package puts Tuatara in =/usr/lib/tuatara/= and it uses the system's GTK and
+libraries. =--dark= and =--light= do nothing there. =GTK_THEME=Adwaita:dark
+tuatara --gui= does what =--dark= does.
 
 *** The faces
 

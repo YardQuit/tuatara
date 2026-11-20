@@ -408,7 +408,8 @@ lesson tells you what to type and gives a line to practise on, marked with an
 arrow, and the keys it names are the keys you really have, even if you moved
 them. You edit the tutor as it says, and nothing you do in it is saved. Half
 an hour with it is the quickest way to get used to the two states. The page
-=*About Tuatara*= below has a button that opens it.
+=*About Tuatara*= below has a button that opens it. ~tuatara --tutor~ in a
+terminal starts Tuatara in the tutor.
 
 The system's own manual pages, the ones that explain programs such as =ls= or
 =grep= in a terminal, can be read in Tuatara. ~M-x man~ asks for a name, as in

@@ -94,32 +94,9 @@ from the rope up to the init file.
    =tuatara --gui= in a window of its own; it is also among your desktop's
    applications, as /Tuatara/.
 
-   =tuatara +120:8 main.lisp= opens the file with the cursor on line 120, column
-   8 (columns count from 1, while the =C= of the mode line counts from 0; the
-   line alone, =+120=, is enough; a file with fewer lines opens at its last, and
-   that is said); each file may have its own, as in =tuatara +3 a.txt +40
-   b.txt=. =tuatara --diff OLD NEW= shows what differs between two files, or two
-   directories, and ends when you quit it; for git, run =git config --global
-   difftool.tuatara.cmd 'tuatara --diff "$LOCAL" "$REMOTE"'= once, then =git
-   difftool --tool=tuatara=.
-
-   =tuatara --merge LOCAL BASE REMOTE MERGED= merges the three into MERGED,
-   the conflicts marked there to resolve (=C-c ^ n= goes to the next, =C-c ^ u=
-   and =C-c ^ l= keep a side), then save; it ends with 0 when MERGED is saved
-   with no conflict left, else 1, so that git can trust it: =git config
-   --global mergetool.tuatara.cmd 'tuatara --merge "$LOCAL" "$BASE" "$REMOTE"
-   "$MERGED"'= and =git config --global mergetool.tuatara.trustExitCode true=,
-   then =git mergetool --tool=tuatara=.
-
-   =tuatara --safe FILE= (or =-R=) opens files safely, read only and acted on by
-   nothing, as the files of an evidence directory open; =tuatara --hex FILE=
-   opens them in the hex view; =... | tuatara -= reads standard input into a
-   buffer opened safely, the terminal staying the keyboard; =tuatara --tutor=
-   starts in the tutor; =tuatara -Q= (=--no-init=) starts without the init file
-   and packages, what Tuatara keeps between sessions kept apart for that session
-   and the real one neither read nor changed. After =--= every argument is a
-   file's name. Options may stand anywhere before =--=, =--safe= and =--hex=
-   holding for every file of the call. =tuatara --help= lists the rest.
+   The manual's chapter 9, /Starting Tuatara with files/, covers the rest:
+   starting on a line, comparing and merging files, opening them safely and
+   starting without your settings. =tuatara --help= lists them too.
 
 5. *First steps.* =M-x tuatara-tutor= teaches the keys by editing a text with
    them (=M-x= is Alt and x). =M-x check-health= says which of the programs
@@ -159,28 +136,12 @@ it runs on Linux with glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora
 chmod +x Tuatara-x86_64.AppImage
 ./Tuatara-x86_64.AppImage FILE          # in this terminal
 ./Tuatara-x86_64.AppImage --gui FILE    # in a window of its own
-./Tuatara-x86_64.AppImage +120 FILE     # with the cursor on line 120
-./Tuatara-x86_64.AppImage --diff OLD NEW
 ./Tuatara-x86_64.AppImage --install-desktop
 #+end_example
 
-=--install-desktop= copies it to =~/.local/bin/tuatara= and puts Tuatara in
-the desktop's applications, with its icon and in "Open With" for text files,
-and beside it "Tuatara (client)", which opens the files in a window of the
-daemon (=tuatara --daemon=), or of an editor of its own when none runs;
-=tuatara --remove-desktop= takes them away again. =tuatara
---generate-autostart= has the desktop start the daemon as you log in; nothing
-starts it unless you do.
-
-The window's title bar is in GTK's light style unless asked otherwise: =--dark=
-before the rest shows it dark (=./Tuatara-x86_64.AppImage --dark --gui FILE=),
-and =--install-desktop --dark= starts it so from the desktop's applications.
-Programs started from Tuatara are shown dark too. The editor's own colours are
-its theme's (M-x load-theme).
-
-Installed from a package instead, Tuatara is in =/usr/lib/tuatara/= and uses
-the system's own GTK and libraries; the AppImage's =--dark= and =--light= are
-not there, and =GTK_THEME=Adwaita:dark tuatara --gui= does what =--dark= does.
+=--install-desktop= copies it to =~/.local/bin/tuatara= and puts Tuatara in the
+desktop's applications. The manual's chapter 20 says more about the desktop
+entry and the window's title bar.
 
 The libraries the AppImage brings (GTK 4 and what it needs) are Ubuntu 24.04's
 at their newest versions on the day it was built. Each release has
@@ -197,13 +158,6 @@ bundled.
 =tools/appimage.sh= makes the AppImage, and =tools/distro-packages.sh= the
 packages for Fedora (40 and newer), Ubuntu (24.04 and newer) and Arch, in
 =build/packages/=.
-
-Tuatara works on any file system, and best on one that shares blocks between
-files: btrfs, XFS, bcachefs or ZFS. There a copy it keeps of a large file
-another program changes, and the scratch files of work on a large buffer, take
-no time and no space, and a save shares the blocks of what did not change
-wherever it can. Elsewhere they are whole copies, kept in Tuatara's cache
-directory when it has room.
 
 To build it from source, and to work on it, see
 [[file:HACKING.org][HACKING.org]]; to contribute,
@@ -274,21 +228,9 @@ from tug.org does too, found in =~/.texlive/=, =~/texlive/=,
 * Configuration
 
 =~/.config/tuatara/init.lisp= (=XDG_CONFIG_HOME= respected) is loaded after the
-defaults, in the =tuatara-user= package. The first start writes one that lists
-every setting, commented out. For example:
-
-#+begin_example
-(bind-key "C-c t" 'end-of-buffer)                ; in every modal state
-(bind-key "SPC ." 'beginning-of-buffer :map :normal)
-(bind-key "; ;" 'end-of-line :map :leader)       ; under SPC and C-x SPC
-(unbind-key "C-x C-b")
-(set-face :comment :fg :cyan :italic nil)        ; faces: see lisp/theme.lisp
-(load-theme 'ao-light)                           ; ao-dark (the default), terminal, plain
-(setf *escape-quits* t)                          ; Escape does what C-g does
-#+end_example
-
-Everything the defaults do is ordinary Lisp in =lisp/=; the init file can
-redefine any of it.
+defaults. The first start writes one that lists every setting, commented out.
+Chapter 20 of the manual, /Making it your own/, shows how to change settings,
+keys, faces and themes.
 
 * Status
 

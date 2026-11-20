@@ -626,6 +626,30 @@ the same for a rebase and a cherry-pick. Each asks first.
    opens, press ~C-c C-c~. The merge is done.
 #+end_try
 
+** Tuatara as git's diff and merge tool
+
+Git can hand two files to Tuatara to compare, or three to merge. Tell git once.
+For comparing:
+
+#+begin_example
+git config --global difftool.tuatara.cmd 'tuatara --diff "$LOCAL" "$REMOTE"'
+#+end_example
+
+Then =git difftool --tool=tuatara= shows what differs, and ends when you quit
+Tuatara. For merging:
+
+#+begin_example
+git config --global mergetool.tuatara.cmd \
+  'tuatara --merge "$LOCAL" "$BASE" "$REMOTE" "$MERGED"'
+git config --global mergetool.tuatara.trustExitCode true
+#+end_example
+
+Then =git mergetool --tool=tuatara= opens the file with the conflicts marked,
+to resolve with the keys above (~C-c ^ n~ to the next, ~C-c ^ u~ and ~C-c ^ l~
+to keep a side). Save the file when you are done. Tuatara ends with 0 when the
+file is saved with no conflict left, and with 1 otherwise, which is what
+=trustExitCode= lets git rely on.
+
 ** Rebase, cherry-pick, revert and reset
 
 These four change or reuse commits that already exist. You can work for a long
