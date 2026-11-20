@@ -9,8 +9,10 @@ Tuatara. tools/manual-html.sh makes the web pages and tools/manual-pdf.sh the
 PDF, both in build/manual/. The web pages are a page for each chapter and
 all.html, every chapter on one page, to print at once or search with the
 browser's find. A button changes between light and dark colours, and a link
-in the corner of each page opens the contents page. tools/manual-publish.sh REMOTE puts the pages on
-the branch gh-pages of REMOTE, which GitHub Pages serves, at each release.
+in the corner of each page opens the contents page. tools/manual-publish.sh
+REMOTE puts the pages on the branch gh-pages of REMOTE, which GitHub Pages
+serves, at each release. Given a package's repository after REMOTE, it
+publishes that package's manual on the package's own gh-pages.
 
 A package's manual is made the same way, in the same look, from its own
 doc/manual/ (an OUTLINE.org and its chapters): give tools/manual-tables.sh and
