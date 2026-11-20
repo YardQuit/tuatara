@@ -2040,6 +2040,14 @@ help left out."
   ;; C-r at the date prompt: the menu of a repeat, started from what was typed, RET writing
   ;; it where the prompt would have; what it comes to under it
   (let ((tuatara.defaults::*org-now* (encode-universal-time 0 0 12 23 10 2026)))
+    ;; each date prompt that takes repeats names the key of the menu, in the calendar or not
+    (dolist (in-calendar '(t nil))
+      (let ((tuatara-user:*org-read-date-in-calendar* in-calendar))
+        (loop for (keys prompt) in '(("C-c C-s" "Schedule (C-r repeats): ") ("C-c C-d" "Deadline (C-r repeats): ")
+                                     ("C-c ." "Date (C-r repeats): ") ("C-c !" "Inactive date (C-r repeats): "))
+              do (let ((f (run-keys (format nil "M-x o r g - m o d e RET ~a" keys)
+                                    :text (format nil "* TODO Thing~%") :width 120 :height 24)))
+                   (true (tuatara.frontend.fake:fake-frame-showing f prompt) "~a ~a" keys in-calendar)))))
     (flet ((written (keys) (org-text-after keys (format nil "* TODO Thing~%"))))
       (is string= (format nil "* TODO Thing~%SCHEDULED: <2026-10-23 Fri +1w>~%")
           (written (format nil "C-c C-s C-r r ~a RET RET" (typed-keys "Weekly"))))

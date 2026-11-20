@@ -536,7 +536,8 @@ TEXTS with the mode line's sign of work, P, lit in :mode-line-sign."
            (everywhere (mapcar #'tuatara.command:candidate-result
                                (tuatara.defaults::command-candidates :everywhere t))))
       (dolist (name (mapcar #'tuatara.command:command-symbol
-                            '("minibuffer-finish" "popup-next" "mark-run-refuse" "tuatara-normal-inert")))
+                            '("minibuffer-finish" "popup-next" "mark-run-refuse" "tuatara-normal-inert"
+                              "repeat-menu" "repeat-menu-write" "org-date-repeat-menu")))
         (true (tuatara.command:key-only-command-p name) "~a" name)
         (false (member name offered) "~a" name)
         (true (member name everywhere) "~a" name)

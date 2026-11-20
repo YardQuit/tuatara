@@ -87,14 +87,15 @@ ARGUMENT :READ READER), :REPLACE T after it for one asked again."
           `(make-menu-entry ,key ,label :switch ,switch :option ,option :reader ',(and option read) :replace ,replace))
         `(make-menu-entry ,key ,label :command ',(first more)))))
 
-(defmacro define-menu (name (&key title show note summary hold) doc &body groups)
+(defmacro define-menu (name (&key title show note summary hold (interactive t)) doc &body groups)
   "Define the command NAME, documented by DOC, that opens a menu under TITLE
 of GROUPS. Each group is (GROUP-TITLE ENTRY...). An entry is (KEY LABEL
 COMMAND) for an action, (KEY LABEL :SWITCH \"--argument\") for a switch, or
 \(KEY LABEL :OPTION \"--argument=\" :READ READER) for an option. READER is a
 function of a prompt (READ-STRING when not given), and :REPLACE T after it
 asks it again with its value. SHOW, NOTE and SUMMARY are as MAKE-MENU takes
-them, function names. HOLD is too, true or false."
+them, function names. HOLD is too, true or false. INTERACTIVE is as
+DEFINE-COMMAND takes it: NIL for a menu opened only by a key or by code."
   (check-type doc string "a docstring; every command documents itself")
   `(progn
      (setf (gethash ',name *menus*)
@@ -103,7 +104,7 @@ them, function names. HOLD is too, true or false."
                                     collect `(cons ,group-title (list ,@(mapcar #'parse-menu-entry specs)))))
                       :show ,(and show `',show) :note ,(and note `',note) :summary ,(and summary `',summary)
                       :hold ,hold))
-     (define-command ,name () ,doc (open-menu (gethash ',name *menus*)))))
+     (define-command ,name (:interactive ,interactive) ,doc (open-menu (gethash ',name *menus*)))))
 
 (defparameter *menu-keeping-commands*
   '(menu-toggle-switch menu-set-option menu-entry-left-out menu-entry-refused menu-key-not-here menu-leave)

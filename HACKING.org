@@ -556,7 +556,8 @@ package most often needs:
   =entry-preview-keys= gives the list =P= (=list-toggle-preview=), and the
   list's =list-preview-p= says whether it is on, and is set to turn it on.
 - Menus, help and switches :: =define-menu= puts a few ways of doing a
-  thing under one key, in the panel (=menu-arguments= reads its switches);
+  thing under one key, in the panel (=menu-arguments= reads its switches;
+  =:interactive nil= keeps a menu opened only by a key out of =M-x=);
   =show-help= with =:fill= shows a page of help or a report in =*Help*=,
   filled as documentation is; =define-display-toggle= makes a way of
   showing switched on and off, its settings the package's, and

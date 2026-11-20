@@ -371,7 +371,7 @@ CURRENT, what it said."
                 (if (cl-ppcre:scan "^\\d{1,4}$" typed) (format nil "~ax" typed) "")))
       (t ""))))
 
-(define-command repeat-menu-write ()
+(define-command repeat-menu-write (:interactive nil)
   "Write the repeat of the open repeat menu where the date prompt it came from
 would have written its date; when it cannot be written, say why and keep the
 menu open, what was set in it kept."
@@ -380,7 +380,7 @@ menu open, what was set in it kept."
           ((null *repeat-menu-target*) (message "No date prompt to write the repeat for"))
           (t (funcall (shiftf *repeat-menu-target* nil) value)))))
 
-(define-menu repeat-menu (:title "Repeat" :show repeat-menu-shows-p :summary repeat-summary :hold t)
+(define-menu repeat-menu (:title "Repeat" :show repeat-menu-shows-p :summary repeat-summary :hold t :interactive nil)
   "Open the menu of a repeat: its start, time, how it repeats and when it
 ends, what they come to shown under it; RET writes it. Custom, among the
 ways it repeats, is every so many days, weeks, months or years (n asks the
@@ -428,7 +428,7 @@ that ORG-DATE-REPEAT-MENU fills: true, what was typed, and the calendar's
 day, so that the prompt opens the repeat menu from them.")
 (pushnew '*org-date-repeat-asked* *question-variables*)
 
-(define-command org-date-repeat-menu ()
+(define-command org-date-repeat-menu (:interactive nil)
   "At the date prompt of \\[org-schedule], \\[org-deadline] and \\[org-time-stamp]: leave
 it for the menu of a repeat (REPEAT-MENU), started from what was typed, or the
 calendar's day."
@@ -447,14 +447,18 @@ calendar's day."
   "The keys of the date prompt that takes repeats, those of every Org date prompt and the minibuffer's besides.")
 
 (defun org-ask-date (prompt then &key several)
-  "Ask PROMPT for a date, a repeat in words too, with SEVERAL several days
-\(READ-ORG-DATE), and call THEN with what it read (an ORG-TS, the text of a
+  "Ask PROMPT (Schedule, with no colon) for a date, a repeat in words too, with
+SEVERAL several days (READ-ORG-DATE), the key of the repeat menu named after
+PROMPT, and call THEN with what it read (an ORG-TS, the text of a
 timestamp by rule or of several timestamps, or NIL);
 or, when \\[org-date-repeat-menu] is typed, open the repeat menu from what
 was typed, or the calendar's day, THEN called when it writes."
   (let* ((asked (list nil nil nil))
          (value (let ((*org-date-repeat-asked* asked))
-                  (read-org-date prompt :repeating t :several several :keymap **org-repeat-date-prompt-keymap**))))
+                  (read-org-date (substitute-command-keys
+                                  (format nil "~a (\\[org-date-repeat-menu] repeats): " prompt)
+                                  :keymap **org-repeat-date-prompt-keymap**)
+                                 :repeating t :several several :keymap **org-repeat-date-prompt-keymap**))))
     (if (first asked)
         (let ((text (let ((typed (string-trim " " (or (second asked) "")))) (and (plusp (length typed)) typed)))
               (day (or (third asked) (org-today))))

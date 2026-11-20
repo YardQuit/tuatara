@@ -670,9 +670,10 @@ drawer and fold away with it. With =nil= they are written right under the
 heading's planning line and properties, in plain sight.
 
 If you cannot remember how to say a repeat in words, press ~C-r~ at the date
-prompt. A menu opens where you choose the start, the time, how often and
-when it ends, and it shows in plain words what your choices come to. ~RET~
-writes it.
+prompt; the prompt itself says so, as =Schedule (C-r repeats):=. A menu opens
+where you choose the start, the time, how often and when it ends, and it
+shows in plain words what your choices come to. ~RET~ writes it. The menu
+opens only from a date prompt, so ~M-x~ does not offer it.
 
 *** Being told on the desktop
 

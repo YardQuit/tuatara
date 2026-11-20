@@ -672,7 +672,7 @@ it is the time of the line. \\`s' schedules the series."
       (case (org-occurrence-choice "Schedule")
         (:none nil)
         (:this (org-move-asked))
-        (:series (org-ask-date "Schedule: " (lambda (ts) (if ts (org-plan "SCHEDULED" ts) (org-no-date))))))))
+        (:series (org-ask-date "Schedule" (lambda (ts) (if ts (org-plan "SCHEDULED" ts) (org-no-date))))))))
 
 (define-command org-deadline ()
   "Give the task point is under a deadline (\\`C-c C-d'):
@@ -680,7 +680,7 @@ the date asked for as \\[org-schedule] asks it, DEADLINE: on its planning
 line, a repeater and warning it had kept. With \\[universal-argument], take it away."
   (if (prefix-argument)
       (org-plan "DEADLINE" nil)
-      (org-ask-date "Deadline: " (lambda (ts) (if ts (org-plan "DEADLINE" ts) (org-no-date))))))
+      (org-ask-date "Deadline" (lambda (ts) (if ts (org-plan "DEADLINE" ts) (org-no-date))))))
 
 (defun org-timestamp-around (text position)
   "Where the timestamp of TEXT that holds the character POSITION, or ends just
@@ -699,7 +699,7 @@ in that one's place, its repeater and warning kept, and its time when none
 was typed. An active one may be several days chosen in the calendar, put in
 one after another (*ORG-READ-DATE-IN-CALENDAR*)."
   (org-ask-date
-   (if active "Date: " "Inactive date: ")
+   (if active "Date" "Inactive date")
    (lambda (ts)
      (cond
        ((null ts) (org-no-date))

@@ -305,7 +305,7 @@ calendar."
       ;; the calendar's keys choose the day, RET writes it at the prompt, RET there takes it
       (multiple-value-bind (text f editor) (asked "l l RET RET")
         (true (search "SCHEDULED: <2026-10-05 Mon>" text) "~a" text)
-        (true (tuatara.frontend.fake:fake-frame-showing f "Schedule: 2026-10-05 Mon  (h j k l move, m marks"))
+        (true (tuatara.frontend.fake:fake-frame-showing f "Schedule (C-r repeats): 2026-10-05 Mon  (h j k l move, m marks"))
         (is = 1 (length (tuatara.command:editor-windows editor))))
       ;; a week on, and a time added at the prompt
       (true (search "SCHEDULED: <2026-10-10 Sat 14:00>" (asked "j RET SPC 1 4 : 0 0 RET")))
