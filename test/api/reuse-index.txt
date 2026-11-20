@@ -3724,7 +3724,10 @@ tuatara.defaults:heap-budget (internal)  function  The octets a piece of work ma
 tuatara.defaults:heap-free (internal)  function  Octets of heap free now, garbage not yet collected counted as taken.  lisp/garbage.lisp
 tuatara.defaults:heap-room-p (internal)  function  True when the heap has OCTETS free, its garbage collected first when it has not.  lisp/garbage.lisp
 tuatara.defaults:heex-mode (internal)  function  Switch the current buffer to heex-mode.  lisp/modes/more-languages-markup.lisp
-tuatara.defaults:heif-metadata (internal)  function  The sections of the note for the HEIF picture (HEIC, AVIF) in OCTETS: the EXIF its item of that kind holds.  lisp/viewers/metadata.lisp
+tuatara.defaults:heif-aux-words (internal)  function  What an auxiliary picture of a HEIF is, by the NAME its auxC property gives.  lisp/viewers/inner-pictures.lisp
+tuatara.defaults:heif-inner-pictures (internal)  function  The pictures of the HEIF (HEIC, AVIF) open as file descriptor (FD), whose first octets are HEAD, of SIZE octets: the picture itself (its primary item), then each other item that is a picture, named by what it is to the others (a thumbnail, a depth map, an HDR gain map, a tile of a picture made of tiles), with its size and where its data lies.  lisp/viewers/inner-pictures.lisp
+tuatara.defaults:heif-metadata (internal)  function  The sections of the note for the HEIF picture (HEIC, AVIF) in OCTETS: the EXIF its item of that kind holds (HEIF-STRUCTURE).  lisp/viewers/metadata.lisp
+tuatara.defaults:heif-structure (internal)  function  The items of the HEIF in OCTETS, from its meta box, as two values: a list of (ID .  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:held-lines (internal)  function  The starts of the lines of BUFFER that SPANS, (START .  lisp/selecting/split.lisp
 tuatara.defaults:held-spans (internal)  function  Where the places SPLIT holds are now, (START .  lisp/selecting/split.lisp
 tuatara.defaults:held-spans-of (internal)  function  Where PLACES of BUFFER are now, (START .  lisp/selecting/split.lisp
@@ -9759,6 +9762,7 @@ tuatara.defaults:warm-rules (internal)  function  Compile LANGUAGE's rules for c
 tuatara.defaults:wast-mode (internal)  function  Switch the current buffer to wast-mode.  lisp/modes/more-languages-programming.lisp
 tuatara.defaults:wat-mode (internal)  function  Switch the current buffer to wat-mode.  lisp/modes/more-languages-programming.lisp
 tuatara.defaults:web-page-colours (internal)  function  The colours of a web page made from an Org document, in STYLE, :LIGHT or :DARK, each (NAME .  lisp/theme.lisp
+tuatara.defaults:webp-inner-pictures (internal)  function  The pictures of the animated WebP open as file descriptor (FD), whose first octets are HEAD, of SIZE octets: the picture itself (its first frame), then each frame after it, with where it lies on the picture, how long it is shown and how it is laid over the frame before.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:webp-metadata (internal)  function  The sections of the note for the WebP picture in OCTETS: its EXIF.  lisp/viewers/metadata.lisp
 tuatara.defaults:werk-mode (internal)  function  Switch the current buffer to werk-mode.  lisp/modes/more-languages-build.lisp
 tuatara.defaults:wesl-mode (internal)  function  Switch the current buffer to wesl-mode.  lisp/modes/more-languages-programming.lisp

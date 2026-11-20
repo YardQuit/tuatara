@@ -5,7 +5,8 @@
 ;;;; TIFF's further pages (a scanner's other sheets, GIMP's layers, a smaller
 ;;;; copy, a mask) and the layers Photoshop keeps in it; a JPEG's thumbnails
 ;;;; (EXIF's, Photoshop's) and the pictures its MPF index lists (larger
-;;;; previews, a phone's gain and depth maps); an animated PNG's frames. Their
+;;;; previews, a phone's gain and depth maps); an animated PNG's or WebP's
+;;;; frames; a HEIF's items (thumbnails, depth and gain maps, tiles). Their
 ;;;; structure is read here, by Tuatara alone, as the metadata is: small
 ;;;; reads, every offset checked against the file, every structure held to a
 ;;;; count. Their pixels are drawn in the sandbox (decode.lisp). M-x
@@ -501,6 +502,229 @@ file is no larger than *APNG-LARGEST*."
                                              at)
                                      width height (list :apng-frame n) (list x y)))))))))))
 
+;;; WebP: an animation's frames in ANMF chunks
+
+(defun webp-inner-pictures (fd head size)
+  "The pictures of the animated WebP open as file descriptor (FD), whose
+first octets are HEAD, of SIZE octets: the picture itself (its first
+frame), then each frame after it, with where it lies on the picture, how
+long it is shown and how it is laid over the frame before. Each chunk's
+header is read where it stands, at most 100,000 chunks and
+*INNER-PICTURES-MOST* frames; NIL for a WebP that is no animation."
+  (when (and (tuatara.io:octets-at-p head "RIFF") (tuatara.io:octets-at-p head "WEBPVP8X" 8))
+    (let ((frames '()) (at 12))
+      (loop repeat 100000
+            while (and (<= (+ at 8) size) (< (length frames) *inner-pictures-most*))
+            do (let* ((header (tuatara.io:read-fd-exactly fd 8 at))
+                      (type (and header (tuatara.text:octets-latin-1 header :end 4)))
+                      (length (and header (tuatara.io:octets-integer header 4 4))))
+                 (unless (and type length (<= (+ at 8 length) size)) (return))
+                 (when (and (string= type "ANMF") (>= length 16))
+                   (let ((frame (tuatara.io:read-fd-exactly fd 16 (+ at 8))))
+                     (flet ((int (from) (tuatara.io:octets-integer frame from 3)))
+                       (push (list :x (* 2 (int 0)) :y (* 2 (int 3)) :width (1+ (int 6)) :height (1+ (int 9))
+                                   :duration (int 12) :blend (not (logtest 2 (aref frame 15)))
+                                   :dispose (logtest 1 (aref frame 15)) :at at)
+                             frames))))
+                 (setf at (+ at 8 length (mod length 2)))))
+      (setf frames (nreverse frames))
+      (when (rest frames)
+        (multiple-value-bind (width height) (tuatara.io:octets-picture-size head)
+          (cons (make-inner-picture "the picture itself, the animation's first frame"
+                                    (format nil "its first frame at octet ~:d" (getf (first frames) :at))
+                                    width height (list :frame 0))
+                (loop for frame in (rest frames)
+                      for n from 1
+                      collect (destructuring-bind (&key x y width height duration blend dispose at) frame
+                                (make-inner-picture
+                                 (format nil "frame ~d of ~d" (1+ n) (length frames))
+                                 (format nil "at ~d, ~d on the picture; shown ~,2f s; ~a; then ~a; its ANMF chunk at ~
+                                              octet ~:d"
+                                         x y (/ duration 1000.0)
+                                         (if blend "laid over the frame before" "replacing what is under it")
+                                         (if dispose "cleared" "left as it is") at)
+                                 width height (list :frame n) (list x y))))))))))
+
+;;; HEIF (HEIC, AVIF): the items of its meta box
+
+(defparameter *heif-read* (* 4 1024 1024)
+  "The most octets at the start of a HEIF read for its meta box, where its
+items, their places and their roles are kept.")
+
+(defparameter *heif-picture-kinds* '("hvc1" "av01" "jpeg" "grid" "iden" "iovl" "avc1" "j2k1")
+  "The kinds of HEIF item that are pictures: the others (Exif, mime for XMP)
+hold what the file says of itself.")
+
+(defun heif-structure (octets)
+  "The items of the HEIF in OCTETS, from its meta box, as two values: a list
+of (ID . PLIST), one an item, PLIST of :ID, :KIND (four letters), :NAME, :HIDDEN, :AT
+and :LENGTH (where its data lies in OCTETS' file, the first extent, NIL when
+not said or kept otherwise), :WIDTH and :HEIGHT (its ispe property), :AUX
+\(its auxC property's name), :REFS (a list of (TYPE . TO-IDS) from its iref
+entries); and the primary item's id. At most 10,000 items, each structure
+checked to lie within OCTETS; NIL when there is no meta box."
+  (let* ((n (length octets))
+         (meta (tuatara.io:box-find octets 0 n "meta")))
+    (when meta
+      (let* ((children (tuatara.io:box-children octets (+ 4 (second meta)) (third meta)))
+             (items (make-hash-table)) (order '()) (primary nil))
+        (labels ((box (type) (find type children :key #'first :test #'string=))
+                 (int (at size) (and (< (+ at size -1) n) (octets-integer octets at size :big-endian t)))
+                 (item (id) (or (gethash id items)
+                                (progn (push id order) (setf (gethash id items) (cons id (list :id id)))))))
+          (let ((pitm (box "pitm")))
+            (when pitm (setf primary (int (+ (second pitm) 4) (if (zerop (aref octets (second pitm))) 2 4)))))
+          (let ((iinf (box "iinf")))
+            (when (and iinf (< (second iinf) n))
+              (let ((at (+ (second iinf) (if (zerop (aref octets (second iinf))) 6 8))))
+                (loop for (type start end) in (tuatara.io:box-children octets at (third iinf))
+                      when (and (string= type "infe") (< (+ start 12) n) (>= (aref octets start) 2))
+                        do (let* ((wide (>= (aref octets start) 3))
+                                  (id (int (+ start 4) (if wide 4 2)))
+                                  (kind-at (+ start (if wide 10 8)))
+                                  (name-end (or (position 0 octets :start (+ kind-at 4) :end (min end n)) (min end n)))
+                                  (entry (item id)))
+                             (setf (getf (cdr entry) :kind) (octets-text octets kind-at (+ kind-at 4))
+                                   (getf (cdr entry) :name) (escape-controls
+                                                             (octets-text octets (+ kind-at 4)
+                                                                          (min name-end (+ kind-at 4 200))))
+                                   (getf (cdr entry) :hidden) (logtest 1 (or (int (+ start 1) 3) 0))
+                                   (gethash id items) entry))))))
+          (let ((iloc (box "iloc")) (idat (box "idat")))
+            (when (and iloc (int (+ (second iloc) 4) 2))
+              (let* ((at (second iloc)) (version (aref octets at))
+                     (sizes (int (+ at 4) 2))
+                     (offset-size (ldb (byte 4 12) sizes)) (length-size (ldb (byte 4 8) sizes))
+                     (base-size (ldb (byte 4 4) sizes))
+                     (index-size (if (>= version 1) (ldb (byte 4 0) sizes) 0))
+                     (count (int (+ at 6) (if (< version 2) 2 4)))
+                     (p (+ at (if (< version 2) 8 10))))
+                (dotimes (i (min (or count 0) 10000))
+                  (let* ((id (int p (if (< version 2) 2 4)))
+                         (method (progn (incf p (if (< version 2) 2 4))
+                                        (if (>= version 1) (prog1 (logand 15 (or (int p 2) 0)) (incf p 2)) 0))))
+                    (incf p 2)
+                    (let ((base (if (zerop base-size) 0 (int p base-size)))
+                          (extents (progn (incf p base-size) (int p 2))))
+                      (incf p 2)
+                      (unless (and id base extents) (return))
+                      (let ((first nil) (total 0))
+                        (dotimes (e (min extents 1000))
+                          (incf p index-size)
+                          (let ((offset (if (zerop offset-size) 0 (int p offset-size)))
+                                (length (if (zerop length-size) 0 (int (+ p offset-size) length-size))))
+                            (unless (and offset length) (return))
+                            (when (zerop e) (setf first offset))
+                            (incf total length))
+                          (incf p (+ offset-size length-size)))
+                        (when first
+                          (let ((entry (item id)))
+                            ;; construction method 1: within the idat box; 2 (from other items): not followed
+                            (setf (getf (cdr entry) :at) (case method
+                                                           (0 (+ base first))
+                                                           (1 (and idat (+ (second idat) base first))))
+                                  (getf (cdr entry) :length) (and (plusp total) total)
+                                  (gethash id items) entry))))))))))
+          (let ((iref (box "iref")))
+            (when (and iref (< (second iref) n))
+              (let ((wide (plusp (aref octets (second iref)))))
+                (loop for (type start end) in (tuatara.io:box-children octets (+ 4 (second iref)) (third iref))
+                      do (let* ((from (int start (if wide 4 2)))
+                                (count (int (+ start (if wide 4 2)) 2))
+                                (to (loop for k below (min (or count 0) 1000)
+                                          for at = (+ start (if wide 6 4) (* k (if wide 4 2)))
+                                          while (<= (+ at (if wide 4 2)) end)
+                                          collect (int at (if wide 4 2)))))
+                           (when from
+                             (let ((entry (item from)))
+                               (push (cons type to) (getf (cdr entry) :refs))
+                               (setf (gethash from items) entry))))))))
+          (let* ((iprp (box "iprp"))
+                 (parts (and iprp (tuatara.io:box-children octets (second iprp) (third iprp))))
+                 (ipco (find "ipco" parts :key #'first :test #'string=))
+                 (ipma (find "ipma" parts :key #'first :test #'string=))
+                 (properties (and ipco (coerce (tuatara.io:box-children octets (second ipco) (third ipco)) 'vector))))
+            (when (and ipma properties (< (+ (second ipma) 8) n))
+              (let* ((at (second ipma)) (version (aref octets at)) (big-index (logtest 1 (aref octets (+ at 3))))
+                     (count (int (+ at 4) 4)) (p (+ at 8)))
+                (dotimes (i (min (or count 0) 10000))
+                  (let ((id (int p (if (< version 1) 2 4))))
+                    (incf p (if (< version 1) 2 4))
+                    (let ((associations (and (< p n) (aref octets p))))
+                      (incf p)
+                      (unless (and id associations) (return))
+                      (dotimes (k associations)
+                        (let* ((raw (int p (if big-index 2 1)))
+                               (index (and raw (logand raw (if big-index #x7FFF #x7F))))
+                               (property (and index (plusp index) (<= index (length properties))
+                                              (aref properties (1- index)))))
+                          (incf p (if big-index 2 1))
+                          (when property
+                            (destructuring-bind (type start end) property
+                              (let ((entry (item id)))
+                                (cond ((and (string= type "ispe") (<= (+ start 12) end))
+                                       (setf (getf (cdr entry) :width) (int (+ start 4) 4)
+                                             (getf (cdr entry) :height) (int (+ start 8) 4)))
+                                      ((and (string= type "auxC") (< (+ start 4) end))
+                                       (setf (getf (cdr entry) :aux)
+                                             (escape-controls
+                                              (octets-text octets (+ start 4)
+                                                           (or (position 0 octets :start (+ start 4) :end end)
+                                                               end))))))
+                                (setf (gethash id items) entry))))))))))))
+          (values (mapcar (lambda (id) (gethash id items)) (nreverse order)) primary))))))
+
+(defun heif-aux-words (name)
+  "What an auxiliary picture of a HEIF is, by the NAME its auxC property gives."
+  (cond ((search "gainmap" name) "an HDR gain map")
+        ((search "matte" name) "a portrait matte")
+        ((or (search "depth" name) (search "auxid:2" name)) "a depth map")
+        ((or (search "alpha" name) (search "auxid:1" name)) "its transparency (alpha)")
+        (t (format nil "an auxiliary picture (~a)" name))))
+
+(defun heif-inner-pictures (fd head size)
+  "The pictures of the HEIF (HEIC, AVIF) open as file descriptor (FD), whose
+first octets are HEAD, of SIZE octets: the picture itself (its primary
+item), then each other item that is a picture, named by what it is to the
+others (a thumbnail, a depth map, an HDR gain map, a tile of a picture made
+of tiles), with its size and where its data lies. Only an item kept as a
+JPEG is drawn; the others are listed. NIL when it keeps one picture only."
+  (declare (ignore head))
+  (let ((octets (tuatara.io:read-fd-exactly fd (min size *heif-read*) 0)))
+    (multiple-value-bind (items primary) (and octets (heif-structure octets))
+      (let* ((pictures (remove-if-not (lambda (i) (member (getf (cdr i) :kind) *heif-picture-kinds* :test #'string=))
+                                      items))
+             (main (find primary pictures :key (lambda (i) (getf (cdr i) :id))))
+             (tiles (loop for i in pictures append (cdr (assoc "dimg" (getf (cdr i) :refs) :test #'string=)))))
+        (when (and main (rest pictures))
+          (flet ((place (entry)
+                   (destructuring-bind (&key id kind at length hidden &allow-other-keys) (cdr entry)
+                     (format nil "item ~d (~a)~:[~;, hidden~]~@[, its data from octet ~:d~]~@[, ~a~]"
+                             id kind hidden at (and length (octets-words length))))))
+            (cons (make-inner-picture "the picture itself (its primary item)" (place main)
+                                      (getf (cdr main) :width) (getf (cdr main) :height) (list :frame 0))
+                  (loop for entry in pictures
+                        for plist = (cdr entry)
+                        for count from 1
+                        while (< count *inner-pictures-most*)
+                        unless (or (eq entry main) (member (getf plist :id) tiles))
+                          collect (let* ((thumbnail (assoc "thmb" (getf plist :refs) :test #'string=))
+                                         (aux (assoc "auxl" (getf plist :refs) :test #'string=))
+                                         (grid (assoc "dimg" (getf plist :refs) :test #'string=))
+                                         (of (cdr (or thumbnail aux))))
+                                    (make-inner-picture
+                                     (format nil "~a~@[ of item ~{~d~^, ~}~]"
+                                             (cond (thumbnail "a thumbnail")
+                                                   (aux (heif-aux-words (or (getf plist :aux) "")))
+                                                   (grid (format nil "a picture made of ~d tiles" (length (cdr grid))))
+                                                   ((getf plist :aux) (heif-aux-words (getf plist :aux)))
+                                                   (t "another picture"))
+                                             of)
+                                     (place entry) (getf plist :width) (getf plist :height)
+                                     (and (string= (getf plist :kind) "jpeg") (getf plist :at) (getf plist :length)
+                                          (<= (+ (getf plist :at) (getf plist :length)) size)
+                                          (list :octets (getf plist :at) (getf plist :length) :jpeg))))))))))))
+
 (defun inner-pictures (fd head kind &key (size (tuatara.io:fd-size fd)))
   "The pictures the file open as file descriptor (FD), whose first octets are
 HEAD, of KIND (TUATARA.IO:OCTETS-KIND's keyword) and SIZE octets, keeps, the
@@ -512,7 +736,9 @@ reads, nothing in the file run."
                          (case kind
                            (:tiff (and (tuatara.io:tiff-octets-p head) (tiff-inner-pictures fd head size)))
                            (:jpeg (jpeg-inner-pictures fd head size))
-                           (:png (apng-inner-pictures fd head size)))))))
+                           (:png (apng-inner-pictures fd head size))
+                           (:webp (webp-inner-pictures fd head size))
+                           ((:heif :avif) (heif-inner-pictures fd head size)))))))
     (and (rest pictures) pictures)))
 
 ;;; Drawing and comparing
@@ -593,9 +819,12 @@ most *INNER-PICTURES-COMPARED* are compared, those past them said to be not."
           collect (cond ((> n *inner-pictures-compared*)
                          (format nil "not compared: only the first ~d are (*inner-pictures-compared*)"
                                  *inner-pictures-compared*))
+                        ((null (inner-picture-source picture))
+                         (if (inner-picture-width picture)
+                             "not compared: not drawn here"
+                             "not compared: it has no pixels"))
                         ((null shown) "not compared: the picture shown could not be drawn")
                         ((and cancel (car cancel)) "not compared: stopped")
-                        ((null (inner-picture-source picture)) "not compared: it has no pixels")
                         (t (let* ((region (inner-picture-region picture))
                                   ;; a layer drawn at the scale the picture shown was, to lie on it
                                   (scale (and region (inner-picture-width (first pictures))
@@ -629,7 +858,7 @@ PATH, of KIND, open as file descriptor (FD), of SIZE octets, when it keeps
 more pictures than the one shown: each with what it is, its size, where it
 lies, how it compares with the picture shown, and a link that shows it in
 the image's view (\\`RET' on it). NIL when it keeps one picture only."
-  (let* ((head (and (member kind '(:tiff :jpeg :png)) (tuatara.io:read-fd-start fd path size 4096)))
+  (let* ((head (and (member kind '(:tiff :jpeg :png :webp :heif :avif)) (tuatara.io:read-fd-start fd path size 4096)))
          (pictures (and head (inner-pictures fd head kind :size size))))
     (when pictures
       (let ((compared (inner-pictures-compared fd kind pictures

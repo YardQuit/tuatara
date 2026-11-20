@@ -498,52 +498,13 @@ brand, and its own items (title, maker, model, place, software)."
 
 (defun heif-metadata (octets)
   "The sections of the note for the HEIF picture (HEIC, AVIF) in OCTETS: the
-EXIF its item of that kind holds."
-  (let* ((n (length octets))
-         (meta (tuatara.io:box-find octets 0 n "meta")))
-    (when meta
-      (let* ((children (tuatara.io:box-children octets (+ 4 (second meta)) (third meta)))
-             (iinf (find "iinf" children :key #'first :test #'string=))
-             (iloc (find "iloc" children :key #'first :test #'string=))
-             ;; a box empty at the file's end holds no item, not an error
-             (exif-id (when (and iinf (< (second iinf) n))
-                        (let ((at (+ (second iinf) (if (zerop (aref octets (second iinf))) 6 8))))
-                          (loop for (type start nil) in (tuatara.io:box-children octets at (third iinf))
-                                when (and (string= type "infe") (< start n))
-                                  do (let ((version (aref octets start)))
-                                       (when (>= version 2)
-                                         (let* ((wide (>= version 3))
-                                                (id (octets-integer octets (+ start 4) (if wide 4 2) :big-endian t))
-                                                (kind (octets-text octets
-                                                                   (+ start (if wide 10 8))
-                                                                   (+ start (if wide 14 12)))))
-                                           (when (string= kind "Exif") (return id)))))))))
-             (place (when (and iloc exif-id (octets-integer octets (+ (second iloc) 4) 2 :big-endian t))
-                      (let* ((at (second iloc)) (version (aref octets at))
-                             (sizes (octets-integer octets (+ at 4) 2 :big-endian t))
-                             (offset-size (ldb (byte 4 12) sizes)) (length-size (ldb (byte 4 8) sizes))
-                             (base-size (ldb (byte 4 4) sizes))
-                             (index-size (if (>= version 1) (ldb (byte 4 0) sizes) 0))
-                             (count (octets-integer octets (+ at 6) (if (< version 2) 2 4) :big-endian t))
-                             (p (+ at (if (< version 2) 8 10))))
-                        (dotimes (i (min (or count 0) 10000))
-                          (let ((id (octets-integer octets p (if (< version 2) 2 4) :big-endian t)))
-                            (incf p (if (< version 2) 2 4))
-                            (when (>= version 1) (incf p 2))
-                            (incf p 2)
-                            (let ((base (if (zerop base-size) 0 (octets-integer octets p base-size :big-endian t)))
-                                  (extents (progn (incf p base-size) (octets-integer octets p 2 :big-endian t))))
-                              (incf p 2)
-                              (unless (and base extents) (return))
-                              (let ((first-offset nil))
-                                (dotimes (e (min extents 1000))
-                                  (incf p index-size)
-                                  (let ((offset (if (zerop offset-size) 0 (octets-integer octets p offset-size :big-endian t))))
-                                    (when (zerop e) (setf first-offset offset)))
-                                  (incf p (+ offset-size length-size)))
-                                (when (and (eql id exif-id) first-offset) (return (+ base first-offset))))))))))
-             (start (and place (let ((skip (octets-integer octets place 4 :big-endian t))) (and skip (+ place 4 skip))))))
-        (and start (< start n) (list (exif-section octets start "in its Exif item")))))))
+EXIF its item of that kind holds (HEIF-STRUCTURE)."
+  (let* ((exif (find "Exif" (heif-structure octets) :key (lambda (i) (getf (cdr i) :kind)) :test #'equal))
+         (place (and exif (getf (cdr exif) :at)))
+         (n (length octets))
+         ;; the item begins with the offset of the TIFF structure within it
+         (start (and place (let ((skip (octets-integer octets place 4 :big-endian t))) (and skip (+ place 4 skip))))))
+    (and start (< start n) (list (exif-section octets start "in its Exif item")))))
 
 ;;; XMP, wherever a file keeps it
 

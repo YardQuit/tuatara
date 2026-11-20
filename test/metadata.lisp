@@ -1347,3 +1347,79 @@ OPERANDS FROM END), and how many it counted, as two values."
     (note-has note "- prVW :: 1 chunk, 1 B: Adobe Fireworks' preview of the picture, not read")
     (note-has note (format nil "- abCd :: 1 chunk, 3 B~%"))
     (false (search "- IDAT" note))))
+
+(define-test (metadata heif-pictures-inside)
+  ;; a HEIF's items named by what they are to the primary: thumbnails, a depth map, a picture made of tiles (its
+  ;; tiles not listed one by one); listed, not drawn, but for one kept as a JPEG
+  (with-test-directory (dir)
+    (let* ((jpeg (progn (uiop:run-program (list "magick" "-size" "16x12" "xc:#336699"
+                                                (namestring (merge-pathnames "thumb.jpg" dir))))
+                        (alexandria:read-file-into-byte-vector (merge-pathnames "thumb.jpg" dir))))
+           (data (list (make-array 20 :element-type '(unsigned-byte 8) :initial-element 1)
+                       (make-array 10 :element-type '(unsigned-byte 8) :initial-element 2)
+                       (make-array 12 :element-type '(unsigned-byte 8) :initial-element 3)
+                       jpeg
+                       (make-array 8 :element-type '(unsigned-byte 8) :initial-element 5)
+                       (make-array 6 :element-type '(unsigned-byte 8) :initial-element 6)
+                       (make-array 6 :element-type '(unsigned-byte 8) :initial-element 7)))
+           (kinds '("hvc1" "hvc1" "hvc1" "jpeg" "grid" "hvc1" "hvc1"))
+           (hidden '(nil nil t nil nil t t))
+           (ftyp (box "ftyp" "heic" (be-octets 0 4) "mif1heic"))
+           (hdlr (box "hdlr" 0 0 0 0 (be-octets 0 4) "pict" (be-octets 0 12) 0))
+           (pitm (box "pitm" 0 0 0 0 (be-octets 1 2)))
+           (iinf (apply #'box "iinf" 0 0 0 0 (be-octets 7 2)
+                        (loop for kind in kinds for id from 1 for h in hidden
+                              collect (box "infe" 2 0 0 (if h 1 0) (be-octets id 2) (be-octets 0 2) kind "" 0))))
+           (iref (box "iref" 0 0 0 0
+                      (box "thmb" (be-octets 2 2) (be-octets 1 2) (be-octets 1 2))
+                      (box "auxl" (be-octets 3 2) (be-octets 1 2) (be-octets 1 2))
+                      (box "thmb" (be-octets 4 2) (be-octets 1 2) (be-octets 1 2))
+                      (box "dimg" (be-octets 5 2) (be-octets 2 2) (be-octets 6 2) (be-octets 7 2))))
+           (iprp (box "iprp"
+                      (box "ipco"
+                           (box "ispe" 0 0 0 0 (be-octets 64 4) (be-octets 48 4))
+                           (box "ispe" 0 0 0 0 (be-octets 16 4) (be-octets 12 4))
+                           (box "ispe" 0 0 0 0 (be-octets 32 4) (be-octets 24 4))
+                           (box "auxC" 0 0 0 0 "urn:mpeg:hevc:2015:auxid:2" 0)
+                           (box "ispe" 0 0 0 0 (be-octets 128 4) (be-octets 96 4)))
+                      (box "ipma" 0 0 0 0 (be-octets 7 4)
+                           (be-octets 1 2) 1 1  (be-octets 2 2) 1 2  (be-octets 3 2) 2 3 4
+                           (be-octets 4 2) 1 2  (be-octets 5 2) 1 5  (be-octets 6 2) 1 1  (be-octets 7 2) 1 1)))
+           (iloc-size (+ 8 4 2 2 (* 7 14))))
+      (flet ((meta (at)
+               (box "meta" 0 0 0 0 hdlr pitm iinf iref iprp
+                    (apply #'box "iloc" 0 0 0 0 #x44 #x00 (be-octets 7 2)
+                           (loop for d in data for id from 1
+                                 collect (octets-of (be-octets id 2) (be-octets 0 2) (be-octets 1 2)
+                                                    (be-octets (prog1 at (incf at (length d))) 4)
+                                                    (be-octets (length d) 4)))))))
+        (let* ((size (length (meta 0)))
+               (octets (apply #'octets-of ftyp (meta (+ (length ftyp) size)) data))
+               (file (write-test-octets-file (merge-pathnames "kept.heic" dir) octets))
+               (note (metadata-of file)))
+          (true (> iloc-size 0))
+          (note-has note "- Picture 1 :: the picture itself (its primary item), 64 × 48; item 1 (hvc1), its data from octet")
+          (note-has note "- Picture 2 :: a thumbnail of item 1, 16 × 12; item 2 (hvc1)")
+          (note-has note "not compared: not drawn here")
+          (note-has note "- Picture 3 :: a depth map of item 1, 32 × 24; item 3 (hvc1), hidden")
+          (note-has note "- Picture 4 :: a thumbnail of item 1, 16 × 12; item 4 (jpeg)")
+          (note-has note "- Picture 5 :: a picture made of 2 tiles, 128 × 96; item 5 (grid)")
+          (false (search "- Picture 6" note))
+          ;; the one kept as a JPEG is drawn from its octets
+          (tuatara.io:call-with-file
+           file (lambda (fd native size)
+                  (let ((pictures (tuatara.defaults::inner-pictures
+                                   fd (tuatara.io:read-fd-start fd native size 4096) :heif :size size)))
+                    (true (tuatara.defaults::inner-picture-image fd :heif (fourth pictures) 64 64))
+                    (false (tuatara.defaults::inner-picture-source (second pictures)))))))))))
+
+(define-test (metadata webp-frames-inside)
+  ;; an animated WebP's frames: listed with place and time, compared with the part of the picture they cover
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "anim.webp" dir))))
+      (uiop:run-program (list "magick" "-delay" "20" "-size" "32x24" "xc:#336699" "xc:#993366"
+                              "(" "-size" "16x12" "xc:#336699" "-repage" "+8+6" ")" "-loop" "0" file))
+      (let ((note (metadata-of file)))
+        (note-has note "- Picture 1 :: the picture itself, the animation's first frame, 32 × 24")
+        (true (cl-ppcre:scan "- Picture 2 :: frame 2 of 3, 32 × 24; at 0, 0 on the picture; shown 0.20 s;.*differs from the part of the picture shown under it in 100% of it" note) "~a" note)
+        (true (cl-ppcre:scan "- Picture 3 :: frame 3 of 3, 16 × 12; at 8, 6 on the picture;.*looks the same as the part of the picture shown under it" note) "~a" note)))))
