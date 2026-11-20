@@ -74,7 +74,7 @@ templates those in DIRECTORY's capture-templates/ (none unless a test makes them
                                          (merge-pathnames "w-nowhere.org" directory))
       (alexandria:write-string-into-file (format nil "no head at all~%") (merge-pathnames "loose.org" directory))
       (let ((templates (tuatara.defaults::capture-templates)))
-        (is equal '("b" "j" "m" "n" "t" "w") (mapcar #'tuatara.defaults::capture-template-key templates))
+        (is equal '("b" "j" "m" "M" "n" "t" "w") (mapcar #'tuatara.defaults::capture-template-key templates))
         (let ((mine (find "t" templates :key #'tuatara.defaults::capture-template-key :test #'string=)))
           (is string= "My task" (tuatara.defaults::capture-template-name mine))
           (false (tuatara.defaults::capture-template-own mine))
@@ -82,7 +82,7 @@ templates those in DIRECTORY's capture-templates/ (none unless a test makes them
           (is string= "* MINE %?" (tuatara.defaults::capture-template-text mine)))
         (is equal (list :olp agenda "Other" "Leave me")
             (tuatara.defaults::capture-template-target (find "b" templates :key #'tuatara.defaults::capture-template-key :test #'string=)))
-        (let ((meeting (find "m" templates :key #'tuatara.defaults::capture-template-key :test #'string=)))
+        (let ((meeting (find "M" templates :key #'tuatara.defaults::capture-template-key :test #'string=)))
           (true (tuatara.defaults::capture-template-own meeting))
           (true (tuatara.defaults::capture-template-clock-in meeting))
           (true (tuatara.defaults::capture-template-clock-resume meeting))))
@@ -99,26 +99,42 @@ templates those in DIRECTORY's capture-templates/ (none unless a test makes them
 
 (define-test (capture copied-to-be-yours)
   (with-capture (dir agenda)
-    (let ((copy (merge-pathnames "capture-templates/m-meeting.org" dir)))
+    (let ((copy (merge-pathnames "capture-templates/M-meeting-notes.org" dir)))
       (multiple-value-bind (f editor)
-          (run-keys "M-x o r g - c a p t u r e - t e m p l a t e - c o p y RET M e e t i n g RET"
+          (run-keys "M-x o r g - c a p t u r e - t e m p l a t e - c o p y RET M e e t i n g SPC n o t e s RET"
                     :text "x"
                     :width 120
                     :height 16)
         (true (probe-file copy))
         (true (search "# clock-resume: t" (file-text copy)))
-        (is string= "m-meeting.org" (tuatara.buffer:buffer-name (session-buffer editor)))
-        (true (tuatara.frontend.fake:fake-frame-showing f "Copied the capture template m-meeting.org to")))
+        (is string= "M-meeting-notes.org" (tuatara.buffer:buffer-name (session-buffer editor)))
+        (true (tuatara.frontend.fake:fake-frame-showing f "Copied the capture template M-meeting-notes.org to")))
       (forget-file-buffers)
       ;; never written over
-      (alexandria:write-string-into-file (format nil "# name: Mine~%# key: m~%# journal: t~%# --~%x~%") copy :if-exists :supersede)
-      (let ((f (run-keys "M-x o r g - c a p t u r e - t e m p l a t e - c o p y RET M e e t i n g RET"
+      (alexandria:write-string-into-file (format nil "# name: Mine~%# key: M~%# journal: t~%# --~%x~%") copy :if-exists :supersede)
+      (let ((f (run-keys "M-x o r g - c a p t u r e - t e m p l a t e - c o p y RET M e e t i n g SPC n o t e s RET"
                          :text "x"
                          :width 120
                          :height 16)))
         (true (tuatara.frontend.fake:fake-frame-showing f "is yours already"))
         (true (search "# name: Mine" (file-text copy))))
       (forget-file-buffers))))
+
+(define-modal-test (capture meetings-as-standard)
+  ;; Tuatara's own: m a meeting planned, its time asked and no clock; M the notes of one, its clock running
+  (with-capture (dir agenda)
+    (let ((templates (tuatara.defaults::capture-templates)))
+      (flet ((own (key) (find key templates :key #'tuatara.defaults::capture-template-key :test #'string=)))
+        (true (tuatara.defaults::capture-template-own (own "m")))
+        (true (search "%^T" (tuatara.defaults::capture-template-text (own "m"))))
+        (false (tuatara.defaults::capture-template-clock-in (own "m")))
+        (true (tuatara.defaults::capture-template-clock-in (own "M")))
+        (true (tuatara.defaults::capture-template-clock-resume (own "M")))))
+    (run-keys "SPC a c M T a l k RET A n a RET S a i d C-c C-c" :text "x" :width 120 :height 16)
+    (let ((text (file-text agenda)))
+      (true (cl-ppcre:scan "\\* Meetings\\n\\*\\* Meeting: Talk +:meeting:" text) "~a" text)
+      (true (search "CLOCK: [" text) "~a" text))
+    (true (probe-file dir))))
 
 (define-modal-test (capture journal-entry)
   (with-capture (dir agenda)
@@ -135,7 +151,7 @@ templates those in DIRECTORY's capture-templates/ (none unless a test makes them
       (alexandria:write-string-into-file (format nil "* Working~%") task)
       (run-keys (list "M-x o r g - c l o c k - i n RET"
                       (lambda () (setf tuatara.defaults::*org-now* (+ *journal-moment* 600)))
-                      "SPC a c m P l a n RET A n n a RET N o t e s"
+                      "SPC a c M P l a n RET A n n a RET N o t e s"
                       (lambda () (setf tuatara.defaults::*org-now* (+ *journal-moment* 1800)))
                       "C-c C-c")
                 :file task :width 100 :height 16)
@@ -276,7 +292,7 @@ templates those in DIRECTORY's capture-templates/ (none unless a test makes them
     (alexandria:write-string-into-file (format nil "* Meetings~%* Work~%** Task~%") agenda :if-exists :supersede)
     (run-keys (list "j j M-x o r g - c l o c k - i n RET"
                     (lambda () (setf tuatara.defaults::*org-now* (+ *journal-moment* 600)))
-                    "SPC a c m P l a n RET A n n a RET N o t e s"
+                    "SPC a c M P l a n RET A n n a RET N o t e s"
                     (lambda () (setf tuatara.defaults::*org-now* (+ *journal-moment* 1800)))
                     "C-c C-c")
               :file agenda :width 100 :height 16)

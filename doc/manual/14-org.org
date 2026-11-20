@@ -951,13 +951,14 @@ thought in a small window, press another key, and you are back where you
 were. The thought has been filed in the right place.
 
 ~C-x a c~ starts it and shows the templates to choose from. A template says
-what kind of entry to make and where to file it. Four come with Tuatara.
+what kind of entry to make and where to file it. Five come with Tuatara.
 
 | Modal | Non-modal | Makes                                      | Files it                       |
 |-------+-----------+--------------------------------------------+--------------------------------|
 | none  | ~t~       | A task, after asking for its tags          | Under Tasks in your agenda file |
 | none  | ~n~       | A quick note                               | Under Inbox in your agenda file |
-| none  | ~m~       | Notes of a meeting, with the clock running | Under Meetings in your agenda file |
+| none  | ~m~       | A meeting planned, after asking its time   | Under Meetings in your agenda file |
+| none  | ~M~       | Notes of a meeting, with the clock running | Under Meetings in your agenda file |
 | none  | ~j~       | An entry in your journal                   | In today's journal entry       |
 
 "Your agenda file" is the first file named in =*org-agenda-files*=. After

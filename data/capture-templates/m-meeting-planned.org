@@ -1,0 +1,10 @@
+# name: Meeting
+# key: m
+# file: *org-agenda-files*
+# heading: Meetings
+# --
+* Meeting: %^{Subject}  :meeting:
+%^T
+Attendees: %^{Attendees}
+
+%?

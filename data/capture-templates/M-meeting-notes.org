@@ -1,5 +1,5 @@
 # name: Meeting notes
-# key: m
+# key: M
 # file: *org-agenda-files*
 # heading: Meetings
 # clock-in: t

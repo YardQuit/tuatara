@@ -89,7 +89,8 @@ filled to *HELP-COLUMN*."
 
 (defparameter *built-in-capture-templates* (built-in-data-files "capture-templates/")
   "Tuatara's own capture templates, each (FILE-NAME TEXT): a TODO for the
-agenda (t), a note to the inbox (n), a journal entry (j), meeting notes (m).")
+agenda (t), a note to the inbox (n), a journal entry (j), a meeting planned
+for a time (m) and the notes of one under way, its clock running (M).")
 
 (define-record (capture-template (:constructor make-capture-template
                                               (key name target text &key clock-in clock-resume file own))
@@ -140,9 +141,9 @@ capture-templates/ in your configuration directory when it names none."
       (list (config-path "capture-templates/"))))
 
 (defun capture-templates ()
-  "The templates \\[org-capture] offers, in the order of their keys: Tuatara's
-own and yours (*CAPTURE-TEMPLATE-DIRECTORIES*), one of yours taking the place
-of one of Tuatara's with the same key."
+  "The templates \\[org-capture] offers, in the order of their keys (m, then M,
+before n): Tuatara's own and yours (*CAPTURE-TEMPLATE-DIRECTORIES*), one of
+yours taking the place of one of Tuatara's with the same key."
   (let ((yours (loop for (file . text) in (directory-files (capture-template-directories))
                      for template = (and text (read-capture-template file text))
                      when template collect template))
@@ -151,7 +152,8 @@ of one of Tuatara's with the same key."
                    when template collect template)))
     (stable-sort (in-place-of-own (remove-duplicates yours :key #'capture-template-key :test #'string= :from-end t)
                                   own #'capture-template-key)
-                 #'string< :key #'capture-template-key)))
+                 (lambda (a b) (or (string-lessp a b) (and (string-equal a b) (string> a b))))
+                 :key #'capture-template-key)))
 
 (define-command org-capture-template-copy ()
   "Copy one of Tuatara's own capture templates, chosen by its name, into your

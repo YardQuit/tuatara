@@ -1,4 +1,4 @@
-# name: Quick note to the inbox
+# name: Note to the inbox
 # key: n
 # file: *org-agenda-files*
 # heading: Inbox
