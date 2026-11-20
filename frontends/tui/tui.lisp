@@ -370,6 +370,14 @@ then come as CSI ... u sequences, read without a timer.")
   "The cursor colour last sent to the terminal (#rrggbb, or :DEFAULT for the
 terminal's own), so that it is sent only when it changes.")
 
+(defvar *frame-hash* 0
+  "A hash of the rows of the frame being painted, as FRONTEND-PUT-ROW was
+given them (FRAME-ROW-HASH), worked out without making garbage.")
+
+(defvar *shown-frame* nil
+  "What the frame last sent to the terminal showed (FRAME-SEEN): a frame the
+same is not sent again. NIL when the next must be sent whatever it shows.")
+
 (defclass tui-frontend ()
   ((window :initform nil :accessor tui-window
            :documentation "The ncurses stdscr pointer while started.")
@@ -606,6 +614,7 @@ characters shown in the order sent, and the screen painted whole, as what was dr
   (tell-terminal-pastes t)
   (tell-terminal-order t)
   (%clearok (tui-window f) t)
+  (setf *shown-frame* nil)
   (%wrefresh (tui-window f)))
 
 (defmethod tuatara.frontend:frontend-stop ((f tui-frontend))
@@ -702,7 +711,7 @@ text (TUI-PADDING), which is what the editor has to lay out."
   (when (and (tui-window f) (not (eql (wanted-colours) *colours-wanted*)))
     (%endwin)
     (start-screen f)
-    (setf *shown-cursor-shape* nil *shown-cursor-colour* nil)
+    (setf *shown-cursor-shape* nil *shown-cursor-colour* nil *shown-frame* nil)
     (%clearok (tui-window f) t)
     (queue-resize f))
   (when (and (tui-window f) (not (eq (and *tui-mouse* t) (tui-mouse f))))
@@ -1353,6 +1362,7 @@ A key of no use (a key let go) is no event: the wait goes on."
     (unless (= *background-generation* tuatara.display:*face-generation*)
       (%wbkgd window (background-character (spec-attributes :default)))
       (setf *background-generation* tuatara.display:*face-generation*))
+    (setf *frame-hash* 0)
     (%werase window)))
 
 (defparameter *spaces* (tuatara.text:spaces 256)
@@ -1360,6 +1370,7 @@ A key of no use (a key let go) is no event: the wait goes on."
 
 (defmethod tuatara.frontend:frontend-put-row ((f tui-frontend) row string &key face spans scales over parts)
   (declare (ignore scales over parts))     ; a terminal's rows are all one size, painted as ncurses keeps them
+  (setf *frame-hash* (frame-row-hash *frame-hash* row string face spans))
   ;; nothing the terminal cannot be sent or that would move its cursor; Arabic letters joined, as no terminal does
   (setf string (tuatara.display:joined-arabic (tuatara.display:displayable string) spans))
   ;; a mark beginning the row would be drawn on the cell before it: on a dotted circle
@@ -1569,7 +1580,40 @@ given ARGUMENTS (written as it is when there are none)."
       (write-string control *standard-output*))
   (finish-output))
 
+(defun frame-row-hash (hash row string face spans)
+  "HASH, of the rows of a frame so far, with the row ROW added: its STRING,
+FACE and SPANS, each (START END FACE)."
+  (let ((hash (sb-int:mix (sb-int:mix hash row) (sb-int:mix (sxhash string) (sxhash face)))))
+    (loop for (start end span-face) in spans
+          do (setf hash (sb-int:mix hash (sb-int:mix (sb-int:mix start end) (sxhash span-face)))))
+    hash))
+
+(defun frame-seen (f)
+  "What the frame F has just painted shows: its rows, the cursor's place,
+shape and colour, the padding, the window's size and the faces' generation,
+to tell it from the frame before; NIL, never the same, while a picture is
+placed or was in the frame before."
+  (and (null (tui-placing f)) (null (tui-placed f))
+       (list *frame-hash* *cursor* *frame-cursor-shape* *frame-cursor-colour*
+             (tui-padding f) (%getmaxy (tui-window f)) (%getmaxx (tui-window f))
+             tuatara.display:*face-generation*)))
+
 (defmethod tuatara.frontend:frontend-end-frame ((f tui-frontend))
+  (let ((seen (frame-seen f)))
+    ;; a frame the same as the one on the screen is not sent: a timer that woke
+    ;; the editor with nothing to change leaves the terminal alone
+    (if (and seen (equal seen *shown-frame*))
+        ;; the cursor back where it stands on the screen: ncurses refreshes the
+        ;; window as it reads the next key, and sends nothing for it then
+        (let ((window (tui-window f)))
+          (%wmove window (+ (first (tui-padding f)) (car *cursor*)) (+ (fourth (tui-padding f)) (cdr *cursor*)))
+          (forget-images f nil))
+        (progn (setf *shown-frame* seen)
+               (send-frame f)))))
+
+(defun send-frame (f)
+  "Send the terminal the frame F has painted, shown at once when it is all
+there, with the cursor's shape and colour when they changed."
   (let ((window (tui-window f)))
     (%wmove window (+ (first (tui-padding f)) (car *cursor*)) (+ (fourth (tui-padding f)) (cdr *cursor*)))
     ;; synchronized output (DEC mode 2026): the terminal shows the frame only

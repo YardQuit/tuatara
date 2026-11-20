@@ -14,6 +14,11 @@
 (defvar *syntax-size-limit* (* 64 1024 1024)
   "The largest text, in octets, that is parsed; a larger one shows no syntax colours.")
 
+(defvar *syntax-slow-update* 0.05
+  "Seconds past which a parse after an edit counts as slow: the next one then
+waits until typing pauses (PARSE-PAUSE), so that a grammar slow on a large
+text is not run again after every key.")
+
 (defvar *syntax-wait* 0.02
   "Seconds redisplay waits for a parse started after an edit, before it shows
 the text with the colours of the tree as it was. It does not wait at all while
@@ -320,7 +325,8 @@ is back."
                      ;; a tree not told of them is of no more use: the text parsed afresh
                      (when (syntax-tree syntax)
                        (multiple-value-bind (made told)
-                           (edit-tree (syntax-tree syntax) records :copy (null (syntax-job syntax)))
+                           (edit-tree (syntax-tree syntax) records
+                                      :copy (and (null (syntax-job syntax)) (not (parse-paused-p syntax))))
                          (setf copy made)
                          (unless told (drop-tree syntax))))
                      (when (syntax-job syntax)
@@ -331,7 +337,9 @@ is back."
                (setf (syntax-rope syntax) (tuatara.buffer:buffer-text buffer))
                (when (and (eq (syntax-broken syntax) :short) (nth-value 1 (helper-memory (syntax-helper syntax))))
                  (setf (syntax-broken syntax) nil))
-               (request-parse syntax :old (shiftf copy nil)))
+               ;; a slow grammar's parse waits until typing pauses (REFRESH-SYNTAX starts it)
+               (unless (and (null copy) (syntax-tree syntax) (parse-paused-p syntax))
+                 (request-parse syntax :old (shiftf copy nil))))
           (when copy (delete-tree copy)))))))
 
 ;;; Parsing
@@ -458,6 +466,22 @@ waiting. True when handed over; NIL when no thread could be started."
       (sb-thread:condition-broadcast (syntax-done syntax))
       t)))
 
+(defun parse-pause (syntax)
+  "The seconds of no editing SYNTAX's text waits for before it is parsed again
+after edits, twice what the last parse after an edit took, when that was slow
+\(*SYNTAX-SLOW-UPDATE*); NIL when parses after edits are quick and start at
+once."
+  (let ((last (syntax-last-update syntax)))
+    (when last
+      (let ((seconds (/ last internal-time-units-per-second)))
+        (and (> seconds *syntax-slow-update*) (* 2 seconds))))))
+
+(defun parse-paused-p (syntax)
+  "True while SYNTAX's text was edited less than its pause ago (PARSE-PAUSE),
+so that the parse waits for typing to stop."
+  (let ((pause (parse-pause syntax)))
+    (and pause (< (tuatara.runtime:seconds-since (or (syntax-edited syntax) 0)) pause))))
+
 (defun request-parse (syntax &key fresh old)
   "Start parsing SYNTAX's text in its parse thread, unless a parse is running
 (when it is done, CATCH-UP asks again), the tree is current, or the text cannot
@@ -570,7 +594,9 @@ another parse if the tree is not current."
               ((not (parse-job-obsolete job))
                ;; not stopped on purpose: the text could not be read
                (setf (syntax-broken syntax) t)))))
-    (request-parse syntax)))
+    ;; edits made meanwhile in a text slow to parse: parsed once typing pauses
+    (unless (parse-paused-p syntax)
+      (request-parse syntax))))
 
 (defvar *syntax-refresh-delay* 1
   "The seconds a text is left alone, at least, before it is parsed afresh in
@@ -586,12 +612,20 @@ to date by parses after edits and the text has been left alone long enough
 the tree as it was. Returns the seconds until it is worth asking again, or
 NIL when there is nothing to do until the text is edited. A text whose
 helper went wrong and ended is parsed afresh at once, in a new one; one whose
-helper was ended for room, when it is next shown."
+helper was ended for room, when it is next shown. Edits to a text slow to
+parse (PARSE-PAUSE) are parsed here once typing has paused."
   (when (and (syntax-helper syntax) (not (helper-alive (syntax-helper syntax)))
              (not (eq (helper-ended (syntax-helper syntax)) :stopped))
              (null (syntax-job syntax)) (not (syntax-broken syntax)) (not (grammar-faulted (syntax-grammar syntax))))
     (request-parse syntax :fresh t)
     (return-from refresh-syntax nil))
+  ;; edits waiting for typing to pause in a text slow to parse (PARSE-PAUSE)
+  (when (and (not (syntax-current syntax)) (null (syntax-job syntax)) (syntax-tree syntax) (parse-pause syntax)
+             (not (syntax-broken syntax)) (not (grammar-faulted (syntax-grammar syntax))))
+    (return-from refresh-syntax
+      (if (parse-paused-p syntax)
+          (float (- (parse-pause syntax) (tuatara.runtime:seconds-since (or (syntax-edited syntax) 0))))
+          (progn (request-parse syntax) nil))))
   (when (and *syntax-refresh-delay* (syntax-patched syntax) (not (syntax-no-refresh syntax))
              (null (syntax-job syntax)) (syntax-current syntax) (syntax-tree syntax)
              (not (syntax-broken syntax)) (not (grammar-faulted (syntax-grammar syntax))))

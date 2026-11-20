@@ -170,6 +170,10 @@ tools/test.sh                 # the whole suite and its benchmarks, about 25 min
 TUATARA_TEST_MODAL=off tools/test.sh   # the same with the modal layer off
 #+end_example
 
+=tools/benchmark/run.sh= compares Tuatara with Emacs, Neovim and Helix on
+large made-up files, on an idle machine (three hours or more);
+=tools/benchmark/README.md= says what it measures and how fairly.
+
 With =TUATARA_TEST_MODAL=off= every session starts with =*modal-editing*= nil,
 so the Emacs keys and the commands behind them are tested alone. A test that
 types =SPC= or the keys of NORMAL state on purpose, or reads the state in the

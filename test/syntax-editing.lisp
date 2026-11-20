@@ -92,6 +92,39 @@
                     (when tree (tuatara.syntax:delete-tree tree)))
                (tuatara.syntax:delete-parser parser)))))
 
+;; a grammar slow on a large text is not run again after every key
+(define-test (syntax slow-update-waits-for-a-pause)
+  ;; once a parse after an edit took long (a log of megabytes), the next edit is
+  ;; not parsed at once: the parse waits until typing pauses for twice that long,
+  ;; and starts then (REFRESH-SYNTAX); quick parses after edits start at once
+  (let ((buffer (tuatara.buffer:make-buffer "*pause*" :text (format nil "fn main() {~%    let x = 1;~%}~%")))
+        (tuatara.syntax:*syntax-wait* 10))
+    (unwind-protect
+         (progn
+           (tuatara.modes:set-major-mode buffer 'tuatara.defaults::rust-mode)
+           (let ((syntax (tuatara.syntax:buffer-syntax buffer))
+                 (second internal-time-units-per-second))
+             (tuatara.syntax:syntax-ready-tree syntax)
+             ;; quick: the edit's parse starts at once
+             (setf (tuatara.syntax::syntax-last-update syntax) (floor second 100))
+             (tuatara.buffer:buffer-insert buffer 0 "// a")
+             (true (tuatara.syntax:syntax-job syntax) "a quick grammar parses at once")
+             (tuatara.syntax:syntax-ready-tree syntax)
+             (loop repeat 1000 while (tuatara.syntax:syntax-job syntax)
+                   do (sleep 0.01) (tuatara.syntax:catch-up syntax))
+             ;; slow, 0.4 s the last time: the edit waits, its tree told of it
+             (setf (tuatara.syntax::syntax-last-update syntax) (floor (* 4 second) 10))
+             (tuatara.buffer:buffer-insert buffer 0 "// b")
+             (false (tuatara.syntax:syntax-job syntax) "a slow grammar waits for a pause")
+             (false (tuatara.syntax:syntax-current syntax))
+             (let ((wait (tuatara.syntax:refresh-syntax syntax)))
+               (true (and wait (< 0.6 wait 0.81)) "about 0.8 s to wait, not ~a" wait))
+             ;; typing paused long enough: parsed now
+             (setf (tuatara.syntax::syntax-edited syntax) (- (get-internal-real-time) second))
+             (false (tuatara.syntax:refresh-syntax syntax))
+             (true (tuatara.syntax:syntax-job syntax) "parsed once typing paused")))
+      (tuatara.buffer:kill-buffer buffer))))
+
 (define-test (syntax parsed-afresh-when-left-alone)
   ;; a tree brought up to date by parses after edits is parsed afresh, in the
   ;; background, once the text is left alone; an edit stops that parse, and one

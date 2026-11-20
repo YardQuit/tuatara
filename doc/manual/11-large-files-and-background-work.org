@@ -422,6 +422,17 @@ lets each piece go once it is well past it. Your other programs are not pushed
 aside while it runs. With a large file open and nothing to do, Tuatara uses no
 processor time at all.
 
+*** Colours while you type in a large file
+
+The colours of a language come from a parser that reads the text in the
+background (chapter 13). After an edit it reads only what changed, which
+takes a thousandth of a second in most files. A few kinds of file are slow to
+read again even so: in a log of several megabytes it can take half a second.
+When reading again after an edit has taken longer than a twentieth of a
+second, Tuatara waits until you stop typing for twice that long, then reads
+the text once. What you type shows at once; only its colours follow a moment
+later, and the processor is not kept busy while you type.
+
 *** Auto-save and large buffers
 
 Tuatara keeps a copy of your unsaved changes so that a crash does not cost you
