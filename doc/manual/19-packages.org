@@ -468,6 +468,53 @@ standard is 512 MiB. =*package-sources*= holds the sources named with
 
 #+table: settings *package-sources* *packages-directory* *package-size-limit* *package-ask-before-loading*
 
+*** On a machine without internet
+
+A package needs the internet only to be fetched. Tuatara compiles it itself,
+with nothing from outside, so a package carried over as a directory loads on a
+machine that has no connection.
+
+On a machine with internet, take the package's repository and check who signed
+the version you want:
+
+#+begin_example
+git clone https://github.com/Tuatara-Editor/tuatara-palimpsest
+git -C tuatara-palimpsest verify-tag "$(git -C tuatara-palimpsest describe --tags --abbrev=0)"
+#+end_example
+
+Copy the directory to the other machine, on a USB stick or however you move
+files, for instance to =~/tuatara-packages/tuatara-palimpsest=. There, name the
+directory as the source in your init file:
+
+#+begin_example
+(load-package "palimpsest" :source "~/tuatara-packages/tuatara-palimpsest")
+#+end_example
+
+At the next start Tuatara asks once whether to load it and compiles it, as it
+does any package. A package from a directory is never updated by
+~M-x package-update~: to take a newer version, copy the newer directory over
+the old one. The programs a package runs beside it (its README names them)
+come from the machine's own system packages, which you bring in the way that
+machine gets its updates.
+
+The compiled files can be carried over too, so the other machine skips the
+compiling. They are kept in =~/.cache/tuatara/packages/= (in the cache
+directory =*cache-directory*= names, when set), in a directory for
+the Lisp Tuatara is built on and one for the Tuatara build, and under that
+by the package's full directory name. They are taken only by the same Tuatara
+build (the same AppImage or distribution package) with the package at the same
+full directory name, so the same user name too. Copy them with their file
+times kept:
+
+#+begin_example
+tar -C ~/.cache/tuatara -czf packages-compiled.tar.gz packages
+# on the other machine
+tar -C ~/.cache/tuatara -xzf packages-compiled.tar.gz
+#+end_example
+
+Where the build or the directory differs, the copied files are not used and
+the package is compiled again, which does no harm.
+
 ** What a package needs: check-health
 
 Some packages need a program that is not part of Tuatara. csvdt needs csvdt,
@@ -501,8 +548,9 @@ background, so the report comes when it is ready.
 The project's packages are not part of the editor. Each is a repository of its
 own, =https://github.com/Tuatara-Editor/tuatara-NAME=, for the name of the
 package. You load one with its address as the source, no =package-source=
-line needed. Each package's README, in its repository, gives the steps and
-the settings, and its settings show in =C-h v= once it is loaded. Every package
+line needed. Each package's README, in its repository, says what the package
+is and how to install it. Its manual, on the project's site, gives the rest,
+and its settings show in =C-h v= once it is loaded. Every package
 puts its commands under a prefix of its own, ~C-c~ and a letter.
 
 *** palimpsest
@@ -515,6 +563,8 @@ never changes the file. ~M-x palimpsest~ examines the PDF you are looking at,
 or asks for one. The report is made in the background and lists findings with
 the strongest first. In the report, ~C-c p~ is the prefix for its other
 commands, such as saving a revision as a PDF of its own.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-palimpsest/][tuatara-editor.github.io/tuatara-palimpsest]].
 
 *** csvdt
 
