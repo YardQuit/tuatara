@@ -48,9 +48,9 @@ image_stale() {
 # the directory it leads to), the account's name ($USER) or the machine's host
 # name; false when it names none of them. A host name is looked for as a whole
 # word (a host called kiwi-box is not found in "kiwi-boxes"). One of letters
-# alone may be a word of any text (a host called develop, in a licence's "if
-# you develop a new program"), so it is looked for only where a machine writes
-# a host name: after @ (annt@develop) or // (//develop/). Names under three
+# alone may be a word of any text (a host called program, in a licence's
+# "a new program"), so it is looked for only where a machine writes a host
+# name: after @ (annt@program) or // (//program/). Names under three
 # characters, and localhost, are not looked for.
 names_this_machine() {
   local home real user name found=1 match pattern
