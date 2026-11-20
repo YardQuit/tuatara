@@ -371,10 +371,10 @@ all that time.
 *** Saving in place
 
 If you often save very large files on such a drive, the setting
-=*save-in-place*= shortens the wait. Put this in your init file:
+=*ext4-save-in-place*= shortens the wait. Put this in your init file:
 
 #+begin_src lisp
-(setf *save-in-place* t)
+(setf *ext4-save-in-place* t)
 #+end_src
 
 Tuatara then writes only what changed, into the file itself, when that comes
@@ -397,7 +397,7 @@ the file before then, a backup for one, may see it half saved.
 Leave the setting off if other programs read your large files, or if you do
 not mind the minute.
 
-#+table: settings *save-in-place*
+#+table: settings *ext4-save-in-place*
 
 ** Memory, and pauses you might notice
 
@@ -554,4 +554,4 @@ your own names.
 | Stop the job in this buffer           | ~C-x J~                           |
 | Drop a job that waits                 | ~C-x j~, then ~d~ and ~x~         |
 | Take back a whole job                 | ~u~ (non-modal: ~C-/~)            |
-| Save one line of a huge file quickly  | =*save-in-place*=, on ext4        |
+| Save one line of a huge file quickly  | =*ext4-save-in-place*=, on ext4        |

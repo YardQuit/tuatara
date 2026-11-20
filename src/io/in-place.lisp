@@ -45,8 +45,9 @@
 
 (in-package #:tuatara.io)
 
-(define-setting *save-in-place* nil
-  "Whether a large file is saved by writing only what changed into the file
+(define-setting *ext4-save-in-place* nil
+  "Whether a large file on ext4, or another file system that cannot share
+blocks between files, is saved by writing only what changed into the file
 itself, where that is quicker than writing it whole.
 - t: it is saved so.
 - nil: every save is written as a new file put in the old one's place

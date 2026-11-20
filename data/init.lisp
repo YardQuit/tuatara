@@ -776,7 +776,7 @@
   ;; not a minute. The cost: after a crash or power cut during such a save,
   ;; another program may find the file half saved until Tuatara opens it again
   ;; and puts it back. Not set: nil: every save a new file, whole.
-  ;; (setf *save-in-place* t)
+  ;; (setf *ext4-save-in-place* t)
 
   ;; C-x i (insert-formatted-note-template) reads other files of up to 64 MB.
   ;; Not set: 16 MB.

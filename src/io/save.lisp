@@ -386,7 +386,7 @@ held, and that is told (TELL-WRITING)."
                                                                        its own beside them, and ~a may not be written ~
                                                                        in"
                                                                   names (native directory))))
-                      (let* ((plan (and *save-in-place* mappings existing (not apart) (not mode) (eq class :local)
+                      (let* ((plan (and *ext4-save-in-place* mappings existing (not apart) (not mode) (eq class :local)
                                         (not (shares-blocks-p directory))
                                         (in-place-plan rope existing mappings)))
                              (r (or (and plan

@@ -205,11 +205,11 @@ leaving with changes unsaved, described in chapter 1.
 A large buffer takes time to write. If the save takes longer than half a second,
 Tuatara carries on in the background and the mode line shows =Saving= and a
 percentage. You can keep typing. Leaving Tuatara waits for saves still running.
-=*save-in-place*= is for very large files, which chapter 11 explains.
+=*ext4-save-in-place*= is for very large files, which chapter 11 explains.
 
 #+table: commands save-buffer
 
-#+table: settings *save-in-place*
+#+table: settings *ext4-save-in-place*
 
 ** Save as, and a new name
 

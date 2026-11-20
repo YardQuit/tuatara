@@ -13,7 +13,7 @@
                 #:*sandbox-seconds* #:*sandbox-memory* #:*sandbox-input-limit* #:*sandbox-memory-copy-limit*
                 #:*sandbox-total-memory*
                 #:*sandbox-seccomp* #:*program-output-limit* #:*directory-tree-depth-limit*
-                #:*save-in-place*)
+                #:*ext4-save-in-place*)
   (:documentation "Files: visiting them so that no other program can change the text shown,
 saving them so that no crash or power cut loses a file, noticing when they change on
 disk, and reverting. It works on every Linux file system, with faster paths where a

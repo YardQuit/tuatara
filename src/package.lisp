@@ -44,7 +44,7 @@ available unqualified, and the public API of TUATARA is used.")
            ;; saving work and the session
            #:*auto-save* #:*auto-save-directory* #:*auto-save-idle* #:*auto-save-interval* #:*auto-save-size-limit*
            #:*keep-session*
-           #:*keep-session-interval* #:*save-in-place*
+           #:*keep-session-interval* #:*ext4-save-in-place*
            ;; encryption, and wiping files
            #:*gpg-program* #:*gpg-passphrase-from* #:*metadata-look-up-key-owners* #:*wipe-passes* #:*cache-directory*
            #:*cache-keep* #:*state-directory* #:*packages-directory* #:*package-size-limit* #:*archive-seconds*
