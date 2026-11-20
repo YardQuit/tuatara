@@ -419,13 +419,16 @@ sandbox.
 
 Some picture files hold more than one picture. A TIFF can have several pages:
 a scanner writes each sheet as a page, GIMP saves each layer as one, and many
-programs add a smaller copy or a mask. A viewer shows the first page only, so
-the others are easy to miss.
+programs add a smaller copy or a mask. Photoshop can keep its layers in a TIFF
+too, beside the picture of them all put together. A viewer shows the first
+page only, so the others are easy to miss.
 
 When the file holds more than one, the line above the picture says which one
 you see, for example =picture 1 of 3: page 1 of 3, 64 × 48=. ~n~ shows the
 next and ~p~ the previous; after the last comes the first again. Each is drawn
-in the background, as the first was.
+in the background, as the first was. A Photoshop layer is named, as in
+=Photoshop layer "Red box", 30 × 20=; a layer with nothing in it, such as a
+group's own entry, is listed but skipped.
 
 ~M-x show-file-metadata~ lists them all under =Pictures inside=, as the
 section "What a file says of itself" below describes.
@@ -680,6 +683,12 @@ one worth a look: it may show the picture as it was before someone changed
 it. To compare, both are drawn small, at most 256 pixels across, and a pixel
 counts as different only when its colour differs clearly, so that the loss of
 saving a picture again does not count.
+
+A Photoshop layer is compared with the part of the picture it lies on, and
+the line says where that is, how the layer is blended, whether it is hidden
+and which layers under it it covers. A layer that looks the same as the part
+under it is what you see. One that differs is hidden, covered by another
+layer, or blended into what is below it.
 
 There are everyday reasons to look. Before you put a photo of your house on
 the internet, check whether it carries the place it was taken. Before you send

@@ -657,3 +657,91 @@ else ~a; fi" pixel)
       (is equal 2 (tuatara.defaults::inner-picture-search-index "picture 3" 3))
       (false (tuatara.defaults::inner-picture-search-index "picture 4" 3))
       (false (tuatara.defaults::inner-picture-search-index "picture 0" 3)))))
+
+(defun photoshop-test-data (records &key big)
+  "Photoshop's data as a TIFF keeps it (tag 37724), holding the layer
+RECORDS, each a plist of :BOX (TOP LEFT BOTTOM RIGHT), :BLEND, :OPACITY,
+:FLAGS, :NAME, :UNICODE and :SECTION, numbers and four-letter keys written
+BIG-endian or, as a little-endian TIFF writes them, backwards."
+  (labels ((int (value n) (loop for i below n collect (ldb (byte 8 (* 8 (if big (- n 1 i) i))) value)))
+           (key (k) (map 'list #'char-code (if big k (reverse k))))
+           (keyed (k data) (append (key "8BIM") (key k) (int (length data) 4) data (if (oddp (length data)) '(0) '()))))
+    (let ((layers
+            (loop for r in records
+                  append (destructuring-bind (&key box (blend "norm") (opacity 255) (flags 0) (name "") unicode section) r
+                           (let* ((pascal (append (list (length name)) (map 'list #'char-code name)))
+                                  (padded (append pascal (make-list (mod (- (length pascal)) 4) :initial-element 0)))
+                                  (extra (append (int 0 4) (int 0 4) padded
+                                                 (and unicode
+                                                      (keyed "luni" (append (int (length unicode) 4)
+                                                                            (loop for c across unicode
+                                                                                  append (int (char-code c) 2)))))
+                                                 (and section (keyed "lsct" (int section 4))))))
+                             (append (loop for v in box append (int v 4)) (int 0 2)
+                                     (key "8BIM") (key blend) (list opacity 0 flags 0) (int (length extra) 4) extra))))))
+      (coerce (append (map 'list #'char-code "Adobe Photoshop Document Data Block") '(0)
+                      (keyed "Layr" (append (int (- (length records)) 2) layers)))
+              '(vector (unsigned-byte 8))))))
+
+(define-test (image-view photoshop-layers-read)
+  ;; names (the Unicode one first), places, blend, opacity, hidden; a group's closing record left out
+  (dolist (big '(nil t))
+    (let ((layers (tuatara.defaults::photoshop-layers
+                   (photoshop-test-data (list (list :box '(0 0 40 60) :name "Background")
+                                              (list :box '(5 10 25 40) :name "Red box" :blend "mul " :opacity 128)
+                                              (list :box '(0 0 0 0) :name "Group" :section 1)
+                                              (list :box '(30 50 50 70) :name "old" :unicode "Hōiho" :flags 2)
+                                              (list :box '(0 0 0 0) :name "</Layer group>" :section 3))
+                                        :big big)
+                   big)))
+      (is equal '("Background" "Red box" "Group" "Hōiho") (mapcar (lambda (l) (getf l :name)) layers))
+      (is equal '(5 10 25 40) (let ((l (second layers))) (list (getf l :top) (getf l :left) (getf l :bottom)
+                                                             (getf l :right))))
+      (is equal "multiply" (getf (second layers) :blend))
+      (is = 128 (getf (second layers) :opacity))
+      (true (getf (third layers) :group))
+      (true (getf (fourth layers) :hidden))
+      (false (getf (second layers) :hidden))
+      ;; as pictures: the group listed, not drawn; frames count only those with pixels; what each covers
+      (let ((pictures (tuatara.defaults::photoshop-layer-pictures layers 1000 1)))
+        (is equal '((:frame 1) (:frame 2) nil (:frame 3)) (mapcar #'tuatara.defaults::inner-picture-source pictures))
+        (true (search "Photoshop group \"Group\"" (tuatara.defaults::inner-picture-label (third pictures))))
+        (true (search "at 10, 5 on the picture; multiply, 50% opaque; over \"Background\""
+                      (tuatara.defaults::inner-picture-place (second pictures))))
+        (true (search "hidden" (tuatara.defaults::inner-picture-place (fourth pictures))))
+        (is equal '(10 5) (tuatara.defaults::inner-picture-region (second pictures))))))
+  ;; a record cut short, a block of no layers, other octets: what fits, or nothing
+  (let ((data (photoshop-test-data (list (list :box '(0 0 4 4) :name "One") (list :box '(0 0 4 4) :name "Two")))))
+    (is = 1 (length (tuatara.defaults::photoshop-layers (subseq data 0 (- (length data) 3)) nil)))
+    (false (tuatara.defaults::photoshop-layers (photoshop-test-data '()) nil))
+    (false (tuatara.defaults::photoshop-layers (subseq data 10) nil))))
+
+(define-test (image-view photoshop-layers-in-tiff)
+  ;; a TIFF with Photoshop's layers, as ImageMagick writes one: each layer a picture, drawn and compared with
+  ;; the part of the picture under it
+  (with-test-directory (dir)
+    (let ((psd (namestring (merge-pathnames "layers.psd" dir)))
+          (file (namestring (merge-pathnames "layers.tif" dir))))
+      (uiop:run-program (list "magick" "-size" "80x60" "xc:#336699"
+                              "(" "-size" "30x20" "xc:#ff0000" "-set" "label" "Red box" "-repage" "+10+5" ")"
+                              "(" "-size" "20x20" "xc:#00ff00" "-set" "label" "Green" "-repage" "+50+30" ")"
+                              "(" "-clone" "0-2" "-flatten" ")" "-insert" "0" "-delete" "1" psd))
+      (uiop:run-program (list "magick" psd "-define" "tiff:write-layers=true" file))
+      (let ((note (metadata-of file)))
+        (note-has note "- Picture 2 :: Photoshop layer \"Red box\", 30 × 20; at 10, 5 on the picture; normal, 100% opaque")
+        (note-has note "- Picture 3 :: Photoshop layer \"Green\", 20 × 20; at 50, 30 on the picture")
+        (note-has note "looks the same as the part of the picture shown under it"))
+      (image-forget)
+      (multiple-value-bind (f editor) (image-session file "n n" :cell-pixels '(10 20) :width 200 :settle #'identity)
+        (declare (ignore editor))
+        (true (tuatara.frontend.fake:fake-frame-showing f "picture 3 of 3: Photoshop layer \"Green\", 20 × 20")))
+      ;; a picture shown that leaves the green layer out: that layer differs from what lies under it
+      (uiop:run-program (list "magick" "-size" "80x60" "xc:#336699"
+                              "(" "-size" "30x20" "xc:#ff0000" "-set" "label" "Red box" "-repage" "+10+5" ")"
+                              "(" "-size" "20x20" "xc:#00ff00" "-set" "label" "Green" "-repage" "+50+30" ")"
+                              "(" "-clone" "0-1" "-flatten" ")" "-insert" "0" "-delete" "1" psd))
+      (uiop:run-program (list "magick" psd "-define" "tiff:write-layers=true" file))
+      (let ((note (metadata-of file)))
+        (note-has note "\"Red box\", 30 × 20; at 10, 5 on the picture; normal, 100% opaque; its record at octet")
+        (true (cl-ppcre:scan "\"Green\".*differs from the part of the picture shown under it in 100% of it" note)
+              "~a" note)))))

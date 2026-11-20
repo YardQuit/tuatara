@@ -614,6 +614,11 @@ CANCEL, a cons, has its car turn true while it waits."
                         (sb-thread:signal-semaphore *large-picture-turn*)))))
       (funcall function)))
 
+(defparameter *magick-inner-readers* '("PSD")
+  "The readers ImageMagick, shut in, may use besides those of *IMAGE-FORMATS*,
+for what a picture of those keeps inside it: PSD reads the Photoshop layers
+a TIFF keeps (inner-pictures.lisp). A Photoshop file itself is not drawn.")
+
 (defparameter *magick-policy-path* "/etc/tuatara/ImageMagick/policy.xml"
   "Where ImageMagick, shut in, finds the policy Tuatara gives it (MAGICK-SANDBOX).")
 
@@ -637,14 +642,16 @@ mapped memory and disk set to that."
   <policy domain=\"coder\" rights=\"read\" pattern=\"{~{~a~^,~}}\"/>
   <policy domain=\"coder\" rights=\"write\" pattern=\"PAM\"/>
 </policymap>
-" *magick-largest-side* (and memory (max 1 (floor memory (* 1024 1024)))) (mapcar #'cdr *image-formats*)))
+" *magick-largest-side* (and memory (max 1 (floor memory (* 1024 1024))))
+          (append (mapcar #'cdr *image-formats*) *magick-inner-readers*)))
 
 (defun magick-sandbox (&key memory overlays)
   "What the sandbox gives ImageMagick: a policy of its own (MAGICK-POLICY,
 MEMORY the octets it is given) at *MAGICK-POLICY-PATH*, through
 MAGICK_CONFIGURE_PATH, and the same policy in place of each of OVERLAYS, the
 other policy files it reads (MAGICK-POLICY-OVERLAYS). The policy reads only the
-formats of *IMAGE-FORMATS* and writes only PAM pixels. It allows no program
+formats of *IMAGE-FORMATS* (and *MAGICK-INNER-READERS*, for the layers a TIFF
+keeps) and writes only PAM pixels. It allows no program
 started \(delegates), no filters and no file named by @. It allows no image
 wider or taller than *MAGICK-LARGEST-SIDE*, two threads at most, and no more
 memory than it is given."

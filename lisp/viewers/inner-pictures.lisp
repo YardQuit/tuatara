@@ -3,7 +3,7 @@
 ;;;;
 ;;;; A picture file may keep more pictures than the one a viewer shows: a
 ;;;; TIFF's further pages (a scanner's other sheets, GIMP's layers, a smaller
-;;;; copy, a mask). Their structure is read here, by Tuatara alone, as the
+;;;; copy, a mask) and the layers Photoshop keeps in it. Their structure is read here, by Tuatara alone, as the
 ;;;; metadata is: small reads, every offset checked against the file, every
 ;;;; structure held to a count. Their pixels are drawn in the sandbox
 ;;;; (decode.lisp). M-x show-file-metadata lists them in a section "Pictures
@@ -28,25 +28,161 @@ compared: enough to see a change, little to draw.")
 the pixel counts as differing: less is taken for the loss of saving or
 drawing them small.")
 
-(define-record (inner-picture (:constructor make-inner-picture (label place width height source)) (:copier nil))
+(define-record (inner-picture (:constructor make-inner-picture (label place width height source &optional region))
+                              (:copier nil))
   "One picture a file keeps: LABEL, what it is in words (page 2 of 3, a
 smaller copy, its name); PLACE, where it lies in the file in words; its
 WIDTH and HEIGHT in pixels (NIL when not said); SOURCE, how it is drawn,
-\(:FRAME N), the file's own picture N, from 0."
+\(:FRAME N), the file's own picture N, from 0, or NIL when it has no pixels;
+REGION, (X Y), where it lies on the picture shown, for a layer."
   (label nil :documentation "What INNER-PICTURE is, in words.")
   (place nil :documentation "Where INNER-PICTURE lies in its file, in words.")
   (width nil :documentation "The width of INNER-PICTURE in pixels, or NIL.")
   (height nil :documentation "The height of INNER-PICTURE in pixels, or NIL.")
-  (source nil :documentation "How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0."))
+  (source nil :documentation "How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, or NIL.")
+  (region nil :documentation "Where INNER-PICTURE lies on the picture shown, (X Y) in pixels, or NIL."))
+
+;;; Photoshop's layers, kept in a TIFF (tag 37724)
+
+(defparameter *photoshop-layers-read* (* 4 1024 1024)
+  "The most octets of the Photoshop data a TIFF keeps read for its layers'
+records: their pixels, which follow, are drawn in the sandbox, not read.")
+
+(defparameter *photoshop-blend-modes*
+  '(("norm" . "normal") ("diss" . "dissolve") ("dark" . "darken") ("mul " . "multiply") ("idiv" . "colour burn")
+    ("lbrn" . "linear burn") ("dkCl" . "darker colour") ("lite" . "lighten") ("scrn" . "screen")
+    ("div " . "colour dodge") ("lddg" . "linear dodge") ("lgCl" . "lighter colour") ("over" . "overlay")
+    ("sLit" . "soft light") ("hLit" . "hard light") ("vLit" . "vivid light") ("lLit" . "linear light")
+    ("pLit" . "pin light") ("hMix" . "hard mix") ("diff" . "difference") ("smud" . "exclusion")
+    ("fsub" . "subtract") ("fdiv" . "divide") ("hue " . "hue") ("sat " . "saturation") ("colr" . "colour")
+    ("lum " . "luminosity") ("pass" . "pass through"))
+  "Photoshop's blend modes by the four letters a layer record names them with.")
+
+(defun photoshop-layers (octets big)
+  "The layers of the Photoshop data in OCTETS, as a TIFF keeps it (tag 37724,
+\"Adobe Photoshop Document Data Block\"), numbers read BIG-endian or not as
+the TIFF's are: a list, bottom layer first, of plists with :NAME, :TOP,
+:LEFT, :BOTTOM, :RIGHT (pixels on the picture), :BLEND (words), :OPACITY
+\(0 to 255), :HIDDEN, :GROUP (true for a group's own record) and :AT (the
+record's offset in OCTETS). A group's closing record is left out. At most
+*INNER-PICTURES-MOST* layers; reading stops where a record does not fit in
+OCTETS."
+  (let ((length (length octets)) (layers '()))
+    (labels ((int (at n) (and (<= (+ at n) length) (tuatara.io:octets-integer octets at n :big-endian big)))
+             (signed (at n) (octets-signed (int at n) (* 8 n)))
+             (key (at)
+               ;; four letters, as the file writes them backwards when its numbers are
+               (and (<= (+ at 4) length)
+                    (let ((k (tuatara.text:octets-latin-1 octets :start at :end (+ at 4))))
+                      (if big k (reverse k)))))
+             (extra (at end)
+               ;; the keyed blocks after a layer's name: its Unicode name and whether it opens a group
+               (let ((name nil) (section nil))
+                 (loop while (<= (+ at 12) end)
+                       for size = (int (+ at 8) 4)
+                       for data = (+ at 12)
+                       while (and size (<= (+ data size) end) (member (key at) '("8BIM" "8B64") :test #'string=))
+                       do (let ((k (key (+ at 4))))
+                            (cond ((and (string= k "luni") (>= size 4))
+                                   (let ((count (int data 4)))
+                                     (when (and count (<= (+ data 4 (* 2 count)) (+ data size)))
+                                       (setf name (utf-16-text octets :start (+ data 4) :end (+ data 4 (* 2 count))
+                                                                      :big-endian big)))))
+                                  ((and (member k '("lsct" "lsdk") :test #'string=) (>= size 4))
+                                   (setf section (int data 4)))))
+                          (setf at (+ data size (mod size 2))))
+                 (values name section))))
+      (let* ((header "Adobe Photoshop Document Data Block")
+             (at (and (tuatara.io:octets-at-p octets header) (1+ (length header)))))
+        ;; the blocks of the data, to the one of the layers
+        (loop while (and at (<= (+ at 12) length))
+              for size = (int (+ at 8) 4)
+              until (or (null size) (member (key (+ at 4)) '("Layr" "Lr16" "Lr32") :test #'string=))
+              do (setf at (+ at 12 size (mod (- size) 4))))
+        (when (and at (<= (+ at 14) length))
+          (let ((count (min (abs (or (signed (+ at 12) 2) 0)) *inner-pictures-most*))
+                (record (+ at 14)))
+            (loop repeat count
+                  do (let* ((channels (int (+ record 16) 2))
+                            (blend-at (and channels (+ record 18 (* 6 channels))))
+                            (extra-length (and blend-at (int (+ blend-at 12) 4)))
+                            (extra-at (and extra-length (+ blend-at 16)))
+                            (end (and extra-at (+ extra-at extra-length))))
+                       (unless (and end (<= end length) (member (key blend-at) '("8BIM" "8B64") :test #'string=))
+                         (return))
+                       (let* ((mask (int extra-at 4))
+                              (ranges-at (and mask (+ extra-at 4 mask)))
+                              (ranges (and ranges-at (int ranges-at 4)))
+                              (name-at (and ranges (+ ranges-at 4 ranges)))
+                              (name-length (and name-at (< name-at end) (aref octets name-at)))
+                              (name (and name-length (<= (+ name-at 1 name-length) end)
+                                         (octets-text octets (1+ name-at) (+ name-at 1 name-length)))))
+                         (multiple-value-bind (unicode section)
+                             (if name-length
+                                 (extra (+ name-at (* 4 (ceiling (1+ name-length) 4))) end)
+                                 (values nil nil))
+                           (unless (eql section 3)
+                             (push (list :name (let ((text (or unicode name "")))
+                                                 (escape-controls (subseq text 0 (min 200 (length text)))))
+                                         :top (signed record 4) :left (signed (+ record 4) 4)
+                                         :bottom (signed (+ record 8) 4) :right (signed (+ record 12) 4)
+                                         :blend (let ((k (key (+ blend-at 4))))
+                                                  ;; ImageMagick writes it forwards in a little-endian TIFF
+                                                  (or (cdr (assoc k *photoshop-blend-modes* :test #'string=))
+                                                      (cdr (assoc (reverse k) *photoshop-blend-modes*
+                                                                  :test #'string=))
+                                                      (escape-controls k)))
+                                         :opacity (aref octets (+ blend-at 8))
+                                         :hidden (logtest 2 (aref octets (+ blend-at 10)))
+                                         :group (member section '(1 2))
+                                         :at record)
+                                   layers))))
+                       (setf record end)))))))
+    (nreverse layers)))
+
+(defun photoshop-layer-pictures (layers base frame)
+  "INNER-PICTURE records of LAYERS (PHOTOSHOP-LAYERS), the first that has
+pixels its file's picture FRAME, as two values: the records and the frame
+after the last; BASE, the octet of the file the layers' offsets count from.
+Each says where it lies on the picture, how it is blended, whether it is
+hidden, and the layers under it that it covers. A layer of no pixels (a
+group's record, one left empty) is listed, not drawn."
+  (let ((pictures '()) (below '()))
+    (dolist (layer layers)
+      (destructuring-bind (&key name top left bottom right blend opacity hidden group at) layer
+        (let* ((width (and left right (max 0 (- right left))))
+               (height (and top bottom (max 0 (- bottom top))))
+               (empty (or (null width) (null height) (zerop width) (zerop height)))
+               (under (loop for (other-name o-top o-left o-bottom o-right) in below
+                            when (and (not empty) (< left o-right) (< o-left right) (< top o-bottom) (< o-top bottom))
+                              collect other-name)))
+          (push (make-inner-picture
+                 (format nil "~:[Photoshop layer~;Photoshop group~]~@[ \"~a\"~]" group (and (plusp (length name)) name))
+                 (format nil "~{~a~^; ~}"
+                         (remove nil (list (and (not empty) (format nil "at ~d, ~d on the picture" left top))
+                                           (format nil "~a, ~d% opaque" blend (round (* 100 opacity) 255))
+                                           (and hidden "hidden")
+                                           (and under (format nil "over ~{\"~a\"~^, ~}"
+                                                              (subseq under 0 (min 5 (length under)))))
+                                           (format nil "its record at octet ~:d" (+ base at)))))
+                 (and (not empty) width) (and (not empty) height)
+                 (and (not empty) (list :frame (prog1 frame (incf frame))))
+                 (and (not empty) (list left top)))
+                pictures)
+          (unless (or empty hidden)
+            (push (list (if (plusp (length name)) name "unnamed") top left bottom right) below)))))
+    (values (nreverse pictures) frame)))
 
 ;;; TIFF: a chain of directories, one a picture
 
 (defun tiff-inner-pictures (fd head size)
   "The pictures of the TIFF open as file descriptor (FD), whose first octets
-are HEAD, of SIZE octets: one for each directory of its chain, in order, at
-most *INNER-PICTURES-MOST*, each directory read where it stands and visited
-once."
-  (let ((big (= (aref head 0) 77)) (seen '()) (pictures '()))
+are HEAD, of SIZE octets: one for each directory of its chain, in order,
+each followed by the Photoshop layers it keeps, at most
+*INNER-PICTURES-MOST* directories, each read where it stands and visited
+once. Frames are counted as ImageMagick draws them: a directory's layers
+of pixels right after it."
+  (let ((big (= (aref head 0) 77)) (seen '()) (pictures '()) (frame 0))
     (labels ((int (octets at n) (tuatara.io:octets-integer octets at n :big-endian big))
              (directory-at (at)
                ;; the octets of the directory at AT, its count, entries and the offset of the next
@@ -87,7 +223,19 @@ once."
                                   ((and page-octets (plusp (int page-octets 2 2)))
                                    (format nil "page ~d of ~d" (1+ (int page-octets 0 2)) (int page-octets 2 2)))
                                   (t (format nil "page ~d" (1+ index))))))
-                 (if (plusp (length name)) (format nil "~a \"~a\"" what name) what))))
+                 (if (plusp (length name)) (format nil "~a \"~a\"" what name) what)))
+             (layers (octets entries)
+               ;; the Photoshop layers of the directory, as pictures from the frame after its own
+               (let* ((entry (assoc 37724 entries))
+                      (at (and entry (member (second entry) '(1 7)) (> (third entry) 4) (int octets (fifth entry) 4)))
+                      (data (and at (< 7 at size)
+                                 (tuatara.io:read-fd-exactly fd (min (third entry) *photoshop-layers-read* (- size at))
+                                                             at))))
+                 (when data
+                   (multiple-value-bind (layer-pictures next) (photoshop-layer-pictures (photoshop-layers data big)
+                                                                                        at frame)
+                     (setf frame next)
+                     layer-pictures)))))
       (loop with at = (int head 4 4)
             for index from 0 below *inner-pictures-most*
             while (and at (plusp at) (not (member at seen)))
@@ -102,8 +250,9 @@ once."
                                                (format nil "its directory at octet ~:d~@[, placed at ~{~d, ~d~}~]"
                                                        at place)
                                                (fourth (assoc 256 entries)) (fourth (assoc 257 entries))
-                                               (list :frame index))
+                                               (list :frame (prog1 frame (incf frame))))
                            pictures))
+                   (setf pictures (revappend (layers octets entries) pictures))
                    (setf at next)))))
     (nreverse pictures)))
 
@@ -124,42 +273,54 @@ reads, nothing in the file run."
 (defun inner-picture-image (fd kind picture width height &key cancel enlarge)
   "PICTURE, one of the file open as file descriptor (FD), of KIND, drawn in
 the sandbox no larger than WIDTH by HEIGHT pixels (with ENLARGE, as large as
-fits): two values, as DECODE-IMAGE gives them."
-  (destructuring-bind (how n) (inner-picture-source picture)
-    (ecase how
-      (:frame (decode-image fd kind width height :cancel cancel :enlarge enlarge :frame n)))))
+fits): two values, as DECODE-IMAGE gives them. A picture of no pixels (an
+empty layer) is said not to be drawn."
+  (if (null (inner-picture-source picture))
+      (values nil (list (cons ", not drawn: it has no pixels" :comment)))
+      (destructuring-bind (how n) (inner-picture-source picture)
+        (ecase how
+          (:frame (decode-image fd kind width height :cancel cancel :enlarge enlarge :frame n))))))
 
-(defun images-difference (a b)
-  "The share, from 0 to 1, of the pixels of the pictures A and B whose colour
-differs by more than *INNER-PICTURE-DIFFERENCE-STEP* in red, green, blue or
-\(both having it) alpha; NIL when their sizes differ by more than a pixel,
-which comes of other proportions. A pixel more one way is a rounding: the
-pictures are compared over the part both have."
-  (let ((width (min (tuatara.frontend:image-width a) (tuatara.frontend:image-width b)))
-        (height (min (tuatara.frontend:image-height a) (tuatara.frontend:image-height b))))
-    (when (and (<= (abs (- (tuatara.frontend:image-width a) (tuatara.frontend:image-width b))) 1)
-               (<= (abs (- (tuatara.frontend:image-height a) (tuatara.frontend:image-height b))) 1)
-               (plusp width) (plusp height))
-      (let* ((pa (tuatara.frontend:image-pixels a)) (pb (tuatara.frontend:image-pixels b))
-             (ca (tuatara.frontend:image-channels a)) (cb (tuatara.frontend:image-channels b))
-             (wa (tuatara.frontend:image-width a)) (wb (tuatara.frontend:image-width b))
-             (channels (min ca cb))
-             (step *inner-picture-difference-step*)
-             (differing 0))
-        (dotimes (y height)
-          (dotimes (x width)
-            (let ((ia (* ca (+ x (* y wa)))) (ib (* cb (+ x (* y wb)))))
-              (when (loop for c below channels
-                          thereis (> (abs (- (aref pa (+ ia c)) (aref pb (+ ib c)))) step))
-                (incf differing)))))
-        (/ differing (* width height))))))
+(defun images-difference (a b &optional at)
+  "The share, from 0 to 1, of the pixels of the picture B whose colour
+differs from A's by more than *INNER-PICTURE-DIFFERENCE-STEP* in red, green,
+blue or (both having it) alpha. With AT, (X Y), B is a part of A's size laid
+on it there, and only B's pixels more opaque than not are counted, those
+outside A and those of B's edge left out (drawn small, A blends what lies
+on both sides of it); NIL when none is left. Without, A and B are the same
+picture drawn twice: NIL when their sizes differ by more than a pixel, which
+comes of other proportions; a pixel more one way is a rounding, and they are
+compared over the part both have."
+  (let* ((wa (tuatara.frontend:image-width a)) (ha (tuatara.frontend:image-height a))
+         (wb (tuatara.frontend:image-width b)) (hb (tuatara.frontend:image-height b))
+         (pa (tuatara.frontend:image-pixels a)) (pb (tuatara.frontend:image-pixels b))
+         (ca (tuatara.frontend:image-channels a)) (cb (tuatara.frontend:image-channels b))
+         (dx (if at (first at) 0)) (dy (if at (second at) 0))
+         (channels (if at 3 (min ca cb)))
+         (step *inner-picture-difference-step*)
+         (counted 0) (differing 0))
+    (unless (or at (and (<= (abs (- wa wb)) 1) (<= (abs (- ha hb)) 1)))
+      (return-from images-difference nil))
+    (dotimes (y hb)
+      (dotimes (x wb)
+        (let ((ax (+ x dx)) (ay (+ y dy)))
+          (when (and (< -1 ax wa) (< -1 ay ha)
+                     (or (null at) (< wb 3) (< hb 3) (and (< 0 x (1- wb)) (< 0 y (1- hb)))))
+            (let ((ia (* ca (+ ax (* ay wa)))) (ib (* cb (+ x (* y wb)))))
+              (unless (and at (= cb 4) (< (aref pb (+ ib 3)) 128))
+                (incf counted)
+                (when (loop for c below channels
+                            thereis (> (abs (- (aref pa (+ ia c)) (aref pb (+ ib c)))) step))
+                  (incf differing))))))))
+    (and (plusp counted) (/ differing counted))))
 
-(defun difference-words (share)
+(defun difference-words (share &optional part)
   "SHARE, of the pixels of a picture differing from the one shown (from 0 to
-1), in words."
-  (cond ((zerop share) "looks the same as the picture shown")
-        ((< share 1/100) "differs from the picture shown in less than 1% of it")
-        (t (format nil "differs from the picture shown in ~d% of it" (round (* 100 share))))))
+1), in words; with PART, of a layer from the part of it the layer lies on."
+  (let ((shown (if part "the part of the picture shown under it" "the picture shown")))
+    (cond ((zerop share) (format nil "looks the same as ~a" shown))
+          ((< share 1/100) (format nil "differs from ~a in less than 1% of it" shown))
+          (t (format nil "differs from ~a in ~d% of it" shown (round (* 100 share)))))))
 
 (defun inner-pictures-compared (fd kind pictures &key cancel)
   "Each of PICTURES, of the file open as file descriptor (FD), of KIND, past
@@ -175,14 +336,25 @@ most *INNER-PICTURES-COMPARED* are compared, those past them said to be not."
                                  *inner-pictures-compared*))
                         ((null shown) "not compared: the picture shown could not be drawn")
                         ((and cancel (car cancel)) "not compared: stopped")
-                        (t (multiple-value-bind (image notes)
-                               (inner-picture-image fd kind picture size size :cancel cancel :enlarge t)
-                             (let ((share (and image (images-difference shown image))))
-                               (cond ((null image)
-                                      (format nil "not compared: it could not be drawn~@[ (~a)~]"
-                                              (and notes (string-left-trim ", " (car (first notes))))))
-                                     ((null share) "not compared: of other proportions than the picture shown")
-                                     (t (difference-words share))))))))))
+                        ((null (inner-picture-source picture)) "not compared: it has no pixels")
+                        (t (let* ((region (inner-picture-region picture))
+                                  ;; a layer drawn at the scale the picture shown was, to lie on it
+                                  (scale (and region (inner-picture-width (first pictures))
+                                              (/ (tuatara.frontend:image-width shown)
+                                                 (max 1 (inner-picture-width (first pictures))))))
+                                  (width (if scale (max 1 (round (* scale (inner-picture-width picture)))) size))
+                                  (height (if scale (max 1 (round (* scale (inner-picture-height picture)))) size)))
+                             (multiple-value-bind (image notes)
+                                 (inner-picture-image fd kind picture width height :cancel cancel :enlarge t)
+                               (let ((share (and image (images-difference
+                                                        shown image
+                                                        (and scale (mapcar (lambda (v) (round (* scale v))) region))))))
+                                 (cond ((null image)
+                                        (format nil "not compared: it could not be drawn~@[ (~a)~]"
+                                                (and notes (string-left-trim ", " (car (first notes))))))
+                                       ((and (null share) region) "not compared: it lies outside the picture shown")
+                                       ((null share) "not compared: of other proportions than the picture shown")
+                                       (t (difference-words share region)))))))))))
 
 ;;; M-x show-file-metadata
 
@@ -209,10 +381,11 @@ the image's view (\\`RET' on it). NIL when it keeps one picture only."
                 (loop for picture in pictures
                       for n from 1
                       for words in (cons "the picture a viewer shows" compared)
-                      do (format s "- Picture ~d :: ~a ~a~%" n
+                      do (format s "- Picture ~d :: ~a~@[ ~a~]~%" n
                                  (metadata-value (format nil "~a; ~a; ~a" (inner-picture-words picture)
                                                          (inner-picture-place picture) words))
-                                 (org-link-text (format nil "file:~a::picture ~d" path n) "show it")))
+                                 (and (inner-picture-source picture)
+                                      (org-link-text (format nil "file:~a::picture ~d" path n) "show it"))))
                 (terpri s)))))))
 
 (defun inner-picture-search-index (search count)

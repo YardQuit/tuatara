@@ -1,0 +1,7 @@
+# tuatara packages 1
+# The packages fetched, the latest first: the package, its source and the
+# version asked for; the commit fetched; its tag; whether it was let load;
+# the commit taken before it and its tag, kept to fall back on.
+example https://example.org/tools.git release	0123456789abcdef0123456789abcdef01234567	v1.2.0	yes	89abcdef0123456789abcdef0123456789abcdef	v1.1.0	SHA256:abcDEF0123456789+/=
+mine ~/packages/ latest	-		yes
+third https://example.org/third.git latest	abcdef0		no	1234567	

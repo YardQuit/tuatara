@@ -1,0 +1,6 @@
+# tuatara recent-files 1
+# The files Tuatara visited lately, the latest first: file, or safe for one
+# opened safely, then its path (\\, \n and \r stand for \, a newline and a return).
+file /notes/report.org
+safe /evidence/disk 1.img
+file /odd/a\\b\tc\nd.txt

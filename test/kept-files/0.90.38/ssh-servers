@@ -1,0 +1,8 @@
+# tuatara ssh-servers 1
+# The machines whose daemons are trusted with more than keys and the screen, the latest
+# first: the machine as ssh takes it; the ssh agent forwarded; the machines its keys
+# may be used for from there; gpg-agent forwarded; the clipboard shared; the directory
+# there dropped files go to; the day it was trusted; the tuatara to run there, when
+# another than the one on its PATH. Changed by M-x server-list.
+me@build.example	yes	github.com,git@git.example	yes	yes	Dropped	2026-11-05
+box	no	-	no	no	-	2026-11-04

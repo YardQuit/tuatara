@@ -1,0 +1,7 @@
+# tuatara cache 1
+# What the cache directory keeps to be used again, a line each. A tab ends
+# each field: its directory there, its kind, key and name, when it was made
+# and last used, pinned or not, and what its kind noted of it (\\, \n and
+# \r stand for \, a newline and a return).
+remote/aB3dE9/	remote	/ssh:box:/srv/case/mail.pst	/ssh:box:/srv/case/mail.pst	3972000000	3972003600	pinned	1048576 1794990000 4242 1048576 1794999999000000000 all
+indexes/notes/				0	3972000000	pinned	

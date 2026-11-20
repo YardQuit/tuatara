@@ -1,0 +1,6 @@
+# tuatara package-trust 1
+# The sources of packages trusted, the latest first: the address; who signed
+# the versions taken from it, a key's fingerprint, or unsigned; the signer's
+# name; an SSH signer's key. M-x package-trust-again forgets a source's.
+https://example.org/signed.git	SHA256:abcDEF0123456789+/=	Mere Rotorua	mere@example.org AAAAC3NzaC1lZDI1NTE5AAAAIExample+/=
+https://example.org/tools.git	unsigned		

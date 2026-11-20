@@ -129,15 +129,19 @@ the pictures inside it is shown, when it keeps more than one."
 
 (defun image-view-step (count)
   "Show the picture COUNT on from the one shown in the image's view of the
-current buffer, among those its file keeps inside it, round from the last to
-the first."
+current buffer, among those its file keeps inside it that have pixels (not
+an empty layer), round from the last to the first."
   (let* ((buffer (current-buffer))
          (view (image-view-of buffer))
-         (pictures (and view (image-view-pictures view))))
+         (pictures (and view (image-view-pictures view)))
+         (drawn (and (consp pictures)
+                     (loop for picture in pictures for i from 0 when (inner-picture-source picture) collect i))))
     (cond ((null view) (message "Not an image's view"))
           ((eq pictures :unread) (message "The pictures inside it are still being read"))
-          ((null pictures) (message "~a keeps no other picture" (tuatara.io:native-file-name (image-view-path view))))
-          (t (image-view-start buffer view (mod (+ (image-view-index view) count) (length pictures)))))))
+          ((null (rest drawn))
+           (message "~a keeps no other picture" (tuatara.io:native-file-name (image-view-path view))))
+          (t (let ((at (or (position (image-view-index view) drawn) 0)))
+               (image-view-start buffer view (nth (mod (+ at count) (length drawn)) drawn)))))))
 
 (define-command image-view-next-picture ()
   "Show the next picture the image file shown keeps inside it (a TIFF's next
@@ -195,10 +199,14 @@ nothing to draw it with, which is said)."
 (defun image-view-show (buffer view result)
   "Give BUFFER, VIEW's, the picture in RESULT, (IMAGE . NOTES), what is said of
 it in its header. With no picture, or where pictures are not shown, the
-file's octets in its place, and why (FILE-VIEW-FALL-TO-OCTETS)."
+file's octets in its place, and why (FILE-VIEW-FALL-TO-OCTETS); but a
+picture inside the file past the first that cannot be drawn leaves the one
+shown, and the header says why."
   (destructuring-bind (image . notes) result
     (let ((words (format nil "~a~{~a~}" (image-view-header-words view) (mapcar #'car notes))))
-      (cond ((null image)
+      (cond ((and (null image) (plusp (image-view-index view)) (tuatara.buffer:buffer-local buffer :image))
+             (setf (tuatara.display:buffer-header-line buffer) (static-header-line (format nil " ~a" words))))
+            ((null image)
              ;; its text shown, no picture on its way, while the octets are opened
              (setf (tuatara.buffer:buffer-local buffer :picture-pending) nil
                    (tuatara.buffer:buffer-local buffer :picture-view) nil)
