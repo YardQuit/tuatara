@@ -46,19 +46,25 @@ image_stale() {
 # names_this_machine FILE: true, and where (the octet each is found at, with
 # the text around it), when FILE names this machine's home directory ($HOME, or
 # the directory it leads to), the account's name ($USER) or the machine's host
-# name (as a whole word: a host called port is not found in "report");
-# false when it names none of them. Names under three characters, and
-# localhost, are not looked for.
+# name; false when it names none of them. A host name is looked for as a whole
+# word (a host called kiwi-box is not found in "kiwi-boxes"). One of letters
+# alone may be a word of any text (a host called develop, in a licence's "if
+# you develop a new program"), so it is looked for only where a machine writes
+# a host name: after @ (annt@develop) or // (//develop/). Names under three
+# characters, and localhost, are not looked for.
 names_this_machine() {
-  local home real user name found=1 match
+  local home real user name found=1 match pattern
   home="${HOME%/}"; real="$(realpath -m "$home")"; user="${USER:-$(id -un)}"
   for name in "$home" "$real" "$user" "$(hostname 2>/dev/null)" "$(hostname -f 2>/dev/null)"; do
     [ "${#name}" -ge 3 ] && [ "$name" != localhost ] || continue
-    match=(-F)
-    if [ "$name" != "$home" ] && [ "$name" != "$real" ] && [ "$name" != "$user" ]; then match=(-F -w); fi
-    if [ "$(grep -a -c "${match[@]}" -- "$name" "$1")" != 0 ]; then
-      echo "$1 names $name $(grep -a -c "${match[@]}" -- "$name" "$1") times, at:" >&2
-      grep -a -o -b "${match[@]}" -- "$name" "$1" | head -n 10 | while IFS=: read -r at _; do
+    match=(-F); pattern="$name"
+    if [ "$name" != "$home" ] && [ "$name" != "$real" ] && [ "$name" != "$user" ]; then
+      match=(-F -w)
+      if [[ "$name" =~ ^[[:alpha:]]+$ ]]; then match=(-E); pattern="(@|//)$name([^[:alnum:]_]|\$)"; fi
+    fi
+    if [ "$(grep -a -c "${match[@]}" -- "$pattern" "$1")" != 0 ]; then
+      echo "$1 names $name $(grep -a -c "${match[@]}" -- "$pattern" "$1") times, at:" >&2
+      grep -a -o -b "${match[@]}" -- "$pattern" "$1" | head -n 10 | while IFS=: read -r at _; do
         echo "  $at: $(dd if="$1" bs=1 skip=$((at > 40 ? at - 40 : 0)) count=120 status=none | tr -c '[:print:]' '.')" >&2
       done
       found=0

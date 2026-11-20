@@ -1376,7 +1376,8 @@ names_this_machine \"$1\" 2>/dev/null && echo yes || echo no" (tools-script "ins
         (true (names-p "kiwi-box, served"))
         (false (names-p "served from kiwi"))
         (false (names-p "kiwi-boxes and kiwi-boxed"))))
-    ;; a host with a common word for a name is not found inside longer words
+    ;; a host with a common word for a name is not found inside longer words, nor as a word of the text: only
+    ;; where a machine writes a host name
     (let ((file (uiop:native-namestring (merge-pathnames "page" directory))))
       (flet ((names-p (host text)
                (with-open-file (o file :direction :output :if-exists :supersede) (write-string text o))
@@ -1388,7 +1389,11 @@ names_this_machine \"$1\" 2>/dev/null && echo yes || echo no" host (tools-script
                                                         file)))))
         (false (names-p "port" "a report and its porter"))
         (false (names-p "rata" "ratatouille"))
-        (true (names-p "rata" "the rata is here"))))
+        (false (names-p "rata" "the rata is here"))
+        (false (names-p "develop" "If you develop a new program, and you want it to be of use"))
+        (false (names-p "develop" "a mail to @developers"))
+        (true (names-p "rata" "annt@rata:~/src$"))
+        (true (names-p "rata" "file://rata/shared/report.pdf"))))
     (let ((publish (tools-text "manual-publish.sh")))
       (true (search "names_this_machine" publish))
       (false (search "for word in" publish)))))
