@@ -5,12 +5,14 @@
 ;;;; TIFF's further pages (a scanner's other sheets, GIMP's layers, a smaller
 ;;;; copy, a mask) and the layers Photoshop keeps in it; a JPEG's thumbnails
 ;;;; (EXIF's, Photoshop's) and the pictures its MPF index lists (larger
-;;;; previews, a phone's gain and depth maps). Their structure is read here, by Tuatara alone, as the
-;;;; metadata is: small reads, every offset checked against the file, every
-;;;; structure held to a count. Their pixels are drawn in the sandbox
-;;;; (decode.lisp). M-x show-file-metadata lists them in a section "Pictures
-;;;; inside", each compared with the picture shown; in an image's view n and
-;;;; p step through them.
+;;;; previews, a phone's gain and depth maps); an animated PNG's frames. Their
+;;;; structure is read here, by Tuatara alone, as the metadata is: small
+;;;; reads, every offset checked against the file, every structure held to a
+;;;; count. Their pixels are drawn in the sandbox (decode.lisp). M-x
+;;;; show-file-metadata lists them in a section "Pictures inside", each
+;;;; compared with the picture shown; in an image's view n and p step through
+;;;; them. It lists the editing data a PDF keeps (Illustrator's own file,
+;;;; Photoshop's and others' private data) as well.
 
 (in-package #:tuatara.defaults)
 
@@ -36,15 +38,16 @@ drawing them small.")
 smaller copy, its name); PLACE, where it lies in the file in words; its
 WIDTH and HEIGHT in pixels (NIL when not said); SOURCE, how it is drawn,
 \(:FRAME N), the file's own picture N, from 0, (:OCTETS START LENGTH KIND),
-a picture of KIND kept in the file's octets from START, or NIL when it has
-no pixels;
+a picture of KIND kept in the file's octets from START, (:APNG-FRAME N), an
+animated PNG's frame N from 0 (or :PICTURE, its picture data) made a PNG of
+its own, or NIL when it has no pixels;
 REGION, (X Y), where it lies on the picture shown, for a layer."
   (label nil :documentation "What INNER-PICTURE is, in words.")
   (place nil :documentation "Where INNER-PICTURE lies in its file, in words.")
   (width nil :documentation "The width of INNER-PICTURE in pixels, or NIL.")
   (height nil :documentation "The height of INNER-PICTURE in pixels, or NIL.")
   (source nil :documentation "How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, (:OCTETS START
-LENGTH KIND), a picture kept in its file's octets, or NIL.")
+LENGTH KIND), a picture kept in its file's octets, (:APNG-FRAME N), an animated PNG's frame, or NIL.")
   (region nil :documentation "Where INNER-PICTURE lies on the picture shown, (X Y) in pixels, or NIL."))
 
 ;;; Photoshop's layers, kept in a TIFF (tag 37724)
@@ -364,6 +367,140 @@ to begin as a JPEG does, at most *INNER-PICTURES-MOST* of them."
                   nil))))
     (nreverse pictures)))
 
+;;; Animated PNG: frames in fcTL and fdAT chunks
+
+(defparameter *apng-largest* (* 64 1024 1024)
+  "The most octets an animated PNG may have for its frames to be read: a
+larger one is shown and listed as its first picture alone.")
+
+(defparameter *png-chunks-kept-for-frames* '("PLTE" "tRNS" "gAMA" "cHRM" "sRGB" "iCCP" "sBIT" "cICP")
+  "The chunks of an animated PNG before its picture data that a frame made a
+PNG of its own keeps: those that say how its pixels are read.")
+
+(defun map-png-chunks (function octets)
+  "Call FUNCTION with the type (four letters), where the data begins and where
+it ends of each chunk of the PNG in OCTETS, in order, to IEND: at most
+100,000, each checked to lie within OCTETS."
+  (let ((at 8))
+    (loop repeat 100000
+          while (<= (+ at 12) (length octets))
+          do (let* ((length (tuatara.io:octets-integer octets at 4 :big-endian t))
+                    (data (+ at 8))
+                    (end (+ data length)))
+               (when (> (+ end 4) (length octets)) (return))
+               (let ((type (tuatara.text:octets-latin-1 octets :start (+ at 4) :end data)))
+                 (funcall function type data end)
+                 (when (string= type "IEND") (return)))
+               (setf at (+ end 4))))))
+
+(defun apng-frames (octets)
+  "The frames of the animated PNG in OCTETS, in order, as plists of :WIDTH,
+:HEIGHT, :X, :Y, :DELAY (seconds, a ratio), :DISPOSE and :BLEND (their
+numbers), :AT (the octet of the frame's fcTL chunk), :DEFAULT (true for the
+frame that is the picture data, IDAT, itself) and :DATA (a list of (START .
+END) of its compressed pixels); and as a second value true when the picture
+data (IDAT) is no frame, a picture that programs showing the animation leave
+out. At most *INNER-PICTURES-MOST* frames."
+  (let ((frames '()) (idat-seen nil) (idat-framed nil))
+    (map-png-chunks
+     (lambda (type data end)
+       (flet ((int (at n) (tuatara.io:octets-integer octets at n :big-endian t)))
+         (cond ((and (string= type "fcTL") (= (- end data) 26) (< (length frames) *inner-pictures-most*))
+                (let ((denominator (int (+ data 22) 2)))
+                  (push (list :width (int (+ data 4) 4) :height (int (+ data 8) 4)
+                              :x (int (+ data 12) 4) :y (int (+ data 16) 4)
+                              :delay (/ (int (+ data 20) 2) (if (zerop denominator) 100 denominator))
+                              :dispose (aref octets (+ data 24)) :blend (aref octets (+ data 25))
+                              :at (- data 8) :default (not idat-seen) :data '())
+                        frames)))
+               ((string= type "IDAT")
+                (unless idat-seen
+                  (setf idat-seen t idat-framed (and frames t)))
+                (when (and frames (getf (first frames) :default))
+                  (push (cons data end) (getf (first frames) :data))))
+               ((and (string= type "fdAT") frames (> (- end data) 4))
+                (push (cons (+ data 4) end) (getf (first frames) :data))))))
+     octets)
+    (values (mapcar (lambda (f) (setf (getf f :data) (reverse (getf f :data))) f) (nreverse frames))
+            (and idat-seen (not idat-framed)))))
+
+(defun png-chunk-octets (type data)
+  "The octets of a PNG chunk of TYPE holding DATA: its length, type, data and CRC."
+  (let ((out (make-array (+ 12 (length data)) :element-type '(unsigned-byte 8))))
+    (tuatara.io:octets-put-integer out (length data) 4 :at 0 :big-endian t)
+    (loop for c across type for i from 4 do (setf (aref out i) (char-code c)))
+    (replace out data :start1 8)
+    (tuatara.io:octets-put-integer out (tuatara.io:crc32 out 4 (+ 8 (length data))) 4 :at (+ 8 (length data))
+                                   :big-endian t)
+    out))
+
+(defun apng-frame-octets (octets index)
+  "Frame INDEX (from 0) of the animated PNG in OCTETS, or with :PICTURE its
+picture data (IDAT), made a PNG of its own, as a program shut in can draw it
+without reading animations: the PNG's header with the frame's size, the
+chunks that say how its pixels are read (*PNG-CHUNKS-KEPT-FOR-FRAMES*), its
+compressed pixels as picture data, and the end. NIL when there is no such
+frame."
+  (let ((frame (if (eq index :picture) (list :data '()) (nth index (apng-frames octets))))
+        (header nil) (kept '()) (data-seen nil))
+    (when frame
+      (map-png-chunks (lambda (type data end)
+                        (cond ((string= type "IHDR") (setf header (subseq octets data end)))
+                              ((member type '("IDAT" "fdAT") :test #'string=)
+                               (setf data-seen t)
+                               (when (and (eq index :picture) (string= type "IDAT"))
+                                 (push (cons data end) (getf frame :data))))
+                              ((and (not data-seen) (member type *png-chunks-kept-for-frames* :test #'string=))
+                               (push (png-chunk-octets type (subseq octets data end)) kept))))
+                      octets)
+      (when (and header (= (length header) 13) (getf frame :data))
+        (unless (eq index :picture)
+          (tuatara.io:octets-put-integer header (getf frame :width) 4 :at 0 :big-endian t)
+          (tuatara.io:octets-put-integer header (getf frame :height) 4 :at 4 :big-endian t))
+        (apply #'concatenate '(simple-array (unsigned-byte 8) (*))
+               (coerce #(137 80 78 71 13 10 26 10) '(simple-array (unsigned-byte 8) (*)))
+               (png-chunk-octets "IHDR" header)
+               (append (nreverse kept)
+                       (loop for (start . end) in (if (eq index :picture)
+                                                      (reverse (getf frame :data))
+                                                      (getf frame :data))
+                             collect (png-chunk-octets "IDAT" (subseq octets start end)))
+                       (list (png-chunk-octets "IEND" #()))))))))
+
+(defun apng-inner-pictures (fd head size)
+  "The pictures of the animated PNG open as file descriptor (FD), whose first
+octets are HEAD, of SIZE octets: the picture itself, then each frame of the
+animation that is not it, with where it lies on the picture, how long it is
+shown and how it is laid over the frame before. Read only when its acTL
+chunk is among HEAD, as the format puts it before the picture data, and the
+file is no larger than *APNG-LARGEST*."
+  (when (and (search "acTL" (tuatara.text:octets-latin-1 head)) (<= size *apng-largest*))
+    (let ((octets (tuatara.io:read-fd-exactly fd size 0)))
+      (when octets
+        (multiple-value-bind (frames hidden) (apng-frames octets)
+          (multiple-value-bind (width height) (tuatara.io:octets-picture-size head)
+            (cons (make-inner-picture (if hidden
+                                          "the picture itself, which programs showing the animation leave out"
+                                          "the picture itself, the animation's first frame")
+                                      "its picture data (IDAT)" width height (list :apng-frame :picture))
+                  (loop for frame in frames
+                        for n from 0
+                        unless (getf frame :default)
+                          collect (destructuring-bind (&key width height x y delay dispose blend at &allow-other-keys)
+                                      frame
+                                    (make-inner-picture
+                                     (format nil "frame ~d of ~d" (1+ n) (length frames))
+                                     (format nil "at ~d, ~d on the picture; shown ~,2f s; ~a; then ~a; its fcTL ~
+                                                  chunk at octet ~:d"
+                                             x y (float delay)
+                                             (if (eql blend 1)
+                                                 "laid over the frame before"
+                                                 "replacing what is under it")
+                                             (case dispose (1 "cleared") (2 "the frame before put back")
+                                                   (t "left as it is"))
+                                             at)
+                                     width height (list :apng-frame n) (list x y)))))))))))
+
 (defun inner-pictures (fd head kind &key (size (tuatara.io:fd-size fd)))
   "The pictures the file open as file descriptor (FD), whose first octets are
 HEAD, of KIND (TUATARA.IO:OCTETS-KIND's keyword) and SIZE octets, keeps, the
@@ -374,7 +511,8 @@ reads, nothing in the file run."
                        (ignoring-errors-reported ("reading the pictures inside a file")
                          (case kind
                            (:tiff (and (tuatara.io:tiff-octets-p head) (tiff-inner-pictures fd head size)))
-                           (:jpeg (jpeg-inner-pictures fd head size)))))))
+                           (:jpeg (jpeg-inner-pictures fd head size))
+                           (:png (apng-inner-pictures fd head size)))))))
     (and (rest pictures) pictures)))
 
 ;;; Drawing and comparing
@@ -390,6 +528,12 @@ empty layer) is said not to be drawn."
         (declare (ignore more))
         (ecase how
           (:frame (decode-image fd kind width height :cancel cancel :enlarge enlarge :frame n))
+          (:apng-frame (let* ((size (tuatara.io:fd-size fd))
+                              (octets (and size (<= size *apng-largest*) (tuatara.io:read-fd-exactly fd size 0)))
+                              (frame (and octets (apng-frame-octets octets n))))
+                         (if frame
+                             (decode-picture frame :png width height :cancel cancel :enlarge enlarge)
+                             (values nil (list (cons ", not drawn: the frame could not be read" :comment))))))
           (:octets (destructuring-bind (start length kind) (rest (inner-picture-source picture))
                      (let ((octets (tuatara.io:read-fd-exactly fd length start)))
                        (if octets
@@ -485,7 +629,7 @@ PATH, of KIND, open as file descriptor (FD), of SIZE octets, when it keeps
 more pictures than the one shown: each with what it is, its size, where it
 lies, how it compares with the picture shown, and a link that shows it in
 the image's view (\\`RET' on it). NIL when it keeps one picture only."
-  (let* ((head (and (member kind '(:tiff :jpeg)) (tuatara.io:read-fd-start fd path size 4096)))
+  (let* ((head (and (member kind '(:tiff :jpeg :png)) (tuatara.io:read-fd-start fd path size 4096)))
          (pictures (and head (inner-pictures fd head kind :size size))))
     (when pictures
       (let ((compared (inner-pictures-compared fd kind pictures

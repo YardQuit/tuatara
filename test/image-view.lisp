@@ -806,3 +806,67 @@ index, a larger preview (32 × 24 green) after its picture."
                 (lambda (fd) (mapcar #'tuatara.defaults::inner-picture-label
                                      (tuatara.defaults::inner-pictures fd (subseq o 0 (min 4096 (length o))) :jpeg))))))
         (is equal '("the picture itself" "its EXIF thumbnail" "Photoshop's thumbnail") (labels-of cut))))))
+
+(defun png-test-chunks (octets)
+  "The chunks of the PNG OCTETS as a list of (TYPE . DATA), DATA a list of octets."
+  (let ((chunks '()))
+    (tuatara.defaults::map-png-chunks (lambda (type start end) (push (cons type (coerce (subseq octets start end) 'list)) chunks))
+                                      octets)
+    (nreverse chunks)))
+
+(defun apng-test-octets (dir frames &key hidden)
+  "An animated PNG made in DIR of FRAMES, each (COLOUR SIZE X Y DELAY), DELAY
+in hundredths of a second, each drawn by ImageMagick as a PNG and its picture
+data taken: the first frame is the file's picture data, or with HIDDEN,
+\(COLOUR SIZE) of a picture of its own that is no frame comes first."
+  (labels ((png (colour size)
+             (let ((path (namestring (merge-pathnames (format nil "~a-~a.png" (subseq colour 1) size) dir))))
+               ;; true colour, as every frame shares the file's header
+               (uiop:run-program (list "magick" "-size" size (format nil "xc:~a" colour) (format nil "PNG24:~a" path)))
+               (png-test-chunks (alexandria:read-file-into-byte-vector path))))
+           (be (value n) (loop for i from (1- n) downto 0 collect (ldb (byte 8 (* 8 i)) value)))
+           (data (chunks) (remove-if-not (lambda (c) (string= (car c) "IDAT")) chunks)))
+    (let* ((sequence -1)
+           (pictures (mapcar (lambda (f) (png (first f) (second f))) frames))
+           (base (if hidden (png (first hidden) (second hidden)) (first pictures)))
+           (chunks
+             (append (list (assoc "IHDR" base :test #'string=) (cons "acTL" (append (be (length frames) 4) (be 0 4))))
+                     (and hidden (data base))
+                     (loop for (colour size x y delay) in frames
+                           for picture in pictures
+                           for first = t then nil
+                           for (width height) = (mapcar #'parse-integer (uiop:split-string size :separator "x"))
+                           collect (cons "fcTL" (append (be (incf sequence) 4) (be width 4) (be height 4) (be x 4) (be y 4)
+                                                        (be delay 2) (be 100 2) (list 0 0)))
+                           append (if (and first (not hidden))
+                                      (data picture)
+                                      (mapcar (lambda (c) (cons "fdAT" (append (be (incf sequence) 4) (cdr c))))
+                                              (data picture))))
+                     (list (cons "IEND" '())))))
+      (apply #'concatenate '(vector (unsigned-byte 8)) '(137 80 78 71 13 10 26 10)
+             (mapcar (lambda (c) (tuatara.defaults::png-chunk-octets (car c) (coerce (cdr c) '(vector (unsigned-byte 8)))))
+                     chunks)))))
+
+(define-test (image-view apng-frames-inside)
+  ;; an animated PNG's frames past the first: listed with their place and timing, compared, shown with n
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "anim.png" dir))))
+      (alexandria:write-byte-vector-into-file
+       (apng-test-octets dir '(("#336699" "32x24" 0 0 50) ("#993366" "32x24" 0 0 50) ("#336699" "16x12" 8 6 50)))
+       file :if-exists :supersede)
+      (let ((note (metadata-of file)))
+        (note-has note "- Picture 1 :: the picture itself, the animation's first frame, 32 × 24")
+        (true (cl-ppcre:scan "- Picture 2 :: frame 2 of 3, 32 × 24; at 0, 0 on the picture; shown 0.50 s;.*differs from the part of the picture shown under it in 100% of it" note) "~a" note)
+        (true (cl-ppcre:scan "- Picture 3 :: frame 3 of 3, 16 × 12; at 8, 6 on the picture;.*looks the same as the part of the picture shown under it" note) "~a" note))
+      (image-forget)
+      (multiple-value-bind (f editor) (image-session file "n" :cell-pixels '(10 20) :width 200 :settle #'identity)
+        (declare (ignore editor))
+        (true (tuatara.frontend.fake:fake-frame-showing f "picture 2 of 3: frame 2 of 3, 32 × 24")))))
+  ;; picture data that is no frame (no fcTL before it): said to be left out by programs showing the animation
+  (with-test-directory (dir)
+    (let ((file (namestring (merge-pathnames "hidden.png" dir))))
+      (alexandria:write-byte-vector-into-file (apng-test-octets dir '(("#00ff00" "16x12" 8 6 10)) :hidden '("#ff0000" "32x24"))
+                                              file :if-exists :supersede)
+      (let ((note (metadata-of file)))
+        (note-has note "- Picture 1 :: the picture itself, which programs showing the animation leave out, 32 × 24")
+        (true (cl-ppcre:scan "- Picture 2 :: frame 1 of 1, 16 × 12; at 8, 6 on the picture; shown 0.10 s; replacing what is under it; then left as it is.*differs from the part of the picture shown under it in 100% of it" note) "~a" note)))))

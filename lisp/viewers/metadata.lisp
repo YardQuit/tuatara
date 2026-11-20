@@ -320,14 +320,30 @@ is none. At most MOST octets of plain text are read, and the text is cut to
                                   (cut octets (1+ translated-end) (min end (+ translated-end 1 most))))))))))
       (and value (subseq value 0 (min (length value) *metadata-value-most*))))))
 
+(defparameter *png-standard-chunks*
+  '("IHDR" "PLTE" "IDAT" "IEND" "tRNS" "cHRM" "gAMA" "iCCP" "sBIT" "sRGB" "cICP" "mDCV" "mDCv" "cLLI" "cLLi"
+    "tEXt" "zTXt" "iTXt" "bKGD" "hIST" "pHYs" "sPLT" "eXIf" "tIME" "acTL" "fcTL" "fdAT" "oFFs" "pCAL" "sCAL"
+    "sTER" "gIFg" "gIFx" "gIFt" "dSIG" "fRAc")
+  "The chunks the PNG standard and its registered extensions name: the others
+a PNG holds are a program's own, listed by M-x show-file-metadata.")
+
+(defun png-own-chunk-words (type)
+  "What a PNG chunk of TYPE, one no standard names, is known to hold, in words, or NIL."
+  (cond ((uiop:string-prefix-p "mk" type) "Adobe Fireworks' own data (its layers, pages and objects), not read")
+        ((string= type "prVW") "Adobe Fireworks' preview of the picture, not read")
+        ((string= type "iDOT") "Apple's note of where the picture data is split, for reading it in parts")
+        ((string= type "CgBI") "Apple's changed PNG for iPhones (its pixels stored otherwise)")))
+
 (defun png-metadata (octets)
-  "The sections of the note for the PNG picture in OCTETS: its EXIF, its text
-and when it says it was last changed. Each packed text is inflated to no
-more than *PNG-TEXT-INFLATED*; the texts, packed or plain, are read to no
-more than *PNG-TEXT-INFLATED-IN-ALL* together, and no more than
-*METADATA-MOST-FIELDS* of them, the note saying when some were left out; in
-a job, asking it to stop ends the reading between two of them."
-  (let ((at 8) (sections '()) (texts '()) (count 0) (budget *png-text-inflated-in-all*) (left 0))
+  "The sections of the note for the PNG picture in OCTETS: its EXIF, its text,
+when it says it was last changed, and the chunks no standard names (a
+program's own data, Adobe Fireworks' layers among them), each with how many
+and how large. Each packed text is inflated to no more than
+*PNG-TEXT-INFLATED*; the texts, packed or plain, are read to no more than
+*PNG-TEXT-INFLATED-IN-ALL* together, and no more than *METADATA-MOST-FIELDS*
+of them, the note saying when some were left out; in a job, asking it to
+stop ends the reading between two of them."
+  (let ((sections '()) (texts '()) (budget *png-text-inflated-in-all*) (left 0) (own '()))
     (flet ((inflated (start end)
              ;; the most a packed text could cost counted against what is left for all of them
              (tuatara.runtime:job-check-stop)
@@ -335,27 +351,28 @@ a job, asking it to stop ends the reading between two of them."
                (let ((limit (min budget *png-text-inflated*)))
                  (decf budget limit)
                  (zlib-octets octets start end :limit limit)))))
-      (loop while (< (+ at 8) (length octets))
-            do (let* ((length (octets-integer octets at 4 :big-endian t))
-                      (type (octets-text octets (+ at 4) (+ at 8)))
-                      (data (+ at 8)) (end (and length (+ data length))))
-                 (when (or (null length) (> end (length octets)) (> (incf count) 100000)) (return))
-                 (cond ((string= type "IEND") (return))
-                       ((string= type "eXIf")
-                        (push (exif-section (subseq octets data end) 0 "in its eXIf chunk") sections))
-                       ((and (string= type "tIME") (= length 7))
-                        (push (cons "Last changed (tIME)" (png-time-words octets data)) texts))
-                       ((member type '("tEXt" "zTXt" "iTXt") :test #'string=)
-                        ;; a keyword is 79 octets at most: a chunk with none so short is not read
-                        (let ((nul (position 0 octets :start data :end (min end (+ data 80)))))
-                          (cond ((null nul))
-                                ((or (<= budget 0) (>= (length texts) *metadata-most-fields*)) (incf left))
-                                (t (let ((plain (min (- end nul 1) budget)))
-                                     (unless (string= type "zTXt") (decf budget (max 1 plain)))
-                                     (push (cons (octets-text octets data nul)
-                                                 (png-text-value octets type nul end #'inflated plain))
-                                           texts)))))))
-                 (setf at (+ end 4)))))
+      (map-png-chunks
+       (lambda (type data end)
+         (cond ((string= type "eXIf")
+                (push (exif-section (subseq octets data end) 0 "in its eXIf chunk") sections))
+               ((and (string= type "tIME") (= (- end data) 7))
+                (push (cons "Last changed (tIME)" (png-time-words octets data)) texts))
+               ((member type '("tEXt" "zTXt" "iTXt") :test #'string=)
+                ;; a keyword is 79 octets at most: a chunk with none so short is not read
+                (let ((nul (position 0 octets :start data :end (min end (+ data 80)))))
+                  (cond ((null nul))
+                        ((or (<= budget 0) (>= (length texts) *metadata-most-fields*)) (incf left))
+                        (t (let ((plain (min (- end nul 1) budget)))
+                             (unless (string= type "zTXt") (decf budget (max 1 plain)))
+                             (push (cons (octets-text octets data nul)
+                                         (png-text-value octets type nul end #'inflated plain))
+                                   texts))))))
+               ((not (member type *png-standard-chunks* :test #'string=))
+                (let ((kept (assoc type own :test #'string=)))
+                  (if kept
+                      (progn (incf (second kept)) (incf (third kept) (- end data)))
+                      (push (list type 1 (- end data)) own))))))
+       octets))
     (append (nreverse sections)
             (list (metadata-section "PNG text"
                                     (append (remove-if (lambda (f) (search "xmpmeta" (or (cdr f) ""))) (nreverse texts))
@@ -364,7 +381,12 @@ a job, asking it to stop ends the reading between two of them."
                                                              (format nil "~:d text~:p more, past the most read ~
                                                                           (*metadata-most-fields*, ~
                                                                           *png-text-inflated-in-all*)"
-                                                                     left))))))))))
+                                                                     left))))))
+                  (metadata-section "Chunks no standard names"
+                                    (loop for (type count size) in (reverse own)
+                                          collect (cons (escape-controls type)
+                                                        (format nil "~d chunk~:p, ~a~@[: ~a~]" count (octets-words size)
+                                                                (png-own-chunk-words type)))))))))
 
 (defun webp-metadata (octets)
   "The sections of the note for the WebP picture in OCTETS: its EXIF."

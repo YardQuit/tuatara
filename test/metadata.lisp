@@ -1326,3 +1326,24 @@ OPERANDS FROM END), and how many it counted, as two values."
   (false (search "Editing data" (format nil "~{~a~}" (tuatara.defaults::pdf-metadata
                                                         (pdf-with-table '((1 . "<< /Type /Catalog >>"))
                                                                         :trailer "/Root 1 0 R"))))))
+
+(define-test (metadata png-own-chunks)
+  ;; the chunks no standard names, Fireworks' among them: each kind with how many and how large, nothing read
+  (let ((note (format nil "~{~a~}"
+                      (tuatara:octets-metadata
+                       (octets-of #x89 "PNG" 13 10 26 10
+                                  (png-chunk "IHDR" (octets-of (be-octets 1 4) (be-octets 1 4) 8 6 0 0 0))
+                                  (png-chunk "mkBF" (make-array 300 :element-type '(unsigned-byte 8) :initial-element 7))
+                                  (png-chunk "mkTS" (octets-of "layer"))
+                                  (png-chunk "mkTS" (octets-of "layer two"))
+                                  (png-chunk "prVW" (octets-of "x"))
+                                  (png-chunk "abCd" (octets-of "own"))
+                                  (png-chunk "IDAT" (octets-of 0))
+                                  (png-chunk "IEND" (octets-of)))
+                       :png))))
+    (note-has note "* Chunks no standard names")
+    (note-has note "- mkBF :: 1 chunk, 300 B: Adobe Fireworks' own data (its layers, pages and objects), not read")
+    (note-has note "- mkTS :: 2 chunks, 14 B: Adobe Fireworks' own data")
+    (note-has note "- prVW :: 1 chunk, 1 B: Adobe Fireworks' preview of the picture, not read")
+    (note-has note (format nil "- abCd :: 1 chunk, 3 B~%"))
+    (false (search "- IDAT" note))))
