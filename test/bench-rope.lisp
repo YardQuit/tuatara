@@ -19,7 +19,10 @@
 ;;;; seconds, every benchmark then 2.7 times as slow.  A benchmark over its
 ;;;; budget is given a few more passes, the best of all of them kept (RUN-ONE).
 ;;;; Set a budget again from such runs, never by raising it to make a failure
-;;;; pass.
+;;;; pass.  Work that makes much garbage is held to the bytes it makes instead:
+;;;; the 500,000 matches of a common word kept take 60 MB, and the best of seven
+;;;; runs of it took 19 to 62 ms on one machine, pinned or not, from fresh memory
+;;;; touched and collections, while counting them took 9.0 to 10.1 ms.
 
 (in-package #:tuatara.tests)
 
@@ -99,7 +102,15 @@
 (define-benchmark search-forward-rare-27mb (:budget-ms 25 :reps 3)
   (tuatara.syntax:search-forward (big-fixture) "zzz-not-there"))
 
-(define-benchmark search-all-common-27mb-all-cores (:budget-ms 20 :reps 7)
+(define-benchmark search-count-common-27mb-four-threads (:budget-ms 20 :reps 7)
+  ;; the search alone: the 500,000 matches counted, none kept
+  (nth-value 2 (tuatara.syntax:collect-matches
+                (lambda (function from to halt)
+                  (tuatara.syntax:map-literal-matches function (big-fixture) "fox" from to :halt halt))
+                0 (tuatara.text:rope-octet-length (big-fixture)) :threads 4 :keep nil)))
+
+(define-benchmark search-all-common-27mb-four-threads (:most-bytes 62000000 :reps 7)
+  ;; the 500,000 matches kept: held to what they make, 60 MB, as their time is that memory's
   (literal-match-starts (big-fixture) "fox"))
 
 (define-benchmark search-all-common-27mb-one-thread (:reps 3)

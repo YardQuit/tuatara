@@ -35,6 +35,15 @@
     (define-benchmark slow-always (:budget-ms 20 :reps 1) (sleep 0.05))
     (false (run-benchmarks :stream (make-broadcast-stream)))))
 
+(define-test (smoke harness-holds-to-most-bytes)
+  ;; a benchmark within its time but consing past its most bytes is over
+  (let ((tuatara.bench:*benchmarks* '()))
+    (define-benchmark small (:most-bytes 1000000 :reps 1) (make-array 1000 :element-type '(unsigned-byte 8)))
+    (true (run-benchmarks :stream (make-broadcast-stream)))
+    (define-benchmark large (:most-bytes 1000 :reps 1) (make-array 100000 :element-type '(unsigned-byte 8)))
+    (true (search "OVER ITS BYTES" (with-output-to-string (out) (run-benchmarks :stream out))))
+    (false (run-benchmarks :stream (make-broadcast-stream)))))
+
 (define-test (smoke program-options)
   ;; the program's own options, as build/tuatara and tools/tui.lisp take them
   (let ((out (with-output-to-string (*standard-output*)
