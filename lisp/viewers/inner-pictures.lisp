@@ -208,7 +208,9 @@ of pixels right after it."
                ;; where its pixels go on the page, when it says (GIMP's layers do), in pixels
                (let ((x (fraction octets (assoc 286 entries))) (y (fraction octets (assoc 287 entries)))
                      (x-dots (fraction octets (assoc 282 entries))) (y-dots (fraction octets (assoc 283 entries))))
-                 (and x y (if (and x-dots y-dots) (list (round (* x x-dots)) (round (* y y-dots))) (list (round x) (round y))))))
+                 (and x y (if (and x-dots y-dots)
+                              (list (round (* x x-dots)) (round (* y y-dots)))
+                              (list (round x) (round y))))))
              (label (octets entries index)
                (let* ((name-entry (assoc 285 entries))
                       (name (let ((v (and name-entry (value-octets octets name-entry))))
@@ -395,3 +397,142 @@ otherwise."
   (multiple-value-bind (match groups) (cl-ppcre:scan-to-strings "^picture (\\d{1,6})$" search)
     (let ((n (and match (parse-integer (aref groups 0)))))
       (and n (<= 1 n count) (1- n)))))
+
+;;; The editing data a PDF keeps: Illustrator's own file, Photoshop's and others' private data
+
+(defparameter *pdf-editing-applications*
+  '(("/Illustrator" . "Illustrator") ("/AdobePhotoshop" . "Photoshop") ("/Photoshop" . "Photoshop")
+    ("/InDesign" . "InDesign"))
+  "The programs a PDF's page-piece dictionaries (/PieceInfo) are known to name,
+by the name they keep their data under.")
+
+(defparameter *illustrator-data-read* (* 16 1024 1024)
+  "The most octets of Illustrator's own file, kept in a PDF, read to find its
+creator and layers, its parts decoded and put together: the rest is not
+read.")
+
+(defun pdf-private-streams (octets private)
+  "The streams the private data PRIVATE, a dictionary of a PDF in OCTETS,
+names directly, as a list of (KEY . OBJECT), OBJECT a PDF-INDIRECT."
+  (loop for (key . value) in (and (pdf-dictionary-p private) private)
+        for object = (and (pdf-ref-p value) (pdf-find-object octets (second value) (third value)))
+        when (and object (pdf-indirect-get object :stream-start)) collect (cons key object)))
+
+(defun pdf-stream-size (object)
+  "The octets OBJECT's stream takes in its PDF, as written."
+  (- (pdf-indirect-get object :stream-end) (pdf-indirect-get object :stream-start)))
+
+(defun illustrator-file-facts (text)
+  "What TEXT, the start of Illustrator's own file as a PDF keeps it, says of
+itself, as a plist: :CREATOR and :TITLE from its header, :PACKED, the words
+for how the rest is compressed (zlib, Zstandard) or NIL, :PACKED-AT, where
+the compressed part starts, and :LAYERS, the layer names found in what is
+plain, before any compressed part (each \"(NAME) Ln\", at most 50)."
+  (flet ((header (name)
+           (multiple-value-bind (match groups)
+               (cl-ppcre:scan-to-strings (format nil "(?:^|[\\r\\n])%%~a:[ \\t]*([^\\r\\n]{1,200})" name)
+                                         text :end (min (length text) 65536))
+             (and match (escape-controls (string-trim " " (aref groups 0)))))))
+    (let* ((zstd (search "%AI24_ZStandard_Data" text))
+           (zlib (search "%AI12_CompressedData" text)))
+      (list :creator (header "Creator") :title (header "Title")
+            :packed (cond (zstd "Zstandard") (zlib "zlib"))
+            :packed-at (cond (zstd (+ zstd 20)) (zlib (+ zlib 20)))
+            :layers (illustrator-layer-names (if (or zstd zlib) (subseq text 0 (or zstd zlib)) text))))))
+
+(defun illustrator-layer-names (text &optional (start 0))
+  "The names of the layers in TEXT, Illustrator's own file, from START: each
+line \"(NAME) Ln\" names one; at most 50, each once, cut to 200 characters."
+  (let ((names '()))
+    (cl-ppcre:do-register-groups (name) ("\\(([^\\r\\n]{0,200}?)\\) Ln[\\r\\n]" text nil :start start)
+      (pushnew (escape-controls name) names :test #'string=)
+      (when (>= (length names) 50) (return)))
+    (nreverse names)))
+
+(defun illustrator-data-fields (octets private where changed)
+  "The fields of the note for Illustrator's own file kept in the private data
+PRIVATE of the PDF in OCTETS, found WHERE (Page 1, Document), last CHANGED
+\(words, or NIL): how many parts (AIPrivateData1, 2...) and octets, who wrote
+it, how it is compressed, and its layers' names when they could be read
+\(plain, or packed with zlib). NIL when it holds no such parts."
+  (let* ((parts (sort (loop for (key . object) in (pdf-private-streams octets private)
+                            for n = (and (uiop:string-prefix-p "/AIPrivateData" key)
+                                         (parse-integer key :start 14 :junk-allowed t))
+                            when n collect (cons n object))
+                      #'< :key #'car))
+         (data (let ((decoded (loop with total = 0
+                                    for (nil . object) in parts
+                                    while (< total *illustrator-data-read*)
+                                    for d = (pdf-stream-octets (pdf-indirect-get object :value)
+                                                               (subseq octets (pdf-indirect-get object :stream-start)
+                                                                       (pdf-indirect-get object :stream-end))
+                                                               :limit *illustrator-data-read*)
+                                    when d collect d and do (incf total (length d)))))
+                 ;; the parts one after another, as Illustrator wrote its file
+                 (let ((out (make-array (min *illustrator-data-read* (reduce #'+ decoded :key #'length))
+                                        :element-type '(unsigned-byte 8)))
+                       (at 0))
+                   (dolist (d decoded out)
+                     (replace out d :start1 at)
+                     (incf at (length d))))))
+         (text (tuatara.text:octets-latin-1 data))
+         (facts (illustrator-file-facts text))
+         (packed (getf facts :packed))
+         (unpacked (and (equal packed "zlib")
+                        (let ((at (position #x78 data :start (getf facts :packed-at)
+                                                      :end (min (length data) (+ 4 (getf facts :packed-at))))))
+                          (and at (zlib-octets data at (length data) :limit *illustrator-data-read*)))))
+         (layers (remove-duplicates
+                  (append (getf facts :layers)
+                          (and unpacked (illustrator-layer-names (tuatara.text:octets-latin-1 unpacked))))
+                  :test #'string= :from-end t))
+         (version (pdf-resolve octets (pdf-get private "/CreatorVersion"))))
+    (when parts
+      (list (cons where
+                  (format nil "Illustrator's own file, kept for editing: ~d part~:p, ~a~@[, written by ~a~]~
+                               ~:[~*~;, version ~a~]~@[, titled ~a~]~@[; ~a~]~@[; last changed ~a~]"
+                          (length parts) (octets-words (reduce #'+ parts :key (lambda (p) (pdf-stream-size (cdr p)))))
+                          (getf facts :creator) (integerp version) version (getf facts :title)
+                          (cond ((equal packed "Zstandard") "compressed with Zstandard: its layers are not read")
+                                ((and (equal packed "zlib") (null unpacked))
+                                 "compressed with zlib, which could not be undone: its layers are not read"))
+                          changed))
+            (cons (format nil "~a, Illustrator's layers" where)
+                  (and layers (format nil "~{\"~a\"~^, ~}" layers)))))))
+
+(defun pdf-editing-data-fields (octets)
+  "The fields of the note for the editing data the PDF in OCTETS keeps in its
+page-piece dictionaries (/PieceInfo), of the document and of each page: for
+each program, its name, when it last changed the data, and how many streams
+and octets its private data takes; Illustrator's own file read further
+\(ILLUSTRATOR-DATA-FIELDS). Nothing of it is run."
+  (let ((fields '()))
+    (labels ((piece (dictionary where)
+               (let ((info (pdf-resolve octets (pdf-get dictionary "/PieceInfo"))))
+                 (loop for (key . value) in (and (pdf-dictionary-p info) info)
+                       for data = (pdf-resolve octets value)
+                       for private = (pdf-resolve octets (pdf-get data "/Private"))
+                       for program = (or (cdr (assoc key *pdf-editing-applications* :test #'string=))
+                                         (escape-controls (subseq key 1 (min (length key) 64))))
+                       for changed = (let ((d (pdf-resolve octets (pdf-get data "/LastModified"))))
+                                       (and (stringp d) (pdf-date-words d)))
+                       for streams = (pdf-private-streams octets private)
+                       for illustrator = (and (string= key "/Illustrator")
+                                              (illustrator-data-fields octets private where changed))
+                       do (if illustrator
+                              (setf fields (revappend illustrator fields))
+                              (push (cons where
+                                          (format nil "~a's private data: ~d stream~:p, ~a, not read~
+                                                       ~@[; last changed ~a~]"
+                                                  program (length streams)
+                                                  (octets-words (reduce #'+ streams
+                                                                        :key (lambda (s) (pdf-stream-size (cdr s)))))
+                                                  changed))
+                                    fields))))))
+      (piece (pdf-resolve octets (pdf-get (pdf-trailer octets) "/Root")) "Document")
+      (let ((n 0))
+        (map-pdf-pages (lambda (page media crop turn)
+                         (declare (ignore media crop turn))
+                         (piece page (format nil "Page ~d" (incf n))))
+                       octets)))
+    (nreverse fields)))

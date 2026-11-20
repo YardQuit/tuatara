@@ -650,7 +650,8 @@ what it says of them: what in the file could act, none of it run.")
                                (and acts
                                     (format nil
                                             "~{~a~^, ~} (none run here)"
-                                            (remove-duplicates acts :test #'string= :from-end t))))))))))
+                                            (remove-duplicates acts :test #'string= :from-end t)))))))
+          (metadata-section "Editing data kept inside it" (pdf-editing-data-fields octets)))))
 
 ;;; Sound: MP3's ID3 tags, FLAC's comments
 

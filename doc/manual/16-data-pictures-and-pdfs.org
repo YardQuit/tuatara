@@ -559,6 +559,20 @@ one to the next, and ~RET~ or ~s~ saves the one on the line. Tuatara asks where
 to put it and writes it there as it is. It never opens or runs an embedded
 file. If the PDF has none, the echo area says so.
 
+A PDF saved by Illustrator, Photoshop or InDesign with their editing kept can
+hold more than its pages: the program's own data, so that it can open the
+file again as it was. Illustrator keeps a whole Illustrator file in it,
+layers and all, that a reader of the PDF never sees. ~M-x show-file-metadata~
+lists this data under =Editing data kept inside it=, page by page: which
+program left it, when it last changed it, and how large it is. For
+Illustrator it also gives the version that wrote it, the file's title and
+the names of its layers. A layer that does not show on the page, or a title
+that differs from the PDF's, can tell you the page was made from something
+else. Newer versions of Illustrator compress their file with Zstandard,
+which Tuatara does not read yet: the note then says its layers are not
+read. Nothing of this data is
+drawn or run.
+
 To see the raw octets of a PDF, run ~M-x hex-mode~ in its pages.
 
 *** The LaTeX line of a page
@@ -668,8 +682,9 @@ of file:
   pages: each picture with its size and where it lies in the file, and
   whether it looks the same as the one a viewer shows or how much of it
   differs;
-- a PDF: the title, the author, the programs that made it, the dates, and
-  how many times it was saved;
+- a PDF: the title, the author, the programs that made it, the dates, how
+  many times it was saved, and the editing data Illustrator, Photoshop or
+  InDesign kept in it;
 - a Word, Excel or PowerPoint file: the author, the last person to save it,
   and the dates;
 - a sound or video file: its tags, such as the title and artist, and its

@@ -1515,32 +1515,30 @@ order; NIL when it is no rectangle with some width and height."
         (and (/= x1 x2) (/= y1 y2)
              (list (min x1 x2) (min y1 y2) (max x1 x2) (max y1 y2)))))))
 
-(defun pdf-page-boxes (octets &key (most 100000))
-  "The pages of the PDF in OCTETS in their order, as a vector of (MEDIA CROP
-TURN) for each: MEDIA, the page's media box, and CROP, the part of it shown
-\(its crop box within the media box, the media box when it gives none), each
-\(LEFT BOTTOM RIGHT TOP) in points; TURN, the degrees it is turned clockwise
-when shown, 0, 90, 180 or 270. Each is read from the page, or the page tree
-above it when the page leaves it out. At most MOST pages, the tree held to 64
-levels and each node read once; NIL when the PDF's page tree cannot be read.
-In a job, it ends when the job is asked to stop."
+(defun map-pdf-pages (function octets &key (most 100000))
+  "Call FUNCTION on each page of the PDF in OCTETS in their order, with the
+page's dictionary and its MEDIA box, CROP box and TURN as the page or the
+page tree above it gives them (each NIL when none does): at most MOST pages,
+the tree held to 64 levels and each node read once. Returns the number of
+pages, or NIL when the PDF's page tree cannot be read. In a job, it ends
+when the job is asked to stop."
   (with-pdf-objects-found
     (let* ((*pdf-most-objects-found* (+ 64 (* 2 most)))
            (*pdf-item-limit* (max *pdf-item-limit* most))
            (trailer (pdf-trailer octets))
            (root (pdf-resolve octets (pdf-get trailer "/Root")))
-           (pages (make-array 0 :adjustable t :fill-pointer 0))
+           (count 0)
            (seen (make-hash-table))
            (stack (list (list (pdf-get root "/Pages") nil nil 0 0)))
            (popped 0))
-      (declare (type fixnum popped))
+      (declare (type fixnum popped count))
       (flet ((unseen-p (value)
                ;; each node once, told by its number before it is read
                (let ((number (pdf-ref-p value)))
                  (or (null number)
                      (and (not (gethash number seen)) (setf (gethash number seen) t))))))
         (unseen-p (first (first stack)))
-        (loop while (and stack (< (length pages) most))
+        (loop while (and stack (< count most))
               do (when (zerop (logand (incf popped) 255)) (tuatara.runtime:job-check-stop))
                  (destructuring-bind (value media crop turn depth) (pop stack)
                    (let ((node (pdf-resolve octets value)))
@@ -1554,17 +1552,34 @@ In a job, it ends when the job is asked to stop."
                              (dolist (kid (reverse (pdf-array-items kids)))
                                (when (unseen-p kid)
                                  (push (list kid media crop turn (1+ depth)) stack)))
-                             (when media
-                               (vector-push-extend
-                                (list media
-                                      (if crop
-                                          (destructuring-bind (l b r tp) crop
-                                            (destructuring-bind (ml mb mr mt) media
-                                              ;; a crop box wholly outside the media box: the media box
-                                              (if (and (< (max l ml) (min r mr)) (< (max b mb) (min tp mt)))
-                                                  (list (max l ml) (max b mb) (min r mr) (min tp mt))
-                                                  media)))
-                                          media)
-                                      turn)
-                                pages))))))))
-        (and (plusp (length pages)) (coerce pages 'simple-vector))))))
+                             (progn (incf count)
+                                    (funcall function node media crop turn))))))))
+        (and (plusp count) count)))))
+
+(defun pdf-page-boxes (octets &key (most 100000))
+  "The pages of the PDF in OCTETS in their order, as a vector of (MEDIA CROP
+TURN) for each: MEDIA, the page's media box, and CROP, the part of it shown
+\(its crop box within the media box, the media box when it gives none), each
+\(LEFT BOTTOM RIGHT TOP) in points; TURN, the degrees it is turned clockwise
+when shown, 0, 90, 180 or 270. Each is read from the page, or the page tree
+above it when the page leaves it out (MAP-PDF-PAGES, at most MOST pages); a
+page of no media box is left out. NIL when the PDF's page tree cannot be
+read, or no page has a media box."
+  (let ((pages (make-array 0 :adjustable t :fill-pointer 0)))
+    (map-pdf-pages (lambda (node media crop turn)
+                     (declare (ignore node))
+                     (when media
+                       (vector-push-extend
+                        (list media
+                              (if crop
+                                  (destructuring-bind (l b r tp) crop
+                                    (destructuring-bind (ml mb mr mt) media
+                                      ;; a crop box wholly outside the media box: the media box
+                                      (if (and (< (max l ml) (min r mr)) (< (max b mb) (min tp mt)))
+                                          (list (max l ml) (max b mb) (min r mr) (min tp mt))
+                                          media)))
+                                  media)
+                              (or turn 0))
+                        pages)))
+                   octets :most most)
+    (and (plusp (length pages)) (coerce pages 'simple-vector))))

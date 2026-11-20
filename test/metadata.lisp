@@ -1280,3 +1280,49 @@ OPERANDS FROM END), and how many it counted, as two values."
     (let ((file (merge-pathnames "one.tif" dir)))
       (uiop:run-program (list "magick" "-size" "8x8" "xc:#336699" (namestring file)))
       (false (search "Pictures inside" (metadata-of (namestring file)))))))
+
+(defun pdf-stream-object (text &optional (dictionary ""))
+  "The body of a PDF object holding TEXT as its stream, DICTIONARY's entries besides its /Length."
+  (format nil "<< /Length ~d ~a >>~%stream~%~a~%endstream" (length text) dictionary text))
+
+(define-test (metadata pdf-editing-data)
+  ;; what Illustrator, Photoshop and others keep in a page's /PieceInfo: named and measured, Illustrator's own
+  ;; file read for its creator, title and layers where it is plain or packed with zlib, never run
+  (let* ((cr (string #\Return))
+         (plain (format nil "%!PS-Adobe-3.0~a%%Creator: Adobe Illustrator(R) 24.0~a%%Title: (poster.ai)~a~
+                             %AI5_FileFormat 14.0~a%AI5_BeginLayer~a1 1 1 1 0 0 1 0 79 128 255 0 50 Lb~a~
+                             (Background) Ln~a%AI5_EndLayer--~a%AI5_BeginLayer~a(Hidden text) Ln~a"
+                        cr cr cr cr cr cr cr cr cr cr))
+         (packed (tuatara.io::zlib-deflate (octets-of (format nil "%AI5_BeginLayer~a(Packed layer) Ln~a" cr cr))))
+         (hex (format nil "~a~{~2,'0x~}>" (tuatara.text:octets-hex (octets-of (format nil "%!PS-Adobe-3.0~a%AI12_CompressedData" cr)))
+                      (coerce packed 'list)))
+         (pdf (pdf-with-table
+               (list '(1 . "<< /Type /Catalog /Pages 2 0 R >>")
+                     '(2 . "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>")
+                     '(3 . "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /PieceInfo << /Illustrator 7 0 R >> >>")
+                     '(4 . "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /PieceInfo << /AdobePhotoshop << /LastModified (D:20201010120000Z) /Private << /Data 12 0 R >> >> >> >>")
+                     '(5 . "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /PieceInfo << /Illustrator << /Private << /AIPrivateData1 13 0 R >> >> >> >>")
+                     '(6 . "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /PieceInfo << /Illustrator << /Private << /AIPrivateData1 14 0 R >> >> >> >>")
+                     '(7 . "<< /LastModified (D:20211111090000Z) /Private 8 0 R >>")
+                     '(8 . "<< /CreatorVersion 24 /NumBlock 2 /AIPrivateData2 11 0 R /AIPrivateData1 10 0 R >>")
+                     ;; the file's two parts, one name cut between them
+                     (cons 10 (pdf-stream-object (subseq plain 0 200)))
+                     (cons 11 (pdf-stream-object (subseq plain 200)))
+                     (cons 12 (pdf-stream-object "8BIM private"))
+                     (cons 13 (pdf-stream-object (format nil "%!PS-Adobe-3.0~a%AI24_ZStandard_Data(Unread) Ln~a" cr cr)))
+                     (cons 14 (pdf-stream-object hex "/Filter /ASCIIHexDecode")))
+               :trailer "/Root 1 0 R"))
+         (note (format nil "~{~a~}" (tuatara.defaults::pdf-metadata pdf))))
+    (note-has note "* Editing data kept inside it")
+    (note-has note "- Page 1 :: Illustrator's own file, kept for editing: 2 parts,")
+    (note-has note "written by Adobe Illustrator(R) 24.0, version 24, titled (poster.ai); last changed 2021-11-11")
+    (note-has note "- Page 1, Illustrator's layers :: \"Background\", \"Hidden text\"")
+    (note-has note "- Page 2 :: Photoshop's private data: 1 stream, 12 B, not read; last changed 2020-10-10")
+    (note-has note "- Page 3 :: Illustrator's own file, kept for editing: 1 part,")
+    (note-has note "compressed with Zstandard: its layers are not read")
+    (false (search "Unread" note))
+    (note-has note (format nil "- Page 4, Illustrator's layers :: \"Packed layer\"~%")))
+  ;; a PDF keeping none: no section
+  (false (search "Editing data" (format nil "~{~a~}" (tuatara.defaults::pdf-metadata
+                                                        (pdf-with-table '((1 . "<< /Type /Catalog >>"))
+                                                                        :trailer "/Root 1 0 R"))))))
