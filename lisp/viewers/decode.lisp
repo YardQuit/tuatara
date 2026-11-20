@@ -972,19 +972,22 @@ its car turns true; NIL, NIL then. DENSITY, dots an inch, draws a drawing
                            (format nil ", not shown: ~a" (sandbox-outcome-words outcome said :label program)))))))))))
 
 (defun decode-picture (octets kind width height
-                       &key (cancel (and tuatara.runtime:*job* (tuatara.runtime:job-cancel tuatara.runtime:*job*))))
+                       &key (cancel (and tuatara.runtime:*job* (tuatara.runtime:job-cancel tuatara.runtime:*job*)))
+                         enlarge)
   "The picture OCTETS hold, of KIND (TUATARA.IO:OCTETS-KIND's keyword: :jpeg,
 :png, :tiff, :jxl, :jp2 for a JPEG 2000 file or :j2k for a bare JPEG 2000
 codestream, either read as both, as a PDF's /JPXDecode picture is one or the
 other...), turned into pixels in the sandbox as DECODE-IMAGE turns a file's. It
-is no larger than WIDTH by HEIGHT pixels. Two values come back: a
+is no larger than WIDTH by HEIGHT pixels (with ENLARGE, as large as fits in
+them). Two values come back: a
 TUATARA.FRONTEND:IMAGE, NIL when it could not be made, and notes saying why.
 For a package reading pictures it finds in other files: only plain pixels come
 back, checked, the picture itself never decoded in the editor. Waits for the
 program: call it from a thread working in the background; in a job, stopping
 the job (CANCEL, the job's own by default) stops it too."
   (tuatara.io:call-with-memory-file "tuatara-picture" octets
-                                    (lambda (fd) (decode-image fd kind width height :cancel cancel))))
+                                    (lambda (fd) (decode-image fd kind width height :cancel cancel
+                                                                                    :enlarge enlarge))))
 
 (defun sandboxed-mode-line (editor buffer)
   "What the mode line of a buffer adds when what it shows was made by a

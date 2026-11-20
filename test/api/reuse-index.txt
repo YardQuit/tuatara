@@ -3929,7 +3929,7 @@ tuatara.defaults:inner-picture-p (internal)  function  True when OBJECT is an IN
 tuatara.defaults:inner-picture-place (internal)  function  Where INNER-PICTURE lies in its file, in words.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:inner-picture-region (internal)  function  Where INNER-PICTURE lies on the picture shown, (X Y) in pixels, or NIL.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:inner-picture-search-index (internal)  function  The index from 0 of the picture SEARCH names, the part after :: of a link to a file (picture 2 names the second), when it is among COUNT pictures; NIL otherwise.  lisp/viewers/inner-pictures.lisp
-tuatara.defaults:inner-picture-source (internal)  function  How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, or NIL.  lisp/viewers/inner-pictures.lisp
+tuatara.defaults:inner-picture-source (internal)  function  How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, (:OCTETS START LENGTH KIND), a picture kept in its file's octets, or NIL.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:inner-picture-width (internal)  function  The width of INNER-PICTURE in pixels, or NIL.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:inner-picture-words (internal)  function  What PICTURE is and its size, in words: page 2 of 3, 32 × 24.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:inner-pictures (internal)  function  The pictures the file open as file descriptor (FD), whose first octets are HEAD, of KIND (TUATARA.IO:OCTETS-KIND's keyword) and SIZE octets, keeps, the one a viewer shows first, as INNER-PICTURE records; NIL for a kind not read so or a file keeping one picture only.  lisp/viewers/inner-pictures.lisp
@@ -4149,6 +4149,7 @@ tuatara.defaults:journal-read-day (internal)  function  Ask for a date as Org's 
 tuatara.defaults:journal-same-interval-p (internal)  function  True when the day numbers ONE and OTHER fall in one journal entry's time (*JOURNAL-INTERVAL*).  lisp/journal/journal.lisp
 tuatara.defaults:journal-time-of (internal)  function  A universal time on the day DAY at the time of day it is now.  lisp/journal/journal.lisp
 tuatara.defaults:journal-title (internal)  function  The title of a new journal entry at TIME, as *JOURNAL-TITLE-FORMAT* says; asked for when it is NIL.  lisp/journal/journal.lisp
+tuatara.defaults:jpeg-inner-pictures (internal)  function  The pictures of the JPEG open as file descriptor (FD), whose first octets are HEAD, of SIZE octets: the picture itself, then its EXIF thumbnail, Photoshop's thumbnail (resource 1036, or 1033) and the pictures its MPF index lists, each found in the segments before its picture data (*JPEG-SEGMENTS-READ* octets at most), checked to lie within the file and to begin as a JPEG does, at most *INNER-PICTURES-MOST* of them.  lisp/viewers/inner-pictures.lisp
 tuatara.defaults:jpeg-metadata (internal)  function  The sections of the note for the JPEG picture in OCTETS: its EXIF and its comments.  lisp/viewers/metadata.lisp
 tuatara.defaults:jq-mode (internal)  function  Switch the current buffer to jq-mode.  lisp/modes/more-languages-programming.lisp
 tuatara.defaults:js-jsx-mode (internal)  function  Switch the current buffer to js-jsx-mode.  lisp/modes/more-languages-programming.lisp

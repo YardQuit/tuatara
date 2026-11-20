@@ -3,7 +3,9 @@
 ;;;;
 ;;;; A picture file may keep more pictures than the one a viewer shows: a
 ;;;; TIFF's further pages (a scanner's other sheets, GIMP's layers, a smaller
-;;;; copy, a mask) and the layers Photoshop keeps in it. Their structure is read here, by Tuatara alone, as the
+;;;; copy, a mask) and the layers Photoshop keeps in it; a JPEG's thumbnails
+;;;; (EXIF's, Photoshop's) and the pictures its MPF index lists (larger
+;;;; previews, a phone's gain and depth maps). Their structure is read here, by Tuatara alone, as the
 ;;;; metadata is: small reads, every offset checked against the file, every
 ;;;; structure held to a count. Their pixels are drawn in the sandbox
 ;;;; (decode.lisp). M-x show-file-metadata lists them in a section "Pictures
@@ -33,13 +35,16 @@ drawing them small.")
   "One picture a file keeps: LABEL, what it is in words (page 2 of 3, a
 smaller copy, its name); PLACE, where it lies in the file in words; its
 WIDTH and HEIGHT in pixels (NIL when not said); SOURCE, how it is drawn,
-\(:FRAME N), the file's own picture N, from 0, or NIL when it has no pixels;
+\(:FRAME N), the file's own picture N, from 0, (:OCTETS START LENGTH KIND),
+a picture of KIND kept in the file's octets from START, or NIL when it has
+no pixels;
 REGION, (X Y), where it lies on the picture shown, for a layer."
   (label nil :documentation "What INNER-PICTURE is, in words.")
   (place nil :documentation "Where INNER-PICTURE lies in its file, in words.")
   (width nil :documentation "The width of INNER-PICTURE in pixels, or NIL.")
   (height nil :documentation "The height of INNER-PICTURE in pixels, or NIL.")
-  (source nil :documentation "How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, or NIL.")
+  (source nil :documentation "How INNER-PICTURE is drawn: (:FRAME N), its file's picture N from 0, (:OCTETS START
+LENGTH KIND), a picture kept in its file's octets, or NIL.")
   (region nil :documentation "Where INNER-PICTURE lies on the picture shown, (X Y) in pixels, or NIL."))
 
 ;;; Photoshop's layers, kept in a TIFF (tag 37724)
@@ -258,6 +263,107 @@ of pixels right after it."
                    (setf at next)))))
     (nreverse pictures)))
 
+;;; JPEG: thumbnails and the MPF index
+
+(defparameter *jpeg-segments-read* (* 1024 1024)
+  "The most octets at the start of a JPEG read for the segments before its
+picture, where its thumbnails and its MPF index are kept.")
+
+(defparameter *jpeg-inner-largest* (* 64 1024 1024)
+  "The most octets one picture kept inside a JPEG may take to be listed and
+drawn: one claiming more is left out.")
+
+(defparameter *mpf-types*
+  '((#x010001 . "a larger preview (VGA)") (#x010002 . "a larger preview (full HD)")
+    (#x020001 . "a frame of a panorama") (#x020002 . "a view for 3-D (disparity)")
+    (#x020003 . "a view from another angle") (#x030000 . "a picture of its own")
+    (#x000000 . "a picture of no stated kind (phones keep gain and depth maps so)"))
+  "What a picture of a JPEG's MPF index is, by its type, as the Multi-Picture
+Format standard (CIPA DC-007) names them.")
+
+(defun jpeg-inner-pictures (fd head size)
+  "The pictures of the JPEG open as file descriptor (FD), whose first octets
+are HEAD, of SIZE octets: the picture itself, then its EXIF thumbnail,
+Photoshop's thumbnail (resource 1036, or 1033) and the pictures its MPF
+index lists, each found in the segments before its picture data
+\(*JPEG-SEGMENTS-READ* octets at most), checked to lie within the file and
+to begin as a JPEG does, at most *INNER-PICTURES-MOST* of them."
+  (let* ((octets (tuatara.io:read-fd-exactly fd (min size *jpeg-segments-read*) 0))
+         (pictures (list (multiple-value-bind (width height) (tuatara.io:octets-picture-size head)
+                           (make-inner-picture "the picture itself" "from octet 0" width height (list :frame 0))))))
+    (labels ((kept (label place at length)
+               ;; a JPEG kept at AT, LENGTH octets, when it is there
+               (when (and at length (< (length pictures) *inner-pictures-most*) (< 1 length *jpeg-inner-largest*)
+                          (<= (+ at length) size))
+                 (let ((start (tuatara.io:read-fd-exactly fd (min length 65536) at)))
+                   (when (and start (tuatara.io:octets-at-p start '(#xFF #xD8 #xFF)))
+                     (multiple-value-bind (width height) (tuatara.io:octets-picture-size start)
+                       (push (make-inner-picture label
+                                                 (format nil "~a, from octet ~:d, ~a" place at (octets-words length))
+                                                 width height (list :octets at length :jpeg))
+                             pictures))))))
+             (int (at n big) (tuatara.io:octets-integer octets at n :big-endian big))
+             (thumbnail-tag (fields tag)
+               (third (find-if (lambda (f) (and (eq (first f) :thumbnail) (= (second f) tag))) fields)))
+             (exif (start end)
+               (let* ((base (+ start 6))
+                      (fields (exif-read (subseq octets base end) 0))
+                      (offset (thumbnail-tag fields #x0201))
+                      (length (thumbnail-tag fields #x0202)))
+                 (when (and (consp offset) (consp length) (integerp (first offset)) (integerp (first length))
+                            (<= (+ base (first offset) (first length)) end))
+                   (kept "its EXIF thumbnail" "in its APP1 segment" (+ base (first offset)) (first length)))))
+             (photoshop (start end)
+               ;; the image resources after "Photoshop 3.0": 8BIM, an id, a name, a size, the data
+               (let ((at (+ start 14)) (count 0))
+                 (loop while (and (<= (+ at 12) end) (< (incf count) 1000) (tuatara.io:octets-at-p octets "8BIM" at))
+                       do (let* ((id (int (+ at 4) 2 t))
+                                 (name (aref octets (+ at 6)))
+                                 (size-at (+ at 6 (* 2 (ceiling (1+ name) 2))))
+                                 (size (and (<= (+ size-at 4) end) (int size-at 4 t)))
+                                 (data (+ size-at 4)))
+                            (unless (and size (<= (+ data size) end)) (return))
+                            (when (and (member id '(1033 1036)) (> size 28) (eql (int data 4 t) 1))
+                              (kept "Photoshop's thumbnail" (format nil "in its APP13 segment (resource ~d)" id)
+                                    (+ data 28) (- size 28)))
+                            (setf at (+ data size (mod size 2)))))))
+             (mpf (start end)
+               ;; the MP index: a TIFF structure after "MPF", its offsets from that structure's start
+               (let* ((base (+ start 4))
+                      (index (subseq octets base end))
+                      (big (tuatara.io:octets-at-p index "MM"))
+                      (entry (and (or big (tuatara.io:octets-at-p index "II"))
+                                  (assoc #xB002 (tuatara.io:tiff-entries index :most 64 :little (not big)))))
+                      (count (and entry (floor (third entry) 16)))
+                      (at (and entry (> (third entry) 4) (tuatara.io:octets-integer index (fifth entry) 4
+                                                                                    :big-endian big))))
+                 (when at
+                   (loop for i below (min count 64)
+                         for e = (+ at (* 16 i))
+                         for attribute = (tuatara.io:octets-integer index e 4 :big-endian big)
+                         for length = (tuatara.io:octets-integer index (+ e 4) 4 :big-endian big)
+                         for offset = (tuatara.io:octets-integer index (+ e 8) 4 :big-endian big)
+                         while (and attribute length offset)
+                         ;; the first, at 0, is the picture itself
+                         when (plusp offset)
+                           do (let ((type (logand attribute #xFFFFFF)))
+                                (kept (or (cdr (assoc type *mpf-types*))
+                                          (format nil "a picture of MPF type 0x~6,'0x" type))
+                                      (format nil "listed in its MPF index (APP2), number ~d" (1+ i))
+                                      (+ base offset) length)))))))
+      (when octets
+        (tuatara.io:jpeg-segments
+         octets (lambda (marker start end)
+                  (cond ((and (= marker #xE1) (tuatara.io:octets-at-p octets (format nil "Exif~c~c" #\Nul #\Nul) start))
+                         (exif start end))
+                        ((and (= marker #xED)
+                              (tuatara.io:octets-at-p octets (format nil "Photoshop 3.0~c" #\Nul) start))
+                         (photoshop start end))
+                        ((and (= marker #xE2) (tuatara.io:octets-at-p octets (format nil "MPF~c" #\Nul) start))
+                         (mpf start end)))
+                  nil))))
+    (nreverse pictures)))
+
 (defun inner-pictures (fd head kind &key (size (tuatara.io:fd-size fd)))
   "The pictures the file open as file descriptor (FD), whose first octets are
 HEAD, of KIND (TUATARA.IO:OCTETS-KIND's keyword) and SIZE octets, keeps, the
@@ -267,7 +373,8 @@ reads, nothing in the file run."
   (let ((pictures (and head size
                        (ignoring-errors-reported ("reading the pictures inside a file")
                          (case kind
-                           (:tiff (and (tuatara.io:tiff-octets-p head) (tiff-inner-pictures fd head size))))))))
+                           (:tiff (and (tuatara.io:tiff-octets-p head) (tiff-inner-pictures fd head size)))
+                           (:jpeg (jpeg-inner-pictures fd head size)))))))
     (and (rest pictures) pictures)))
 
 ;;; Drawing and comparing
@@ -279,9 +386,15 @@ fits): two values, as DECODE-IMAGE gives them. A picture of no pixels (an
 empty layer) is said not to be drawn."
   (if (null (inner-picture-source picture))
       (values nil (list (cons ", not drawn: it has no pixels" :comment)))
-      (destructuring-bind (how n) (inner-picture-source picture)
+      (destructuring-bind (how &optional n &rest more) (inner-picture-source picture)
+        (declare (ignore more))
         (ecase how
-          (:frame (decode-image fd kind width height :cancel cancel :enlarge enlarge :frame n))))))
+          (:frame (decode-image fd kind width height :cancel cancel :enlarge enlarge :frame n))
+          (:octets (destructuring-bind (start length kind) (rest (inner-picture-source picture))
+                     (let ((octets (tuatara.io:read-fd-exactly fd length start)))
+                       (if octets
+                           (decode-picture octets kind width height :cancel cancel :enlarge enlarge)
+                           (values nil (list (cons ", not drawn: it could not be read" :comment)))))))))))
 
 (defun images-difference (a b &optional at)
   "The share, from 0 to 1, of the pixels of the picture B whose colour
@@ -372,7 +485,7 @@ PATH, of KIND, open as file descriptor (FD), of SIZE octets, when it keeps
 more pictures than the one shown: each with what it is, its size, where it
 lies, how it compares with the picture shown, and a link that shows it in
 the image's view (\\`RET' on it). NIL when it keeps one picture only."
-  (let* ((head (and (member kind '(:tiff)) (tuatara.io:read-fd-start fd path size 4096)))
+  (let* ((head (and (member kind '(:tiff :jpeg)) (tuatara.io:read-fd-start fd path size 4096)))
          (pictures (and head (inner-pictures fd head kind :size size))))
     (when pictures
       (let ((compared (inner-pictures-compared fd kind pictures

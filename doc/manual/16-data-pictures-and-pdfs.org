@@ -420,8 +420,13 @@ sandbox.
 Some picture files hold more than one picture. A TIFF can have several pages:
 a scanner writes each sheet as a page, GIMP saves each layer as one, and many
 programs add a smaller copy or a mask. Photoshop can keep its layers in a TIFF
-too, beside the picture of them all put together. A viewer shows the first
-page only, so the others are easy to miss.
+too, beside the picture of them all put together. A JPEG can carry small
+copies of itself: the thumbnail the camera wrote and one Photoshop wrote. A
+photo from a phone often keeps more pictures after its own, such as a
+larger preview or the maps its camera uses for brightness (gain maps) and
+depth. A viewer shows the first picture only, so the others are easy to
+miss. A thumbnail is not always updated when the photo is changed, so it
+can show the photo as it was.
 
 When the file holds more than one, the line above the picture says which one
 you see, for example =picture 1 of 3: page 1 of 3, 64 × 48=. ~n~ shows the
