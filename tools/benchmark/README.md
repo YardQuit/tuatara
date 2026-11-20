@@ -11,7 +11,8 @@ files. Anyone can run it again and get the same files. It measures:
 - how often an editor freezes, meaning a key takes over a second.
 
 The files are made up from a fixed seed by `make-data.py`: a CSV table of
-2 GiB, a gigantic CSV table of 11 GiB, a log of 1 GiB, an Org note of 10 MiB
+2 GiB, a gigantic CSV table of 11 GiB (two times, the second as seconds, a
+sentence and a token in each row), a log of 1 GiB, an Org note of 10 MiB
 and a JSON file of 20 MiB on one line. The gigantic table is not far below
 the 16 GiB of memory each editor is given: an editor that reads a whole file
 into memory may not open it, and the report says so. The same sizes and seed

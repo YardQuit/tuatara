@@ -23,6 +23,7 @@ for when it opens the file. A file already there with the size and seed asked fo
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -33,7 +34,7 @@ MIB = 1024 * 1024
 NEEDLE = "needle-kq7vz"
 FOUND = "FOUNDIT"
 FOUND_RUN = " ".join([FOUND] * 4)
-FORMAT = 2
+FORMAT = 3
 SYLLABLES = ["ka", "lo", "mi", "ra", "te", "vo", "su", "ne", "pa", "di", "ho", "wu", "ze", "bi", "fo", "gu"]
 STATUSES = ["ok", "late", "missing", "checked", "repaired", "estimated"]
 LEVELS = ["INFO", "INFO", "INFO", "INFO", "DEBUG", "DEBUG", "WARN", "ERROR"]
@@ -111,6 +112,38 @@ def make_csv(path, size, rng):
 
     write_lines(writer, size, block, target)
     return writer, "row_id,recorded_at,station"
+
+
+TOKEN_CHARACTERS = bytes(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[i % 62] for i in range(256))
+SENTENCE = "The quick brown fox jumps over the lazy dog."
+FIRST_SECOND = 946684800      # 2000-01-01T00:00:00Z
+LAST_SECOND = 1767225600      # 2026-01-01T00:00:00Z
+
+
+def make_gigantic(path, size, rng):
+    """Write a CSV table of about SIZE bytes to PATH, five fields a row: a time, a later time
+    (at most an hour later), the later time as seconds since 1970, a sentence and a token of 16
+    letters and digits. Return its writer and a piece of its first line."""
+    writer = Writer(path)
+    writer.write("DATE-1,DATE-2,DATE-3,DATA-1,DATA-2\n")
+    stamp = datetime.datetime.fromtimestamp
+    utc = datetime.timezone.utc
+
+    def block(_):
+        tokens = rng.randbytes(16 * 4096).translate(TOKEN_CHARACTERS).decode("ascii")
+        lines = []
+        for k in range(4096):
+            first = rng.randrange(FIRST_SECOND, LAST_SECOND)
+            second = first + rng.randrange(1, 3601)
+            lines.append(f"{stamp(first, utc):%Y-%m-%dT%H:%M:%SZ},{stamp(second, utc):%Y-%m-%dT%H:%M:%SZ},"
+                         f"{second},{SENTENCE},{tokens[16 * k:16 * k + 16]}\n")
+        return "".join(lines)
+
+    def target():
+        return f"2026-06-15T12:00:00Z,2026-06-15T12:30:00Z,1781526600,{FOUND_RUN} {NEEDLE} {FOUND_RUN},{FOUND}\n"
+
+    write_lines(writer, size, block, target)
+    return writer, "DATE-1,DATE-2,DATE-3"
 
 
 def make_log(path, size, rng):
@@ -215,7 +248,7 @@ def make_json(path, size, rng):
     return writer, '"source":"generated'
 
 
-KINDS = {"csv": ("table.csv", make_csv), "huge": ("gigantic.csv", make_csv), "log": ("service.log", make_log),
+KINDS = {"csv": ("table.csv", make_csv), "huge": ("gigantic.csv", make_gigantic), "log": ("service.log", make_log),
          "org": ("notes.org", make_org), "json": ("records.json", make_json)}
 
 
