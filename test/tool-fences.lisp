@@ -258,3 +258,22 @@
     (true (search "'latex': {'definitions':" source)))
   (is equal '("//" "//") (multiple-value-list (tuatara.modes:mode-comment-syntax
                                                 (make-instance 'tuatara.defaults::dbml-mode)))))
+
+(define-test (tools test-keyrings-leave-no-socket-directory)
+  ;; a keyring made in a test directory has its agent stopped and its socket directory under /run/user taken away
+  (if (or (null (tuatara.defaults::gpg-path)) (null (tuatara.defaults::gpgconf-path)))
+      (skip "gpg is not installed here" (true nil))
+      (with-test-directory (dir)
+        (let ((home (namestring (ensure-directories-exist (merge-pathnames "keyring/" dir)))))
+          (sb-posix:chmod home #o700)
+          (flet ((gpgconf (&rest arguments)
+                   (string-trim '(#\Newline #\Space)
+                                (uiop:run-program (list* "gpgconf" "--homedir" home arguments)
+                                                  :output :string :ignore-error-status t :error-output nil))))
+            (uiop:run-program (list "gpg" "--homedir" home "--batch" "--passphrase" "" "--quick-gen-key"
+                                    "Tui Haast <tui@example.org>" "ed25519" "sign" "never")
+                              :ignore-error-status t :output nil :error-output nil)
+            (let ((sockets (gpgconf "--list-dirs" "socketdir")))
+              (true (uiop:directory-exists-p (uiop:ensure-directory-pathname sockets)) "~a" sockets)
+              (stop-gnupg-homes-under dir)
+              (false (uiop:directory-exists-p (uiop:ensure-directory-pathname sockets)) "~a" sockets)))))))

@@ -188,7 +188,9 @@ leave would be, and fails the run, which names it. Lisp's own file functions,
 the calls of =sb-posix= that take a name and the editor's own (=openat=,
 =statx= and the rest in =src/io/=) are watched; programs the tests start are
 not, and keep away from your files only through the environment the fence gives
-them (=HOME=, the XDG directories, =GNUPGHOME=).
+them (=HOME=, the XDG directories, =GNUPGHOME=). Each keyring a test makes has
+its gpg-agent stopped and its socket directory under =/run/user/= taken away
+when its directory goes.
 
 Full compiler warnings fail the suite. Build once with an empty cache too
 (=XDG_CACHE_HOME= pointing at a new directory): a setting used before the file

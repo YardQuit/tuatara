@@ -153,14 +153,31 @@ the untracked private notes of the tree being tested (.project).")
 ;; (the tests of starting it on time bind their own wait)
 (setf tuatara.io::*at-once-wait* 30)
 
+(defun gnupg-homes-under (directory &optional (depth 4))
+  "The GnuPG home directories within DIRECTORY, DEPTH levels down at most: those
+holding a keyring, a trust database or secret keys, as gpg leaves where it ran."
+  (when (and (plusp depth) (uiop:directory-exists-p directory))
+    (let ((subdirectories (ignore-errors (uiop:subdirectories directory))))
+      (append (and (or (probe-file (merge-pathnames "pubring.kbx" directory))
+                       (probe-file (merge-pathnames "trustdb.gpg" directory))
+                       (find "private-keys-v1.d" subdirectories
+                             :key (lambda (d) (car (last (pathname-directory d)))) :test #'string=))
+                   (list directory))
+              (loop for d in subdirectories append (gnupg-homes-under d (1- depth)))))))
+
+(defun stop-gnupg-homes-under (directory)
+  "Stop the gpg-agent of each GnuPG home within DIRECTORY (GNUPG-HOMES-UNDER)
+and take away the directory of its sockets that gpg made under /run/user, which
+would otherwise outlast the home: one for each made-up home of every run."
+  (dolist (home (gnupg-homes-under directory))
+    (dolist (arguments '(("--kill" "gpg-agent") ("--remove-socketdir")))
+      (ignore-errors (uiop:run-program (list* "gpgconf" "--homedir" (namestring home) arguments)
+                                       :ignore-error-status t :output nil :error-output nil)))))
+
 (defun remove-test-directories ()
   "Take away the directory this test run kept its state, made-up home and data
-in, the gpg-agent of the tests' own keyring stopped first."
-  (ignore-errors (uiop:run-program (list "gpgconf"
-                                         "--homedir"
-                                         (namestring (merge-pathnames ".gnupg/" *test-home-directory*))
-                                         "--kill" "gpg-agent")
-                                   :ignore-error-status t))
+in, the gpg-agents of the keyrings in it stopped first (STOP-GNUPG-HOMES-UNDER)."
+  (stop-gnupg-homes-under *test-state-directory*)
   (uiop:delete-directory-tree *test-state-directory* :validate t :if-does-not-exist :ignore))
 ;; however the tests are run, their directories go when Lisp exits
 (pushnew 'remove-test-directories sb-ext:*exit-hooks*)

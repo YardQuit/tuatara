@@ -72,7 +72,8 @@ thread may take is multiplied by it."
 (defmacro with-test-directory ((directory &key in-cache) &body body)
   "Run BODY with DIRECTORY bound to a new empty directory in the tests' made-up
 home (*TEST-HOME-DIRECTORY*), removed afterwards with everything in it, the
-buffers visiting its files killed and the projects within it trusted no more.
+buffers visiting its files killed, the projects within it trusted no more and
+the gpg-agents of keyrings made in it stopped.
 With IN-CACHE it is in the tests' cache instead, on the drive of your home and
 in no temporary directory, for the tests of a file system that shares blocks
 \(btrfs) and of files trusted as standard: a test that types its path to a
@@ -85,6 +86,7 @@ question passes through your home there."
        (forget-kept-indexes ,directory)
        (forget-committed-lines)
        (forget-trusted-under ,directory)
+       (stop-gnupg-homes-under ,directory)
        (uiop:delete-directory-tree ,directory :validate #'tests-own-path-p))))
 
 (defmacro with-file-in-tmp ((path ending) &body body)
