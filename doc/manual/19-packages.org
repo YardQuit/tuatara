@@ -574,6 +574,8 @@ you banked, and shows the result in =*csvdt output*=. The buffer the records
 came from is never changed. In a CSV or TSV buffer its commands are under
 ~C-c v~: ~C-c v r~ runs what you chose, and ~C-c v ?~ says what a run would
 cover without running it. You install csvdt yourself.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-csvdt/][tuatara-editor.github.io/tuatara-csvdt]].
 
 *** csv-columns
 
@@ -581,6 +583,8 @@ csv-columns rearranges the columns of every record the way awk's =print=
 does. ~C-c r a~ asks for the columns, counted from 0, so that =$0,$2,$1= swaps
 the second and third. It needs nothing installed. A large file is done in the
 background, and each run is one step to undo.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-csv-columns/][tuatara-editor.github.io/tuatara-csv-columns]].
 
 *** facematch
 
@@ -590,6 +594,8 @@ person in one or more master photos. You mark photos in the directory view, then
 sandbox. The comparing engine is a separate program that you download from its
 release page, check against the list of sums beside it, and name in
 =*facematch-program*=. Tuatara never downloads it for you.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-facematch/][tuatara-editor.github.io/tuatara-facematch]].
 
 *** garamond
 
@@ -598,6 +604,8 @@ spacing a document asks for, which the document says in its own =Local
 Variables:= block. The mode line shows =2S= or =1S=, and typing one space after
 a sentence becomes two where the document wants two. ~M-x garamond-mode~
 turns it on by hand. It needs nothing installed.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-garamond/][tuatara-editor.github.io/tuatara-garamond]].
 
 *** kitty
 
@@ -606,6 +614,8 @@ that you get its fast drawing, its ligatures and its pictures. ~M-x kitty~
 opens one in the current directory. ~M-x kitty-input~ types the selection or
 the current line into it, and ~M-x kitty-text~ brings its text, scrollback
 included, into a buffer you can search. You install kitty yourself.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-kitty/][tuatara-editor.github.io/tuatara-kitty]].
 
 *** outlook
 
@@ -618,6 +628,8 @@ prefix for the same commands. In a mailbox, ~C~ copies messages out. A
 mailbox is read by the package itself, shut in the sandbox (chapter 12), and
 what it wrote stays in Tuatara's cache (chapter 9, "The cache"), so the same
 mailbox opens again without being read. It needs WeasyPrint.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-outlook/][tuatara-editor.github.io/tuatara-outlook]].
 
 *** caldav
 
@@ -627,6 +639,8 @@ calendars are kept in one Org file, and only what is under a calendar's
 heading is synced. The password is never in your init file: it is in the
 desktop's keyring. In Org files and the agenda its commands are under
 ~C-c s~, with ~C-c s s~ syncing now. Its README sets a server up step by step.
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-caldav/][tuatara-editor.github.io/tuatara-caldav]].
 
 *** themes
 
@@ -660,6 +674,9 @@ stays on top of a theme.
 #+table: commands load-theme toggle-light-dark-theme
 
 #+table: settings *light-theme* *dark-theme*
+
+Its manual is at
+[[https://tuatara-editor.github.io/tuatara-themes/][tuatara-editor.github.io/tuatara-themes]].
 
 ** Writing a package of your own
 
