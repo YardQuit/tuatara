@@ -78,12 +78,25 @@ with no key at all is run by name, and says so in the second."
               (key-cells non-modal)
               (format nil "~~M-x ~(~a~)~~" symbol)))))
 
+(defvar *manual-package* nil
+  "The name of the package whose manual is made (\"palimpsest\"), or NIL for
+Tuatara's own: the tables then hold that package's commands, settings and
+faces alone.")
+
+(defun own-name-p (name)
+  "True when NAME, a setting's or face's name without its marks, is the manual's
+own: one of Tuatara's, or with *MANUAL-PACKAGE* one beginning with its name."
+  (let ((prefix (and *manual-package* (format nil "~:@(~a~)-" *manual-package*))))
+    (or (null prefix) (uiop:string-prefix-p prefix (string-upcase name)))))
+
 (defun command-rows ()
   "Rows (NAME (MODAL NON-MODAL) WORDS) for every command offered by name, sorted
-by name."
+by name: Tuatara's own, or with *MANUAL-PACKAGE* that package's."
   (sort (loop for symbol being the hash-keys of tuatara.command::*commands*
               for home = (package-name (symbol-package symbol))
-              when (and (uiop:string-prefix-p "TUATARA" home) (string/= home "TUATARA.TESTS")
+              when (and (if *manual-package*
+                            (string= home (string-upcase *manual-package*))
+                            (and (uiop:string-prefix-p "TUATARA" home) (string/= home "TUATARA.TESTS")))
                         (not (tuatara.command:key-only-command-p symbol)))
                 collect (list (string-downcase symbol)
                               (key-columns symbol)
@@ -106,7 +119,7 @@ buffer to a major mode."
 the values it takes in words, empty when its definition does not say them."
   (sort (let ((rows '()))
           (do-external-symbols (symbol :tuatara-user)
-            (when (boundp symbol)
+            (when (and (boundp symbol) (own-name-p (string-trim "*" (symbol-name symbol))))
               (push (list (string-downcase symbol) (value-words symbol)
                           (cell (or (tuatara.runtime:setting-values-words symbol) ""))
                           (sentence (documentation symbol 'variable)))
@@ -118,7 +131,8 @@ the values it takes in words, empty when its definition does not say them."
   "Rows (NAME WORDS) for every face, sorted by name."
   (sort (loop for name being the hash-keys of tuatara.display:*faces*
               using (hash-value face)
-              collect (list (format nil ":~(~a~)" name)
+              when (or (null *manual-package*) (own-name-p (symbol-name name)))
+                collect (list (format nil ":~(~a~)" name)
                             (sentence (tuatara.display::face-doc face))))
         #'string< :key #'first))
 
@@ -150,6 +164,12 @@ table."
 (defun code (words)
   "WORDS in the Org markup for code."
   (format nil "=~a=" words))
+
+(defun package-manual-name (directory)
+  "The name of the package whose repository is DIRECTORY: tuatara-palimpsest/
+holds palimpsest."
+  (let ((name (car (last (pathname-directory directory)))))
+    (if (uiop:string-prefix-p "tuatara-" name) (subseq name 8) name)))
 
 (defparameter *kinds*
   '(("commands" "commands" ("Modal" "Non-modal" "Command" "What it does") :keys-first)
@@ -275,20 +295,28 @@ and which, leaving out the commands that switch to a major mode, only counted."
                 (car table) (length (cdr table)) (length missing) (length modes)
                 (mapcar #'first (sort others #'string< :key #'first)))))))
 
-(defun run (tree)
+(defun run (tree &key package)
   "Generate the tables of the manual in TREE, with the links between its chapters,
-and report what no chapter covers."
+and report what no chapter covers. With PACKAGE, the directory of a package's
+repository (tuatara-palimpsest/), the manual is that package's, in its
+doc/manual/: the package is loaded from there and the tables hold its own
+commands, settings and faces."
   ;; the editor started below must not touch this account's own directories, nor sweep its cache
   (tuatara.fence:fence-person-data nil)
-  (let* ((dir (merge-pathnames "doc/manual/" tree))
+  (let* ((*manual-package* (and package (package-manual-name package)))
+         (dir (merge-pathnames "doc/manual/" (or package tree)))
          (out (merge-pathnames "generated/" dir))
-         ;; the settings as they stand before an editor starts; the keymaps are filled in as one does
-         (settings (setting-rows))
+         ;; Tuatara's settings as they stand before an editor starts; the keymaps are filled in as one does,
+         ;; and a package's settings are there once it is loaded
+         (settings (and (not package) (setting-rows)))
          (tables (progn
                    (tuatara.command:run-editor (tuatara.frontend.fake:make-fake-frontend :width 40 :height 8)
                                                :setup #'tuatara.defaults:install-defaults)
-                   (list (cons "commands" (command-rows)) (cons "settings" settings) (cons "faces" (face-rows))
-                         (cons "options" (option-rows)))))
+                   (when package
+                     (let ((refused (tuatara.packages:load-package-for-test *manual-package* package :tests nil)))
+                       (when refused (error "The package ~a was not loaded: ~a" *manual-package* refused))))
+                   (list (cons "commands" (command-rows)) (cons "settings" (or settings (setting-rows)))
+                         (cons "faces" (face-rows)) (cons "options" (if package '() (option-rows))))))
          (chapters (outline-chapters dir)))
     (dolist (kind '("commands" "settings" "faces"))
       (let ((spec (find kind *kinds* :key #'first :test #'string=)))

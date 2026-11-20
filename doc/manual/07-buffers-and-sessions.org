@@ -142,7 +142,7 @@ You can skip this until chapter 18.
 
 *** Commands for the buffer list
 
-#+table: commands buffers buffers-save buffers-keep-client list-visit list-visit-other list-next-entry list-previous-entry list-mark-entry list-mark-for-deletion list-unmark-entry list-unmark-all list-toggle-marks list-execute list-delete-marked list-toggle-fold list-toggle-all-folds
+#+table: commands buffers-save buffers-keep-client list-visit list-visit-other list-next-entry list-previous-entry list-mark-entry list-mark-for-deletion list-unmark-entry list-unmark-all list-toggle-marks list-execute list-delete-marked list-toggle-fold list-toggle-all-folds
 
 *** Settings and faces
 

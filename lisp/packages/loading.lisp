@@ -508,11 +508,11 @@ editor instead."
 DIRECTORY FILE), FILE its entry when named, the one loaded last first: never
 deleted while the editor runs.")
 
-(defun load-package-for-test (name directory)
+(defun load-package-for-test (name directory &key (tests t))
   "Load the package NAME from DIRECTORY as load-package loads one fetched anew:
-each of its files compiled afresh, its names checked; then DIRECTORY's
-test.lisp, its tests, when there is one. For a package repository's tests,
-run against a Tuatara source tree. NIL when it loaded; else why Tuatara
+each of its files compiled afresh, its names checked; then, with TESTS (as
+standard), DIRECTORY's test.lisp, its tests, when there is one. For a package
+repository's tests, or its manual, made against a Tuatara source tree. NIL when it loaded; else why Tuatara
 refused it, a string: it uses a name this Tuatara lacks. It is counted
 among the packages loaded from their directory (*LOADED-PACKAGE-DIRECTORIES*),
 so that its functions can be run shut in (SANDBOX-CALL)."
@@ -525,8 +525,8 @@ so that its functions can be run shut in (SANDBOX-CALL)."
         (setf *loaded-package-directories*
               (cons (list name (tuatara.io:native directory) nil)
                     (remove name *loaded-package-directories* :key #'first :test #'string=)))
-        (let ((tests (merge-pathnames "test.lisp" directory)))
-          (when (probe-file tests) (load tests)))
+        (let ((file (merge-pathnames "test.lisp" directory)))
+          (when (and tests (probe-file file)) (load file)))
         nil)
     (package-lacks-names (refusal) (princ-to-string refusal))))
 

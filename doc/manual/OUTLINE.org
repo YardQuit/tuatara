@@ -12,6 +12,11 @@ browser's find. A button changes between light and dark colours, and a link
 in the corner of each page opens the contents page. tools/manual-publish.sh REMOTE puts the pages on
 the branch gh-pages of REMOTE, which GitHub Pages serves, at each release.
 
+A package's manual is made the same way, in the same look, from its own
+doc/manual/ (an OUTLINE.org and its chapters): give tools/manual-tables.sh and
+tools/manual-html.sh the package's repository, and its tables hold its own
+commands, settings and faces, its pages go to its build/manual/.
+
 1. The screen
 2. Moving around
 3. Writing and changing text

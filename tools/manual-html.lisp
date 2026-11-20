@@ -8,6 +8,10 @@
 
 (in-package #:manual-html)
 
+(defvar *manual-title* "Tuatara Manual"
+  "The title of the manual being made: Tuatara's own, or a package's (palimpsest
+Manual).")
+
 (defparameter *navigation-lines* (cl-ppcre:create-scanner "(?m)^(?:Previous|Next): \\[\\[file:[^\\n]*\\n?")
   "A chapter's lines of links to the chapters before and after it, which the
 pages draw for themselves and a whole manual has no need of.")
@@ -139,13 +143,14 @@ text still finds its heading."
   (alexandria:write-string-into-file text path :if-exists :supersede :external-format :utf-8))
 
 (defun site (contents version main &key whole)
-  "The HTML of a page's layout: the contents column, named CONTENTS, and MAIN beside it, for VERSION.
+  "The HTML of a page's layout: the contents column, named CONTENTS, and MAIN beside it, VERSION
+saying which version it is for (for version 0.90.40).
 The column links to the whole manual on one page, or with WHOLE back to the chapters, and holds the
 button that changes between light and dark colours."
   (format nil "<div class=\"site\">
 <nav class=\"toc\" id=\"contents\" aria-label=\"Contents\">
-<strong>Tuatara Manual</strong>
-<small>for version ~a</small>
+<strong>~a</strong>
+<small>~a</small>
 <p class=\"tools\">~:[<a href=\"all.html\">All on one page</a>~;<a href=\"index.html\">By chapter</a>~]
 <button type=\"button\" class=\"theme\" hidden>Dark</button></p>
 <input type=\"search\" placeholder=\"Search the manual\" aria-label=\"Search the manual\">
@@ -154,7 +159,7 @@ button that changes between light and dark colours."
 <main>
 ~a</main>
 </div>
-" version whole contents main))
+" *manual-title* version whole contents main))
 
 (defun write-page (out title body)
   "Write the page OUT (a path) of BODY named TITLE (already escaped)."
@@ -242,24 +247,43 @@ editing it is written for.")
   "The page of the whole manual, every chapter of ENTRIES in turn, CONTENTS its contents list, for
 VERSION: to print at once or search through with a browser's find."
   (site (on-one-page contents) version
-        (format nil "<article>~%<h1>Tuatara Manual</h1>~%<p class=\"lead\">for version ~a, every chapter on ~
+        (format nil "<article>~%<h1>~a</h1>~%<p class=\"lead\">~a, every chapter on ~
                      one page</p>~%<p>~a</p>~%~{~a~}</article>~%"
-                version *modal-editing-note*
+                *manual-title* version *modal-editing-note*
                 (loop for (chapter . parts) in entries
                       collect (format nil "<section class=\"chapter\" id=\"~a\">~%~a</section>~%"
                                       (getf chapter :stem)
                                       (on-one-page (getf parts :body) (getf chapter :stem)))))
         :whole t))
 
-(defun run-html (tree)
+(defun package-needs (directory)
+  "The version of Tuatara the package in DIRECTORY needs, as the first lines of
+its main file say it (;;;; Needs: Tuatara 0.90.35), or NIL."
+  (let* ((name (car (last (pathname-directory directory))))
+         (file (merge-pathnames (format nil "~a.lisp" (if (uiop:string-prefix-p "tuatara-" name) (subseq name 8) name))
+                                directory)))
+    (when (probe-file file)
+      (loop for line in (subseq (uiop:read-file-lines file) 0 (min 10 (length (uiop:read-file-lines file))))
+            for match = (nth-value 1 (cl-ppcre:scan-to-strings "^;+ *Needs: *Tuatara +([0-9.]+)" line))
+            when match return (aref match 0)))))
+
+(defun run-html (tree &key package)
   "Write the manual under TREE as web pages to build/manual/: a page for each
 chapter, index.html, all.html with every chapter on one page, the stylesheet,
 and the script with the text of every section for the contents filter, nothing
-loaded from elsewhere."
+loaded from elsewhere. With PACKAGE, the directory of a package's repository,
+write that package's manual from its doc/manual/ to its build/manual/, in the
+same look, titled with its name and the Tuatara it needs."
   (tuatara.fence:fence-person-data nil)
-  (let* ((out (merge-pathnames "build/manual/" tree))
-         (version (asdf:component-version (asdf:find-system :tuatara)))
-         (chapters (chapter-texts tree))
+  (let* ((base (or package tree))
+         (name (and package (let ((n (car (last (pathname-directory package)))))
+                              (if (uiop:string-prefix-p "tuatara-" n) (subseq n 8) n))))
+         (*manual-title* (if name (format nil "~a Manual" name) *manual-title*))
+         (out (merge-pathnames "build/manual/" base))
+         (version (if package
+                      (format nil "for Tuatara ~a and later" (or (package-needs package) "0.90"))
+                      (format nil "for version ~a" (asdf:component-version (asdf:find-system :tuatara)))))
+         (chapters (chapter-texts base))
          (entries (mapcar (lambda (chapter) (cons chapter (parts-of chapter))) chapters))
          (contents (contents-list entries)))
     (ensure-directories-exist out)
@@ -275,17 +299,18 @@ loaded from elsewhere."
           while entry
           do (destructuring-bind (chapter . parts) entry
                (write-page (merge-pathnames (page-name chapter) out)
-                           (format nil "~a &ndash; Tuatara Manual" (getf parts :title))
+                           (format nil "~a &ndash; ~a" (getf parts :title) *manual-title*)
                            (site (here-marked contents (getf chapter :stem)) version
                                  (format nil "<article>~%~a~%~a~a~%</article>~%"
                                          (node-links previous next) (getf parts :body)
                                          (node-links previous next :end t))))))
-    (write-page (merge-pathnames "index.html" out) "Tuatara Manual"
+    (write-page (merge-pathnames "index.html" out) *manual-title*
                 (site (here-marked contents "index") version
-                      (format nil "<article>~%<h1>Tuatara Manual</h1>~%<p class=\"lead\">for version ~a</p>~%~
+                      (format nil "<article>~%<h1>~a</h1>~%<p class=\"lead\">~a</p>~%~
                                    <p>~a</p>~%<nav class=\"contents\">~a</nav>~%</article>~%"
-                              version *modal-editing-note* (contents-list entries :front nil))))
-    (write-page (merge-pathnames "all.html" out) "Tuatara Manual, all chapters" (whole-page entries contents version))
+                              *manual-title* version *modal-editing-note* (contents-list entries :front nil))))
+    (write-page (merge-pathnames "all.html" out) (format nil "~a, all chapters" *manual-title*)
+                (whole-page entries contents version))
     (format t "~&~d chapters in ~a~%" (length chapters) (namestring out))))
 
 (defparameter *pdf-front-matter*

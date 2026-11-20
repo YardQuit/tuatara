@@ -722,7 +722,7 @@ delays, the =SCHEDULED=, =DEADLINE= and =CLOSED= lines, and dates by rule.
 These commands work only while a date is being asked for. You will seldom
 call them by name, but they are what the keys above run.
 
-#+table: commands org-calendar-forward-day org-calendar-backward-day org-calendar-forward-week org-calendar-backward-week org-calendar-forward-month org-calendar-backward-month org-calendar-forward-year org-calendar-backward-year org-calendar-goto-today org-date-choose-mark org-date-choose-unmark org-date-choose-write org-date-repeat-menu repeat-menu repeat-menu-write
+#+table: commands org-calendar-forward-day org-calendar-backward-day org-calendar-forward-week org-calendar-backward-week org-calendar-forward-month org-calendar-backward-month org-calendar-forward-year org-calendar-backward-year org-calendar-goto-today org-date-choose-mark org-date-choose-unmark org-date-choose-write
 
 #+table: settings *org-read-date-in-calendar* *org-read-date-popup-calendar* *org-deadline-warning-days* *org-notify-tag* *org-notify-before* *org-notify-day-time*
 
