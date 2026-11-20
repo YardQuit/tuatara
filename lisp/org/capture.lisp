@@ -47,7 +47,7 @@ they are.")
 
 (define-setting *capture-template-directories* nil
   "The directories your capture templates are in, a template a file.
-\\[org-capture] offers them with Tuatara's own (t, n, j, m).
+\\[org-capture] offers them with Tuatara's own (t, n, j, m, M).
 - a list of directories: those directories.
 - nil, as standard: capture-templates/ in your configuration directory
   (~/.config/tuatara/capture-templates/, XDG_CONFIG_HOME's when it is set).
